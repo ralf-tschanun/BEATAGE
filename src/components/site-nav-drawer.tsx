@@ -14,8 +14,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import type { DashboardIdentity } from "@/lib/contests/dashboard";
-import { PLANS, type PlanId } from "@/lib/plans";
+import type { DashboardIdentity } from "@/lib/quizzes/dashboard";
+import { QUIZ_PLANS, type PlanId } from "@/lib/quiz-plans";
+import { BRAND_NAME } from "@/lib/brand";
 import { SITE_NAV_ITEMS, type SiteNavItemId } from "@/lib/site-nav-items";
 import { cn } from "@/lib/utils";
 
@@ -125,7 +126,7 @@ export function SiteNavDrawer({
 }: SiteNavDrawerProps) {
   const [open, setOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
-  const planLabel = PLANS[currentPlan]?.label ?? "Free";
+  const planLabel = QUIZ_PLANS[currentPlan]?.label ?? "Free";
 
   const settingsItem: NavActionItem = {
     kind: "action",
@@ -191,7 +192,7 @@ export function SiteNavDrawer({
               </span>
               <div className="min-w-0 text-left">
                 <SheetTitle>Menu</SheetTitle>
-                <SheetDescription>Navigate BEATAGE</SheetDescription>
+                <SheetDescription>Navigate {BRAND_NAME}</SheetDescription>
               </div>
             </div>
           </SheetHeader>
@@ -203,7 +204,7 @@ export function SiteNavDrawer({
               ))}
             </NavSection>
 
-            <NavSection title="Your contests">
+            <NavSection title="Your quizzes">
               {dashboardItems.map((item) => (
                 <NavRow key={item.id} item={item} onNavigate={closeDrawer} />
               ))}
@@ -249,7 +250,7 @@ export function SiteNavDrawer({
                   </p>
                 ) : (
                   <p className="text-sm leading-relaxed text-muted-foreground">
-                    No session yet. Create a contest or sign in with email.
+                    No session yet. Create a quiz or sign in with email.
                   </p>
                 )}
                 <AccountAuthForm

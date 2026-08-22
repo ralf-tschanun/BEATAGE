@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { MusicNotesIcon } from "@phosphor-icons/react/dist/ssr";
 import { SiteNavDrawer } from "@/components/site-nav-drawer";
-import type { DashboardIdentity } from "@/lib/contests/dashboard";
-import type { PlanId } from "@/lib/plans";
+import type { DashboardIdentity } from "@/lib/quizzes/dashboard";
+import type { PlanId } from "@/lib/quiz-plans";
+import { BRAND_NAME } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
 type SiteHeaderProps = {
@@ -28,10 +28,10 @@ export function SiteHeader({
           href="/"
           className="inline-flex items-center gap-2 font-semibold tracking-tight transition-opacity hover:opacity-80"
         >
-          <span className="inline-flex size-8 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            <MusicNotesIcon className="size-4" weight="fill" />
+          <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary font-bold text-[9px] leading-none tracking-tighter">
+            {BRAND_NAME}
           </span>
-          BEATAGE
+          <span className="hidden text-base font-semibold sm:inline">{BRAND_NAME}</span>
         </Link>
         <SiteNavDrawer
           identity={identity}

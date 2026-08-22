@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BRAND_NAME } from "@/lib/brand";
 
 export function SiteFooter() {
   const year = new Date().getFullYear();
@@ -27,7 +28,7 @@ export function SiteFooter() {
           </Link>
         </nav>
         <p className="text-sm text-muted-foreground">
-          © {year} BEATAGE · gosmooth.eu. All rights reserved.
+          © {year} {BRAND_NAME} · gosmooth.eu. All rights reserved.
         </p>
       </div>
     </footer>

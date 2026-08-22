@@ -14,8 +14,10 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+import { brandHtmlTitle, BRAND_NAME } from "@/lib/brand";
+
 export const metadata: Metadata = {
-  title: "BEATAGE",
+  title: brandHtmlTitle(),
   description: "Guess the release year — host plays a track, participants score points.",
 };
 

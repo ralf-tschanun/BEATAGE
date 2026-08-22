@@ -1,12 +1,12 @@
 import { notFound, redirect } from "next/navigation";
-import { JoinContestDialog } from "@/components/join-contest-form";
+import { JoinQuizDialog } from "@/components/join-quiz-form";
 import { getOptionalUser } from "@/lib/supabase/auth";
 
 type JoinPageProps = {
   params: Promise<{ code: string }>;
 };
 
-type ContestPreview = {
+type QuizPreview = {
   id: string;
   title: string;
   description: string | null;
@@ -21,7 +21,7 @@ export default async function JoinByCodePage({ params }: JoinPageProps) {
   const joinCode = code.trim().toUpperCase();
   const { supabase, user } = await getOptionalUser();
 
-  const { data: preview, error } = await supabase.rpc("get_contest_by_join_code", {
+  const { data: preview, error } = await supabase.rpc("get_beatage_quiz_by_join_code", {
     p_join_code: joinCode,
   });
 
@@ -29,16 +29,16 @@ export default async function JoinByCodePage({ params }: JoinPageProps) {
     notFound();
   }
 
-  const contest = preview as ContestPreview;
+  const quiz = preview as QuizPreview;
 
   let defaultDisplayName: string | null = null;
 
   if (user) {
     const [{ data: membership }, { data: profile }] = await Promise.all([
       supabase
-        .from("contest_members")
+        .from("beatage_quiz_members")
         .select("id")
-        .eq("contest_id", contest.id)
+        .eq("quiz_id", quiz.id)
         .eq("user_id", user.id)
         .maybeSingle(),
       supabase
@@ -49,32 +49,32 @@ export default async function JoinByCodePage({ params }: JoinPageProps) {
     ]);
 
     if (membership) {
-      redirect(`/c/${joinCode}`);
+      redirect(`/q/${joinCode}`);
     }
 
     defaultDisplayName = profile?.display_name ?? null;
   }
 
   const blocked =
-    contest.is_full ||
-    contest.status === "expired" ||
-    !["open", "voting"].includes(contest.status);
+    quiz.is_full ||
+    quiz.status === "expired" ||
+    !["open", "playing"].includes(quiz.status);
 
   const blockedMessage = blocked
-    ? contest.status === "expired"
-      ? "This contest has expired."
-      : contest.is_full
-        ? "This contest is full."
-        : "This contest is not open for joining."
+    ? quiz.status === "expired"
+      ? "This quiz has expired."
+      : quiz.is_full
+        ? "This quiz is full."
+        : "This quiz is not open for joining."
     : null;
 
   return (
-    <JoinContestDialog
+    <JoinQuizDialog
       joinCode={joinCode}
-      contestTitle={contest.title}
-      description={contest.description}
-      memberCount={contest.member_count}
-      maxMembers={contest.max_members}
+      quizTitle={quiz.title}
+      description={quiz.description}
+      memberCount={quiz.member_count}
+      maxMembers={quiz.max_members}
       blockedMessage={blockedMessage}
       defaultDisplayName={defaultDisplayName}
     />

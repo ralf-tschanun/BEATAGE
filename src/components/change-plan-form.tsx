@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { PLANS, type PlanId } from "@/lib/plans";
+import { QUIZ_PLANS, type PlanId } from "@/lib/quiz-plans";
 import { BILLING_SKU_LABELS, type BillingSku } from "@/lib/billing-copy";
 import { cn } from "@/lib/utils";
 
@@ -41,16 +41,12 @@ function formatCap(value: number | null, singular: string, plural = `${singular}
 
 /** Compact plan limits for the Your plan dialog (no mode labels). */
 function planLimitHint(planId: PlanId): string {
-  const plan = PLANS[planId];
+  const plan = QUIZ_PLANS[planId];
   if (planId === "pro") return "Unlimited";
 
   return [
-    formatCap(plan.maxActiveContests, "contest"),
+    formatCap(plan.maxActiveQuizzes, "quiz"),
     formatCap(plan.maxMembers, "participant"),
-    formatCap(plan.maxCuratedCandidates, "candidate"),
-    plan.maxNominationsPerParticipant === null
-      ? "unlimited nominations"
-      : `${plan.maxNominationsPerParticipant} nomination${plan.maxNominationsPerParticipant === 1 ? "" : "s"} / participant`,
     plan.inactivityExpiryDays === null
       ? "no expiry"
       : `${plan.inactivityExpiryDays}-day expiry`,
@@ -119,7 +115,7 @@ export function ChangePlanForm({
           )}
         >
           <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-semibold">{PLANS[id].label}</p>
+            <p className="text-sm font-semibold">{QUIZ_PLANS[id].label}</p>
             {selected ? (
               <span className="text-[11px] font-semibold tracking-wide text-primary uppercase">
                 Current
@@ -271,7 +267,7 @@ export function ChangePlanForm({
           <DialogHeader>
             <DialogTitle>Your plan</DialogTitle>
             <DialogDescription>
-              Current plan: {PLANS[currentPlan].label}. Hosts pay — participants stay
+              Current plan: {QUIZ_PLANS[currentPlan].label}. Hosts pay — participants stay
               free. Unlock is a one-time purchase for one contest. Cancel a
               subscription anytime in the billing portal; the plan stays until the
               period ends, then Free.

@@ -39,7 +39,7 @@ export default function JoinIndexPage() {
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Join a contest</DialogTitle>
+          <DialogTitle>Join a quiz</DialogTitle>
           <DialogDescription>
             Enter the invite code you received.
           </DialogDescription>
