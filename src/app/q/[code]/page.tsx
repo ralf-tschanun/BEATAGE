@@ -1,11 +1,14 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { QuizPlayPanels } from "@/components/quiz-play-panels";
+import { InviteShare } from "@/components/invite-share";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { BRAND_NAME } from "@/lib/brand";
 import { quizSourceLabel } from "@/lib/quiz-settings";
+import { getQuizPlayState } from "@/lib/quizzes/play-state";
 import { getQuizDashboardData } from "@/lib/quizzes/dashboard";
 import { getOptionalUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -70,6 +73,7 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
   }
 
   const isHost = myRole === "host";
+  const playState = myRole ? await getQuizPlayState(quiz.id, joinCode) : null;
 
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-background via-background to-muted/30">
@@ -94,30 +98,38 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
           ) : null}
         </div>
 
-        <section className="rounded-2xl border border-border/60 bg-card/40 p-6 space-y-4">
-          <h2 className="text-lg font-semibold">Lobby</h2>
-          <p className="text-sm text-muted-foreground">
-            Gameplay arrives in the next step. For now you can open the quiz, see
-            participants, and share the invite code.
-          </p>
-          <p className="text-sm">
-            Invite link:{" "}
-            <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-              /j/{quiz.join_code}
-            </code>
-          </p>
-          {!myRole ? (
+        {myRole ? (
+          <>
+            <InviteShare
+              joinUrl={`/j/${quiz.join_code}`}
+              joinCode={quiz.join_code}
+              contestTitle={quiz.title}
+            />
+            <QuizPlayPanels
+              quizId={quiz.id}
+              joinCode={joinCode}
+              isHost={isHost}
+              tracks={playState?.tracks ?? []}
+              activeRound={playState?.activeRound ?? null}
+              resultRound={playState?.resultRound ?? null}
+              roundGuesses={playState?.roundGuesses ?? []}
+              myGuessYear={playState?.myGuessYear ?? null}
+              leaderboard={playState?.leaderboard ?? []}
+            />
+          </>
+        ) : (
+          <section className="rounded-2xl border border-border/60 bg-card/40 p-6 space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Join this quiz to play along.
+            </p>
             <Link
               href={`/j/${quiz.join_code}`}
               className={cn(buttonVariants())}
             >
               Join this quiz
             </Link>
-          ) : null}
-          {isHost ? (
-            <p className="text-sm font-medium text-primary">You are the host.</p>
-          ) : null}
-        </section>
+          </section>
+        )}
 
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">

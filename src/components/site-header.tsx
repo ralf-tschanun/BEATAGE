@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { WaveformIcon } from "@phosphor-icons/react/dist/ssr";
 import { SiteNavDrawer } from "@/components/site-nav-drawer";
 import type { DashboardIdentity } from "@/lib/quizzes/dashboard";
 import type { PlanId } from "@/lib/quiz-plans";
@@ -26,12 +27,10 @@ export function SiteHeader({
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-4 px-6 py-3">
         <Link
           href="/"
-          className="inline-flex items-center gap-2 font-semibold tracking-tight transition-opacity hover:opacity-80"
+          className="inline-flex items-center gap-2 font-bold tracking-tight transition-opacity hover:opacity-80"
         >
-          <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary font-bold text-[9px] leading-none tracking-tighter">
-            {BRAND_NAME}
-          </span>
-          <span className="hidden text-base font-semibold sm:inline">{BRAND_NAME}</span>
+          <WaveformIcon className="size-6 shrink-0 text-primary sm:size-7" weight="bold" />
+          <span className="text-xl sm:text-2xl">{BRAND_NAME}</span>
         </Link>
         <SiteNavDrawer
           identity={identity}

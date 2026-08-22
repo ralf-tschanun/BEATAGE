@@ -6,6 +6,22 @@ export type SpotifyTrackMatch = {
   artistName: string | null;
 };
 
+export type SpotifyTrackDetails = SpotifyTrackMatch & {
+  albumArtUrl: string | null;
+  previewUrl: string | null;
+  releaseYear: number | null;
+  releaseDate: string | null;
+  originalReleaseYear: number | null;
+};
+
+function parseReleaseYear(releaseDate: string | null | undefined): number | null {
+  if (!releaseDate) return null;
+  const match = /^(\d{4})/.exec(releaseDate.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  return Number.isFinite(year) ? year : null;
+}
+
 type SpotifyTokenCache = {
   accessToken: string;
   expiresAtMs: number;
@@ -139,6 +155,72 @@ export async function findSpotifyTrack(
       uri: typeof first.uri === "string" && first.uri ? first.uri : `spotify:track:${first.id}`,
       name: first.name!.trim(),
       artistName: first.artists?.[0]?.name?.trim() || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch track metadata including release year (best-effort original = album release). */
+export async function getSpotifyTrackById(
+  trackId: string,
+  market = "DE",
+): Promise<SpotifyTrackDetails | null> {
+  const id = trackId.trim();
+  if (!id) return null;
+
+  const token = await getClientCredentialsToken();
+  if (!token) return null;
+
+  try {
+    const response = await fetch(
+      `https://api.spotify.com/v1/tracks/${encodeURIComponent(id)}?market=${encodeURIComponent(market)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+        cache: "no-store",
+      },
+    );
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as {
+      id?: string;
+      name?: string;
+      uri?: string;
+      preview_url?: string | null;
+      external_urls?: { spotify?: string };
+      artists?: Array<{ name?: string }>;
+      album?: {
+        release_date?: string;
+        images?: Array<{ url?: string }>;
+      };
+    };
+
+    if (!data.id || !data.name) return null;
+
+    const releaseDate = data.album?.release_date ?? null;
+    const releaseYear = parseReleaseYear(releaseDate);
+    const urlFromApi = data.external_urls?.spotify?.trim();
+
+    return {
+      id: data.id,
+      url:
+        urlFromApi && urlFromApi.startsWith("http")
+          ? urlFromApi
+          : `https://open.spotify.com/track/${data.id}`,
+      uri:
+        typeof data.uri === "string" && data.uri
+          ? data.uri
+          : `spotify:track:${data.id}`,
+      name: data.name.trim(),
+      artistName: data.artists?.[0]?.name?.trim() || null,
+      albumArtUrl: data.album?.images?.[0]?.url ?? null,
+      previewUrl: data.preview_url ?? null,
+      releaseYear,
+      releaseDate,
+      originalReleaseYear: releaseYear,
     };
   } catch {
     return null;
