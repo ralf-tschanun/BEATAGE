@@ -1,21 +1,64 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { findSpotifyTrack, getSpotifyTrackById } from "@/lib/spotify";
+import { addCuratedTrackToQuiz } from "@/lib/quiz-tracks";
+import {
+  closeRoundForHost,
+  finishQuizForHost,
+  startRoundForHost,
+  submitGuessForMember,
+} from "@/lib/quiz-play";
+import { ensureAnonymousSession } from "@/lib/supabase/auth";
+import { getQuizPlayState } from "@/lib/quizzes/play-state";
 
 export type QuizRoundActionState = {
   error?: string;
   ok?: boolean;
+  /** Unique per successful action so clients can resync exactly once. */
+  syncId?: string;
+  /** Present after a successful guess — used for live host list patches. */
+  guess?: {
+    roundId: string;
+    userId: string;
+    guessedYear: number;
+  };
 } | null;
 
 function mapError(message: string): string {
   if (message.includes("NOT_HOST")) return "Only the host can do that.";
   if (message.includes("NOT_MEMBER")) return "You are not in this quiz.";
   if (message.includes("ROUND_ALREADY_ACTIVE")) return "A round is already active.";
+  if (message.includes("CLOSE_ROUND_FIRST")) {
+    return "Close the active round before finishing the quiz.";
+  }
+  if (message.includes("TRACK_LIMIT")) {
+    const raw = message.split(":")[1];
+    const n = Number(raw);
+    const cap = Number.isFinite(n) && n > 0 ? n : 10;
+    return `This quiz already has the maximum of ${cap} songs.`;
+  }
   if (message.includes("NO_TRACK_AVAILABLE")) return "Add curated tracks before starting.";
   if (message.includes("ROUND_NOT_ACTIVE")) return "This round is not open for guesses.";
-  if (message.includes("INVALID_YEAR")) return "Enter a valid year between 1900 and 2100.";
+  if (message.includes("INVALID_YEAR")) {
+    return `Enter a valid year between 1900 and ${new Date().getFullYear()}.`;
+  }
+  if (message.includes("QUIZ_FINISHED")) return "This quiz is already finished.";
+  if (message.includes("QUIZ_EXPIRED")) return "This quiz has expired.";
+  if (message.includes("QUIZ_NOT_JOINABLE")) return "This quiz cannot be changed right now.";
   return message || "Something went wrong.";
+}
+
+function okResult(): QuizRoundActionState {
+  return { ok: true, syncId: crypto.randomUUID() };
+}
+
+/** Client live-sync snapshot (same admin-backed loader as the quiz page). */
+export async function fetchQuizPlaySnapshotAction(quizId: string, joinCode: string) {
+  const id = quizId.trim();
+  const code = joinCode.trim().toUpperCase();
+  if (!id || !code) return null;
+  await ensureAnonymousSession();
+  return getQuizPlayState(id, code);
 }
 
 export async function addCuratedTrackAction(
@@ -32,53 +75,34 @@ export async function addCuratedTrackAction(
     return { error: "Track title is required." };
   }
 
+  const { user } = await ensureAnonymousSession();
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const admin = createAdminClient();
+  const { data: quizRow } = await admin
+    .from("beatage_quizzes")
+    .select("status, host_user_id")
+    .eq("id", quizId)
+    .maybeSingle();
+  if (!quizRow || quizRow.host_user_id !== user.id) {
+    return { error: mapError("NOT_HOST") };
+  }
+  if (quizRow.status === "finished" || quizRow.status === "expired") {
+    return { error: mapError("QUIZ_FINISHED") };
+  }
+
   const { createClient } = await import("@/lib/supabase/server");
   const supabase = await createClient();
 
-  let releaseYear: number | null = null;
-  let originalReleaseYear: number | null = null;
-  let albumArtUrl: string | null = null;
-  let previewUrl: string | null = null;
-  let resolvedSpotifyId = spotifyTrackId || null;
-
-  if (spotifyTrackId) {
-    const details = await getSpotifyTrackById(spotifyTrackId);
-    if (details) {
-      releaseYear = details.releaseYear;
-      originalReleaseYear = details.originalReleaseYear;
-      albumArtUrl = details.albumArtUrl;
-      previewUrl = details.previewUrl;
-      resolvedSpotifyId = details.id;
-    }
-  } else if (artistName) {
-    const match = await findSpotifyTrack(trackName, artistName);
-    if (match) {
-      const details = await getSpotifyTrackById(match.id);
-      if (details) {
-        releaseYear = details.releaseYear;
-        originalReleaseYear = details.originalReleaseYear;
-        albumArtUrl = details.albumArtUrl;
-        previewUrl = details.previewUrl;
-        resolvedSpotifyId = details.id;
-      }
-    }
-  }
-
-  const { error } = await supabase.rpc("add_beatage_curated_track", {
-    p_quiz_id: quizId,
-    p_track_name: trackName,
-    p_artist_name: artistName || null,
-    p_spotify_track_id: resolvedSpotifyId,
-    p_album_art_url: albumArtUrl,
-    p_preview_url: previewUrl,
-    p_release_year: releaseYear,
-    p_original_release_year: originalReleaseYear,
+  const trackResult = await addCuratedTrackToQuiz(supabase, quizId, {
+    title: trackName,
+    artist: artistName,
+    spotifyTrackId: spotifyTrackId || undefined,
   });
 
-  if (error) return { error: mapError(error.message) };
+  if (trackResult.error) return { error: mapError(trackResult.error) };
 
   revalidatePath(`/q/${joinCode}`);
-  return { ok: true };
+  return okResult();
 }
 
 export async function startRoundAction(
@@ -88,18 +112,19 @@ export async function startRoundAction(
   const quizId = String(formData.get("quizId") ?? "").trim();
   const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
 
-  const { createClient } = await import("@/lib/supabase/server");
-  const supabase = await createClient();
+  if (!quizId) {
+    return { error: "Missing quiz id." };
+  }
 
-  const { error } = await supabase.rpc("start_beatage_round", {
-    p_quiz_id: quizId,
-    p_curated_track_id: null,
-  });
-
-  if (error) return { error: mapError(error.message) };
+  // Prefer admin path — remote DB often lacks start_beatage_round (migration 003).
+  const { user } = await ensureAnonymousSession();
+  const result = await startRoundForHost(quizId, user.id, null);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
 
   revalidatePath(`/q/${joinCode}`);
-  return { ok: true };
+  return okResult();
 }
 
 export async function submitGuessAction(
@@ -110,18 +135,25 @@ export async function submitGuessAction(
   const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
   const guessedYear = Number(formData.get("guessedYear"));
 
-  const { createClient } = await import("@/lib/supabase/server");
-  const supabase = await createClient();
+  if (!roundId) {
+    return { error: "Missing round id." };
+  }
 
-  const { error } = await supabase.rpc("submit_beatage_guess", {
-    p_round_id: roundId,
-    p_guessed_year: guessedYear,
-  });
-
-  if (error) return { error: mapError(error.message) };
+  const { user } = await ensureAnonymousSession();
+  const result = await submitGuessForMember(roundId, user.id, guessedYear);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
 
   revalidatePath(`/q/${joinCode}`);
-  return { ok: true };
+  return {
+    ...okResult(),
+    guess: {
+      roundId,
+      userId: user.id,
+      guessedYear,
+    },
+  };
 }
 
 export async function closeRoundAction(
@@ -131,15 +163,39 @@ export async function closeRoundAction(
   const roundId = String(formData.get("roundId") ?? "").trim();
   const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
 
-  const { createClient } = await import("@/lib/supabase/server");
-  const supabase = await createClient();
+  if (!roundId) {
+    return { error: "Missing round id." };
+  }
 
-  const { error } = await supabase.rpc("close_beatage_round", {
-    p_round_id: roundId,
-  });
-
-  if (error) return { error: mapError(error.message) };
+  const { user } = await ensureAnonymousSession();
+  const result = await closeRoundForHost(roundId, user.id);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
 
   revalidatePath(`/q/${joinCode}`);
-  return { ok: true };
+  return okResult();
 }
+
+export async function finishQuizAction(
+  _prev: QuizRoundActionState,
+  formData: FormData,
+): Promise<QuizRoundActionState> {
+  const quizId = String(formData.get("quizId") ?? "").trim();
+  const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
+
+  if (!quizId) {
+    return { error: "Missing quiz id." };
+  }
+
+  const { user } = await ensureAnonymousSession();
+  const result = await finishQuizForHost(quizId, user.id);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
+
+  revalidatePath(`/q/${joinCode}`);
+  revalidatePath("/");
+  return okResult();
+}
+

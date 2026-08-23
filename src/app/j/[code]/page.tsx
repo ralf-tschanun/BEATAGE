@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { JoinQuizDialog } from "@/components/join-quiz-form";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getOptionalUser } from "@/lib/supabase/auth";
 
 type JoinPageProps = {
@@ -34,21 +35,45 @@ export default async function JoinByCodePage({ params }: JoinPageProps) {
   let defaultDisplayName: string | null = null;
 
   if (user) {
-    const [{ data: membership }, { data: profile }] = await Promise.all([
-      supabase
-        .from("beatage_quiz_members")
-        .select("id")
-        .eq("quiz_id", quiz.id)
-        .eq("user_id", user.id)
-        .maybeSingle(),
-      supabase
-        .from("profiles")
-        .select("display_name")
-        .eq("id", user.id)
-        .maybeSingle(),
-    ]);
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("display_name")
+      .eq("id", user.id)
+      .maybeSingle();
 
-    if (membership) {
+    let isMember = false;
+    const { data: membership } = await supabase
+      .from("beatage_quiz_members")
+      .select("id")
+      .eq("quiz_id", quiz.id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    isMember = Boolean(membership);
+
+    if (!isMember) {
+      try {
+        const admin = createAdminClient();
+        const { data: adminMembership } = await admin
+          .from("beatage_quiz_members")
+          .select("id")
+          .eq("quiz_id", quiz.id)
+          .eq("user_id", user.id)
+          .maybeSingle();
+        isMember = Boolean(adminMembership);
+        if (!isMember) {
+          const { data: quizRow } = await admin
+            .from("beatage_quizzes")
+            .select("host_user_id")
+            .eq("id", quiz.id)
+            .maybeSingle();
+          isMember = quizRow?.host_user_id === user.id;
+        }
+      } catch {
+        // ignore missing service role
+      }
+    }
+
+    if (isMember) {
       redirect(`/q/${joinCode}`);
     }
 

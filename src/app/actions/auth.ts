@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { claimGuestPaymentPendingContests } from "@/lib/claim-guest-contests";
+import { claimGuestPaymentPendingQuizzes } from "@/lib/claim-guest-quizzes";
 import { getOptionalUser } from "@/lib/supabase/auth";
 import { getSiteUrl, safeNextPath } from "@/lib/site-url";
 
@@ -214,13 +215,14 @@ export async function signInWithPasswordAction(
     if (guestUserId && signedInUserId && guestUserId !== signedInUserId) {
       try {
         await claimGuestPaymentPendingContests(guestUserId, signedInUserId);
+        await claimGuestPaymentPendingQuizzes(guestUserId, signedInUserId);
       } catch (claimError) {
         const message =
           claimError instanceof Error
             ? claimError.message
             : "Could not move your pending unlock to this account.";
         return {
-          error: `${message} Sign in worked, but open Contests you host and try unlock again — or create a new account on this device instead.`,
+          error: `${message} Sign in worked, but open quizzes you host and try unlock again — or create a new account on this device instead.`,
         };
       }
     }

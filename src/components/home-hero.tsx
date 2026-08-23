@@ -60,13 +60,13 @@ export function HomeHero({
         <div className="mx-auto w-full max-w-xl space-y-3 min-[440px]:max-w-2xl">
           <div className="grid w-full grid-cols-1 gap-3 min-[440px]:grid-cols-2">
             <Link
-              href={canCreate ? "/create" : "/#hosted"}
+              href="/create"
               className={cn(
                 buttonVariants({ size: "lg" }),
                 "h-auto min-h-14 w-full justify-center gap-2 px-5 py-4 text-base",
-                !canCreate && "pointer-events-none opacity-60",
+                atLimit && "ring-1 ring-primary/30",
               )}
-              aria-disabled={!canCreate}
+              aria-disabled={false}
             >
               <PlusCircleIcon className="size-5 shrink-0" weight="bold" />
               Create a quiz
@@ -85,7 +85,11 @@ export function HomeHero({
 
           {atLimit ? (
             <p className="text-sm text-muted-foreground">
-              Active quiz limit reached on your {planBadge} plan. Finish a quiz or{" "}
+              Active quiz limit reached on your {planBadge} plan.{" "}
+              <Link href="/create" className="font-medium text-foreground underline-offset-2 hover:underline">
+                Unlock once to create another
+              </Link>
+              , finish a quiz, or{" "}
               <button
                 type="button"
                 className="font-medium text-foreground underline-offset-2 hover:underline"

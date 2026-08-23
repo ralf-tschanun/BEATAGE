@@ -8,7 +8,7 @@ export function SessionIdentity({ identity }: SessionIdentityProps) {
   if (!identity) {
     return (
       <div className="rounded-lg border px-3 py-3 text-sm text-muted-foreground">
-        No session on this device yet. Create or join a contest to get a guest identity.
+        No session on this device yet. Create or join a quiz to get a guest identity.
       </div>
     );
   }

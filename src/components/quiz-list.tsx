@@ -1,11 +1,33 @@
 "use client";
 
+import { useActionState, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
+import {
+  deleteQuizAction,
+  leaveQuizAction,
+  type QuizActionState,
+} from "@/app/actions/quiz";
+import { SignOutIcon, TrashIcon } from "@phosphor-icons/react";
 import { SiteSectionIcon } from "@/components/site-section-icon";
+import { SwipeToRemoveRow } from "@/components/swipe-to-remove-row";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { DashboardQuiz } from "@/lib/quizzes/dashboard";
 import { quizSourceLabel } from "@/lib/quiz-settings";
 import type { SiteNavItemId } from "@/lib/site-nav-items";
+import { cn } from "@/lib/utils";
+
+const initialActionState: QuizActionState = null;
+
+type QuizRowAction = "leave" | "delete";
 
 function formatExpiresDate(iso: string): string {
   const date = new Date(iso);
@@ -21,56 +43,224 @@ type QuizListProps = {
   emptyText: string;
   quizzes: DashboardQuiz[];
   sectionIcon?: Extract<SiteNavItemId, "hosted" | "joined">;
+  /** Swipe left (mobile) or use the row action button (desktop). */
+  rowAction?: QuizRowAction;
 };
+
+function QuizRow({
+  quiz,
+  className,
+}: {
+  quiz: DashboardQuiz;
+  className?: string;
+}) {
+  return (
+    <Link
+      href={`/q/${quiz.join_code}`}
+      className={cn(
+        "flex flex-col gap-2 px-4 py-4 transition-colors hover:bg-muted/40 sm:flex-row sm:items-center sm:justify-between",
+        className,
+      )}
+    >
+      <div className="min-w-0 space-y-1">
+        <p className="truncate font-medium">{quiz.title}</p>
+        <p className="text-sm text-muted-foreground">
+          {quizSourceLabel(quiz.source)} · code {quiz.join_code}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="secondary">{quiz.status}</Badge>
+        {quiz.status === "payment_pending" ? (
+          <span className="text-xs font-medium text-primary">Finish unlock</span>
+        ) : null}
+        {quiz.member_count != null ? (
+          <span className="text-xs text-muted-foreground">
+            {quiz.member_count}
+            {quiz.max_members != null ? ` / ${quiz.max_members}` : ""} players
+          </span>
+        ) : null}
+        {quiz.expires_at ? (
+          <span className="text-xs text-muted-foreground">
+            expires {formatExpiresDate(quiz.expires_at)}
+          </span>
+        ) : null}
+      </div>
+    </Link>
+  );
+}
+
+function rowActionCopy(action: QuizRowAction, title: string) {
+  if (action === "delete") {
+    return {
+      dialogTitle: "Delete quiz?",
+      dialogDescription: `Delete “${title}”? This removes the quiz and all players.`,
+      confirmLabel: "Yes, delete permanently",
+      pendingLabel: "Deleting…",
+      swipeHint: "Swipe left to delete a quiz.",
+      actionLabel: "Delete",
+    };
+  }
+  return {
+    dialogTitle: "Leave quiz?",
+    dialogDescription: `Leave “${title}”? You can join again later with the invite link if seats are still available.`,
+    confirmLabel: "Yes, leave",
+    pendingLabel: "Leaving…",
+    swipeHint: "Swipe left to leave a quiz.",
+    actionLabel: "Leave",
+  };
+}
 
 export function QuizList({
   title,
   emptyText,
   quizzes,
   sectionIcon,
+  rowAction,
 }: QuizListProps) {
-  return (
-    <section className="space-y-4">
-      <div className="flex items-center gap-2">
-        {sectionIcon ? <SiteSectionIcon id={sectionIcon} /> : null}
-        <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-      </div>
+  const [actionTarget, setActionTarget] = useState<DashboardQuiz | null>(null);
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => new Set());
+  const [leaveState, leaveAction, leavePending] = useActionState(
+    leaveQuizAction,
+    initialActionState,
+  );
+  const [deleteState, deleteAction, deletePending] = useActionState(
+    deleteQuizAction,
+    initialActionState,
+  );
+  const sawSuccessRef = useRef(false);
 
-      {quizzes.length === 0 ? (
+  const pending = rowAction === "delete" ? deletePending : leavePending;
+  const actionState = rowAction === "delete" ? deleteState : leaveState;
+  const formAction = rowAction === "delete" ? deleteAction : leaveAction;
+  const copy = actionTarget && rowAction ? rowActionCopy(rowAction, actionTarget.title) : null;
+  const visibleQuizzes = quizzes.filter((quiz) => !hiddenIds.has(quiz.id));
+
+  useEffect(() => {
+    if (pending) {
+      sawSuccessRef.current = false;
+    }
+  }, [pending]);
+
+  useEffect(() => {
+    const isSuccess = Boolean(actionState?.success);
+    const becameSuccess = isSuccess && !sawSuccessRef.current;
+    sawSuccessRef.current = isSuccess;
+    if (!becameSuccess || !actionTarget) return;
+
+    const removedId = actionTarget.id;
+    const scrollY = window.scrollY;
+    setHiddenIds((prev) => {
+      if (prev.has(removedId)) return prev;
+      const next = new Set(prev);
+      next.add(removedId);
+      return next;
+    });
+    setActionTarget(null);
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: scrollY, left: 0, behavior: "instant" });
+    });
+  }, [actionState, actionTarget]);
+
+  return (
+    <section className="space-y-3">
+      <h2 className="flex items-center gap-3 text-lg font-semibold tracking-tight">
+        {sectionIcon ? <SiteSectionIcon id={sectionIcon} size="sm" /> : null}
+        {title}
+      </h2>
+
+      {visibleQuizzes.length === 0 ? (
         <p className="text-sm text-muted-foreground">{emptyText}</p>
       ) : (
         <ul className="divide-y divide-border/60 rounded-2xl border border-border/60 bg-card/40">
-          {quizzes.map((quiz) => (
-            <li key={quiz.id}>
-              <Link
-                href={`/q/${quiz.join_code}`}
-                className="flex flex-col gap-2 px-4 py-4 transition-colors hover:bg-muted/40 sm:flex-row sm:items-center sm:justify-between"
+          {visibleQuizzes.map((quiz) => {
+            if (!rowAction) {
+              return (
+                <li key={quiz.id}>
+                  <QuizRow quiz={quiz} />
+                </li>
+              );
+            }
+
+            const actionCopy = rowActionCopy(rowAction, quiz.title);
+            const ActionIcon = rowAction === "delete" ? TrashIcon : SignOutIcon;
+
+            return (
+              <li
+                key={quiz.id}
+                className="flex items-stretch overflow-hidden"
               >
-                <div className="min-w-0 space-y-1">
-                  <p className="truncate font-medium">{quiz.title}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {quizSourceLabel(quiz.source)} · code {quiz.join_code}
-                  </p>
+                <div className="min-w-0 flex-1">
+                  <SwipeToRemoveRow
+                    embedded
+                    enabled
+                    actionLabel={actionCopy.actionLabel}
+                    onRequestRemove={() => setActionTarget(quiz)}
+                  >
+                    <QuizRow quiz={quiz} className="-mx-4" />
+                  </SwipeToRemoveRow>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary">{quiz.status}</Badge>
-                  {quiz.member_count != null ? (
-                    <span className="text-xs text-muted-foreground">
-                      {quiz.member_count}
-                      {quiz.max_members != null ? ` / ${quiz.max_members}` : ""} players
-                    </span>
-                  ) : null}
-                  {quiz.expires_at ? (
-                    <span className="text-xs text-muted-foreground">
-                      expires {formatExpiresDate(quiz.expires_at)}
-                    </span>
-                  ) : null}
-                </div>
-              </Link>
-            </li>
-          ))}
+                <button
+                  type="button"
+                  className="max-[511px]:hidden flex w-11 shrink-0 items-center justify-center border-l text-destructive transition-colors hover:bg-destructive/10"
+                  aria-label={
+                    rowAction === "delete"
+                      ? `Delete ${quiz.title}`
+                      : `Leave ${quiz.title}`
+                  }
+                  onClick={() => setActionTarget(quiz)}
+                >
+                  <ActionIcon className="size-4" weight="bold" aria-hidden />
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
+
+      {rowAction ? (
+        <p className="text-xs text-muted-foreground">
+          {rowActionCopy(rowAction, "").swipeHint}{" "}
+          <span className="max-[511px]:hidden">
+            On desktop, use the button on the right of each row.
+          </span>
+        </p>
+      ) : null}
+
+      <Dialog
+        open={Boolean(actionTarget)}
+        onOpenChange={(open) => {
+          if (!open && !pending) setActionTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{copy?.dialogTitle}</DialogTitle>
+            <DialogDescription>{copy?.dialogDescription}</DialogDescription>
+          </DialogHeader>
+          <form key={actionTarget?.id ?? "none"} action={formAction}>
+            <input type="hidden" name="quizId" value={actionTarget?.id ?? ""} />
+            <input type="hidden" name="stayOnPage" value="1" />
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending}
+                onClick={() => setActionTarget(null)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" variant="destructive" disabled={pending}>
+                {pending ? copy?.pendingLabel : copy?.confirmLabel}
+              </Button>
+            </DialogFooter>
+            {actionState?.error ? (
+              <p className="mt-2 text-sm text-destructive" role="alert">
+                {actionState.error}
+              </p>
+            ) : null}
+          </form>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

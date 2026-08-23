@@ -311,6 +311,8 @@ $$;
 revoke all on function public.close_beatage_round(uuid) from public;
 grant execute on function public.close_beatage_round(uuid) to authenticated;
 
+-- 002 already created beatage_curated_tracks_select_member — only add missing policies.
+drop policy if exists beatage_curated_tracks_insert_host on public.beatage_curated_tracks;
 create policy beatage_curated_tracks_insert_host on public.beatage_curated_tracks
   for insert to authenticated
   with check (
@@ -321,15 +323,7 @@ create policy beatage_curated_tracks_insert_host on public.beatage_curated_track
     )
   );
 
-create policy beatage_curated_tracks_select_member on public.beatage_curated_tracks
-  for select to authenticated
-  using (
-    exists (
-      select 1 from public.beatage_quiz_members m
-      where m.quiz_id = beatage_curated_tracks.quiz_id and m.user_id = auth.uid()
-    )
-  );
-
+drop policy if exists beatage_rounds_update_host on public.beatage_rounds;
 create policy beatage_rounds_update_host on public.beatage_rounds
   for update to authenticated
   using (

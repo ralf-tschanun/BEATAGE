@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import Link from "next/link";
 import { createQuizAction, type QuizActionState } from "@/app/actions/quiz";
 import { SiteFooter } from "@/components/site-footer";
@@ -15,6 +15,12 @@ const initialState: QuizActionState = null;
 
 export function CreateQuizForm() {
   const [state, formAction, pending] = useActionState(createQuizAction, initialState);
+
+  useEffect(() => {
+    if (state?.redirectTo && typeof window !== "undefined") {
+      window.location.assign(state.redirectTo);
+    }
+  }, [state?.redirectTo]);
 
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-background via-background to-muted/30">

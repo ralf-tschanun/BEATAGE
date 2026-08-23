@@ -18,7 +18,7 @@ export type SiteNavItemConfig = {
 
 export const SITE_NAV_ITEMS: Record<SiteNavItemId, SiteNavItemConfig> = {
   create: {
-    label: "Create a contest",
+    label: "Create a quiz",
     href: "/create",
     icon: PlusCircleIcon,
     iconClassName: "bg-primary/12 text-primary",
@@ -30,13 +30,13 @@ export const SITE_NAV_ITEMS: Record<SiteNavItemId, SiteNavItemConfig> = {
     iconClassName: "bg-sky-500/12 text-sky-700 dark:text-sky-300",
   },
   hosted: {
-    label: "Contests you host",
+    label: "Quizzes you host",
     href: "/#hosted",
     icon: CrownSimpleIcon,
     iconClassName: "bg-amber-500/12 text-amber-800 dark:text-amber-300",
   },
   joined: {
-    label: "Contests you joined",
+    label: "Quizzes you joined",
     href: "/#joined",
     icon: UsersThreeIcon,
     iconClassName: "bg-violet-500/12 text-violet-800 dark:text-violet-300",

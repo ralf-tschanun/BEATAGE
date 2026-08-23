@@ -53,9 +53,9 @@ function planLimitHint(planId: PlanId): string {
   ].join(" · ");
 }
 
-function checkoutHref(sku: BillingSku, contestId?: string): string {
-  if (sku === "quiz_unlock" && contestId) {
-    return `/api/billing/checkout?sku=${sku}&contestId=${encodeURIComponent(contestId)}`;
+function checkoutHref(sku: BillingSku, quizId?: string): string {
+  if (sku === "quiz_unlock" && quizId) {
+    return `/api/billing/checkout?sku=${sku}&quizId=${encodeURIComponent(quizId)}`;
   }
   return `/api/billing/checkout?sku=${sku}`;
 }
@@ -182,8 +182,8 @@ export function ChangePlanForm({
           ) : null}
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          One contest: unlimited participants and no expiry. Your nomination and
-          candidate limits from setup still apply.
+          One quiz: unlimited songs and participants, no inactivity expiry. Does
+          not count toward your active quiz limit.
         </p>
         {unlockContest?.unlocked ? null : unlockContest?.id ? (
           <div className="mt-3 flex flex-col gap-2">
@@ -200,7 +200,7 @@ export function ChangePlanForm({
         ) : (
           <p className="mt-2 text-xs text-muted-foreground">
             Start unlock from Create when your setup exceeds plan limits, or open
-            an existing contest first.
+            an existing quiz first.
           </p>
         )}
       </div>
@@ -216,7 +216,7 @@ export function ChangePlanForm({
   if (!hasSession) {
     const noSessionMessage = (
       <p className="text-sm text-muted-foreground">
-        Create or join a contest first to unlock plan changes for this device session.
+        Create or join a quiz first to unlock plan changes for this device session.
       </p>
     );
 
@@ -268,7 +268,7 @@ export function ChangePlanForm({
             <DialogTitle>Your plan</DialogTitle>
             <DialogDescription>
               Current plan: {QUIZ_PLANS[currentPlan].label}. Hosts pay — participants stay
-              free. Unlock is a one-time purchase for one contest. Cancel a
+              free. Unlock is a one-time purchase for one quiz. Cancel a
               subscription anytime in the billing portal; the plan stays until the
               period ends, then Free.
             </DialogDescription>

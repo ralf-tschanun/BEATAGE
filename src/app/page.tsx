@@ -50,6 +50,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
               sectionIcon="hosted"
               emptyText="You have not created a quiz on this device yet."
               quizzes={hosted}
+              rowAction="delete"
             />
           </section>
           <section id="joined" className="scroll-mt-20">
@@ -58,6 +59,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
               sectionIcon="joined"
               emptyText="You have not joined any quiz on this device yet."
               quizzes={joined}
+              rowAction="leave"
             />
           </section>
         </div>

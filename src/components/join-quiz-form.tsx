@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { joinQuizAction, type QuizActionState } from "@/app/actions/quiz";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,12 @@ export function JoinQuizDialog({
   const router = useRouter();
   const [state, formAction, pending] = useActionState(joinQuizAction, initialState);
   const initialName = defaultDisplayName?.trim() ?? "";
+
+  useEffect(() => {
+    if (state?.redirectTo && typeof window !== "undefined") {
+      window.location.assign(state.redirectTo);
+    }
+  }, [state?.redirectTo]);
 
   const participantsLabel = maxMembers
     ? `${memberCount} of ${maxMembers} players`

@@ -17,7 +17,7 @@ function mapPlanError(message: string): string {
     return "Please select a valid plan.";
   }
   if (message.includes("NOT_AUTHENTICATED") || message.toLowerCase().includes("auth session")) {
-    return "Create or join a contest first to establish a session, then manage plan.";
+    return "Create or join a quiz first to establish a session, then manage plan.";
   }
   if (message.includes("Anonymous sign-in")) {
     return message;
