@@ -1,5 +1,17 @@
-import type { ChartCountryCode, ScoringModeId } from "@/lib/quiz-settings";
-import { DEFAULT_QUIZ_SETTINGS } from "@/lib/quiz-settings";
+import type {
+  AnswerYearMode,
+  ChartCountryCode,
+  ScoringModeId,
+} from "@/lib/quiz-settings";
+import {
+  clampAutoInterruptAfterEmptyRounds,
+  clampYearRangeTolerance,
+  DEFAULT_QUIZ_SETTINGS,
+  normalizeScoringModes,
+  scoringModeLabel,
+  YEAR_RANGE_TOLERANCE_MAX,
+  YEAR_RANGE_TOLERANCE_MIN,
+} from "@/lib/quiz-settings";
 
 export const CREATE_QUIZ_WIZARD_STORAGE_KEY = "beatage.create-quiz-wizard.v1";
 
@@ -22,7 +34,19 @@ export type CreateQuizWizardState = {
   draftSongs: DraftQuizSong[];
   chartCountries: ChartCountryCode[];
   scoringModes: ScoringModeId[];
+  /** Range mode only (±0–20 years). */
+  yearRangeTolerance: number;
   hostParticipates: boolean;
+  /** Which release year counts as the answer. */
+  answerYearMode: AnswerYearMode;
+  showTitleArtist: boolean;
+  showCorrectAnswer: boolean;
+  showOverallResults: boolean;
+  showResultDetails: boolean;
+  /** Participants see other players in expanded previous-round results. */
+  showOthersInPastResults: boolean;
+  /** Auto Spotify: pause after this many consecutive empty rounds (1–10). */
+  autoInterruptAfterEmptyRounds: number;
 };
 
 export const QUIZ_WIZARD_STEP_TITLES = [
@@ -42,7 +66,16 @@ export function defaultQuizWizardState(hostName = ""): CreateQuizWizardState {
     draftSongs: [{ title: "", artist: "", previewUrl: "", releaseYear: null }],
     chartCountries: [...DEFAULT_QUIZ_SETTINGS.chartCountries],
     scoringModes: [...DEFAULT_QUIZ_SETTINGS.scoringModes],
+    yearRangeTolerance: DEFAULT_QUIZ_SETTINGS.yearRangeTolerance,
     hostParticipates: DEFAULT_QUIZ_SETTINGS.hostParticipates,
+    answerYearMode: DEFAULT_QUIZ_SETTINGS.answerYearMode,
+    showTitleArtist: DEFAULT_QUIZ_SETTINGS.showTitleArtist,
+    showCorrectAnswer: DEFAULT_QUIZ_SETTINGS.showCorrectAnswer,
+    showOverallResults: DEFAULT_QUIZ_SETTINGS.showOverallResults,
+    showResultDetails: DEFAULT_QUIZ_SETTINGS.showResultDetails,
+    showOthersInPastResults: DEFAULT_QUIZ_SETTINGS.showOthersInPastResults,
+    autoInterruptAfterEmptyRounds:
+      DEFAULT_QUIZ_SETTINGS.autoInterruptAfterEmptyRounds,
   };
 }
 
@@ -81,7 +114,27 @@ export function validateQuizWizardStep(state: CreateQuizWizardState, step: numbe
 
   if (step === 2) {
     if (state.chartCountries.length < 1) return "Select at least one chart country.";
-    if (state.scoringModes.length < 1) return "Select at least one scoring mode.";
+    const modes = normalizeScoringModes(state.scoringModes);
+    if (modes.length < 1) return "Select at least one scoring mode.";
+    if (modes.includes("year_distance") && modes.includes("year_range")) {
+      return "Closer wins and Range cannot be combined.";
+    }
+    if (modes.includes("year_range")) {
+      const t = state.yearRangeTolerance;
+      if (
+        !Number.isFinite(t) ||
+        t < YEAR_RANGE_TOLERANCE_MIN ||
+        t > YEAR_RANGE_TOLERANCE_MAX
+      ) {
+        return `Range must be between ±${YEAR_RANGE_TOLERANCE_MIN} and ±${YEAR_RANGE_TOLERANCE_MAX} years.`;
+      }
+    }
+    if (state.playMode === "auto_spotify") {
+      const n = state.autoInterruptAfterEmptyRounds;
+      if (!Number.isFinite(n) || n < 1 || n > 10) {
+        return "Interrupt after empty songs must be between 1 and 10.";
+      }
+    }
     return null;
   }
 
@@ -93,11 +146,38 @@ export function quizWizardSettingsSummary(state: CreateQuizWizardState): string 
     state.playMode === "auto_spotify" ? "Auto Spotify" : "Curated playlist";
   const songs = filledQuizSongs(state).length;
   const countries = state.chartCountries.join(", ");
-  const scoring = state.scoringModes.join(", ");
+  const modes = normalizeScoringModes(state.scoringModes);
+  const scoring = modes.map(scoringModeLabel).join(" + ");
+  const rangeBit = modes.includes("year_range")
+    ? state.yearRangeTolerance === 0
+      ? " · exact year = 1 pt"
+      : ` · ±${state.yearRangeTolerance} years`
+    : "";
+  const yearBasis =
+    state.answerYearMode === "original_recording"
+      ? "Original recording"
+      : "This release / cover";
+  const visibility = [
+    state.showTitleArtist ? "title shown" : "title hidden",
+    state.showCorrectAnswer ? "answer shown" : "answer hidden",
+    state.showOverallResults ? "leaderboard on" : "leaderboard off",
+    state.showResultDetails ? "result details on" : "result details off",
+    state.showResultDetails
+      ? state.showOthersInPastResults
+        ? "others in past results on"
+        : "others in past results off"
+      : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const autoBit =
+    state.playMode === "auto_spotify"
+      ? ` · Auto-interrupt after ${state.autoInterruptAfterEmptyRounds} empty`
+      : "";
   if (state.playMode === "auto_spotify") {
-    return `${mode} · Charts: ${countries} · Scoring: ${scoring}`;
+    return `${mode} · ${yearBasis} · Charts: ${countries} · Scoring: ${scoring}${rangeBit} · ${visibility}${autoBit}`;
   }
-  return `${mode} · ${songs} song${songs === 1 ? "" : "s"} · Charts: ${countries} · Scoring: ${scoring}`;
+  return `${mode} · ${songs} song${songs === 1 ? "" : "s"} · ${yearBasis} · Charts: ${countries} · Scoring: ${scoring}${rangeBit} · ${visibility}`;
 }
 
 type PersistedQuizWizardState = CreateQuizWizardState;
@@ -145,10 +225,38 @@ export function loadQuizWizardState(hostName: string): CreateQuizWizardState | n
         Array.isArray(parsed.chartCountries) && parsed.chartCountries.length > 0
           ? (parsed.chartCountries as ChartCountryCode[])
           : base.chartCountries,
-      scoringModes:
+      scoringModes: normalizeScoringModes(
         Array.isArray(parsed.scoringModes) && parsed.scoringModes.length > 0
           ? (parsed.scoringModes as ScoringModeId[])
           : base.scoringModes,
+      ),
+      yearRangeTolerance: clampYearRangeTolerance(
+        parsed.yearRangeTolerance ?? base.yearRangeTolerance,
+      ),
+      answerYearMode:
+        parsed.answerYearMode === "original_recording" ||
+        parsed.answerYearMode === "this_release"
+          ? parsed.answerYearMode
+          : base.answerYearMode,
+      showTitleArtist: Boolean(
+        parsed.showTitleArtist ?? base.showTitleArtist,
+      ),
+      showCorrectAnswer: Boolean(
+        parsed.showCorrectAnswer ?? base.showCorrectAnswer,
+      ),
+      showOverallResults: Boolean(
+        parsed.showOverallResults ?? base.showOverallResults,
+      ),
+      showResultDetails: Boolean(
+        parsed.showResultDetails ?? base.showResultDetails,
+      ),
+      showOthersInPastResults: Boolean(
+        parsed.showOthersInPastResults ?? base.showOthersInPastResults,
+      ),
+      autoInterruptAfterEmptyRounds: clampAutoInterruptAfterEmptyRounds(
+        parsed.autoInterruptAfterEmptyRounds ??
+          base.autoInterruptAfterEmptyRounds,
+      ),
     };
   } catch {
     return null;

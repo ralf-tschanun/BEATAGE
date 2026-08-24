@@ -2,6 +2,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getOptionalUser } from "@/lib/supabase/auth";
 import { DEFAULT_MAX_CURATED_TRACKS } from "@/lib/quiz-plans";
 import {
+  readQuizSettingsRuntime,
+  resolveQuizSettings,
+} from "@/lib/quiz-scoring";
+import type { BeatageQuizSettings } from "@/lib/quiz-settings";
+import { DEFAULT_QUIZ_SETTINGS, scoringLowWins } from "@/lib/quiz-settings";
+import {
   backfillMissingReleaseYearsForQuiz,
   getQuizCuratedTrackLimit,
 } from "@/lib/quiz-tracks";
@@ -34,6 +40,8 @@ export type RoundRow = {
   album_art_url: string | null;
   preview_url: string | null;
   spotify_track_id: string | null;
+  /** Set after reveal when Chart #1 scoring is on. Null while the round is live. */
+  chart_was_number_one: boolean | null;
 };
 
 export type GuessRow = {
@@ -44,6 +52,8 @@ export type GuessRow = {
    * Populated after reveal for the results list.
    */
   guessed_year: number | null;
+  /** Chart #1 yes/no guess — null when not answered. Hidden while round is active. */
+  guessed_was_number_one: boolean | null;
   points_total: number;
   /** ISO timestamp — newest first in host / results lists. */
   submitted_at: string;
@@ -53,7 +63,36 @@ export type LeaderboardRow = {
   user_id: string;
   display_name: string;
   total_points: number;
+  /** Points earned in the most recent revealed round (0 if none). */
+  last_round_points: number;
 };
+
+export type PastRoundRow = RoundRow & {
+  /** Caller's points for this round (null if they did not guess). */
+  my_points: number | null;
+  /** Full guess list when showResultDetails is on. */
+  guesses: GuessRow[];
+};
+
+function emptyPlayState(joinCode: string) {
+  return {
+    joinCode,
+    currentRoundNumber: 0,
+    tracks: [] as CuratedTrackRow[],
+    activeRound: null as RoundRow | null,
+    resultRound: null as RoundRow | null,
+    pastRounds: [] as PastRoundRow[],
+    roundGuesses: [] as GuessRow[],
+    myGuessYear: null as number | null,
+    myGuessWasNumberOne: null as boolean | null,
+    leaderboard: [] as LeaderboardRow[],
+    memberCount: 0,
+    quizStatus: "open",
+    maxCuratedTracks: DEFAULT_MAX_CURATED_TRACKS as number | null,
+    settings: { ...DEFAULT_QUIZ_SETTINGS } as BeatageQuizSettings,
+    autoInterrupted: false,
+  };
+}
 
 /**
  * Load host/play UI state.
@@ -68,20 +107,7 @@ export async function getQuizPlayState(
 ) {
   const { user } = await getOptionalUser();
   if (!user) {
-    return {
-      joinCode,
-      currentRoundNumber: 0,
-      tracks: [] as CuratedTrackRow[],
-      activeRound: null as RoundRow | null,
-      resultRound: null as RoundRow | null,
-      pastRounds: [] as RoundRow[],
-      roundGuesses: [] as GuessRow[],
-      myGuessYear: null as number | null,
-      leaderboard: [] as LeaderboardRow[],
-      memberCount: 0,
-      quizStatus: "open",
-      maxCuratedTracks: DEFAULT_MAX_CURATED_TRACKS,
-    };
+    return emptyPlayState(joinCode);
   }
 
   const admin = createAdminClient();
@@ -94,20 +120,7 @@ export async function getQuizPlayState(
     .maybeSingle();
 
   if (!membership) {
-    return {
-      joinCode,
-      currentRoundNumber: 0,
-      tracks: [] as CuratedTrackRow[],
-      activeRound: null as RoundRow | null,
-      resultRound: null as RoundRow | null,
-      pastRounds: [] as RoundRow[],
-      roundGuesses: [] as GuessRow[],
-      myGuessYear: null as number | null,
-      leaderboard: [] as LeaderboardRow[],
-      memberCount: 0,
-      quizStatus: "open",
-      maxCuratedTracks: DEFAULT_MAX_CURATED_TRACKS,
-    };
+    return emptyPlayState(joinCode);
   }
 
   const [
@@ -119,7 +132,7 @@ export async function getQuizPlayState(
   ] = await Promise.all([
     admin
       .from("beatage_quizzes")
-      .select("current_round_number, status")
+      .select("current_round_number, status, settings")
       .eq("id", quizId)
       .maybeSingle(),
     admin
@@ -132,7 +145,7 @@ export async function getQuizPlayState(
     admin
       .from("beatage_rounds")
       .select(
-        "id, round_number, status, track_name, artist_name, correct_release_year, original_release_year, album_art_url, preview_url, spotify_track_id",
+        "id, round_number, status, track_name, artist_name, correct_release_year, original_release_year, album_art_url, preview_url, spotify_track_id, chart_was_number_one",
       )
       .eq("quiz_id", quizId)
       .eq("status", "active")
@@ -140,7 +153,7 @@ export async function getQuizPlayState(
     admin
       .from("beatage_rounds")
       .select(
-        "id, round_number, status, track_name, artist_name, correct_release_year, original_release_year, album_art_url, preview_url, spotify_track_id",
+        "id, round_number, status, track_name, artist_name, correct_release_year, original_release_year, album_art_url, preview_url, spotify_track_id, chart_was_number_one",
       )
       .eq("quiz_id", quizId)
       .eq("status", "revealed")
@@ -151,6 +164,15 @@ export async function getQuizPlayState(
       .select("user_id, display_name")
       .eq("quiz_id", quizId),
   ]);
+
+  const settings = resolveQuizSettings(
+    (quizMeta as { settings?: unknown } | null)?.settings,
+  );
+  const runtime = readQuizSettingsRuntime(
+    (quizMeta as { settings?: unknown } | null)?.settings,
+  );
+  const isHostMember = (membership as { role?: string }).role === "host";
+  const hideCorrectForViewer = !settings.showCorrectAnswer && !isHostMember;
 
   const currentRoundNumber =
     (quizMeta as { current_round_number?: number } | null)?.current_round_number ?? 0;
@@ -205,6 +227,7 @@ export async function getQuizPlayState(
           (activeRound as RoundRow).correct_release_year != null,
         correct_release_year: null,
         original_release_year: null,
+        chart_was_number_one: null,
       }
     : null;
 
@@ -213,12 +236,18 @@ export async function getQuizPlayState(
     ? {
         ...revealedList[0],
         has_correct_year: revealedList[0].correct_release_year != null,
+        correct_release_year: hideCorrectForViewer
+          ? null
+          : revealedList[0].correct_release_year,
+        original_release_year: hideCorrectForViewer
+          ? null
+          : revealedList[0].original_release_year,
+        chart_was_number_one:
+          typeof revealedList[0].chart_was_number_one === "boolean"
+            ? revealedList[0].chart_was_number_one
+            : null,
       }
     : null;
-  const pastRounds: RoundRow[] = revealedList.map((round) => ({
-    ...round,
-    has_correct_year: round.correct_release_year != null,
-  }));
 
   let maxCuratedTracks: number | null = DEFAULT_MAX_CURATED_TRACKS;
   try {
@@ -228,15 +257,26 @@ export async function getQuizPlayState(
   }
 
   let myGuessYear: number | null = null;
+  let myGuessWasNumberOne: boolean | null = null;
   if (activeRoundPublic) {
     const { data: guess } = await admin
       .from("beatage_guesses")
-      .select("guessed_year")
+      .select("guessed_year, guessed_was_number_one")
       .eq("round_id", activeRoundPublic.id)
       .eq("user_id", user.id)
       .maybeSingle();
     myGuessYear = (guess as { guessed_year?: number } | null)?.guessed_year ?? null;
+    const chartGuess = (guess as { guessed_was_number_one?: boolean | null } | null)
+      ?.guessed_was_number_one;
+    myGuessWasNumberOne =
+      typeof chartGuess === "boolean" ? chartGuess : null;
   }
+
+  const nameByUser = new Map(
+    ((members ?? []) as Array<{ user_id: string; display_name: string }>).map(
+      (m) => [m.user_id, m.display_name] as const,
+    ),
+  );
 
   let roundGuesses: GuessRow[] = [];
   const resultRound = resultRoundPublic;
@@ -244,15 +284,9 @@ export async function getQuizPlayState(
   if (guessesRound) {
     const { data: guesses } = await admin
       .from("beatage_guesses")
-      .select("user_id, guessed_year, points, points_total, submitted_at")
+      .select("user_id, guessed_year, guessed_was_number_one, points, points_total, submitted_at")
       .eq("round_id", guessesRound.id)
       .order("submitted_at", { ascending: false });
-
-    const nameByUser = new Map(
-      ((members ?? []) as Array<{ user_id: string; display_name: string }>).map(
-        (m) => [m.user_id, m.display_name] as const,
-      ),
-    );
 
     // While a round is open, never send other players' years to the client
     // (host list only shows submitted / not submitted).
@@ -261,6 +295,7 @@ export async function getQuizPlayState(
     roundGuesses = ((guesses ?? []) as Array<{
       user_id: string;
       guessed_year: number | null;
+      guessed_was_number_one: boolean | null;
       points: number | null;
       points_total: number | null;
       submitted_at: string | null;
@@ -268,52 +303,140 @@ export async function getQuizPlayState(
       user_id: g.user_id,
       display_name: nameByUser.get(g.user_id) ?? "Player",
       guessed_year: hideGuessYears ? null : g.guessed_year,
+      guessed_was_number_one: hideGuessYears ? null : g.guessed_was_number_one,
       points_total: g.points_total ?? g.points ?? 0,
       submitted_at: g.submitted_at ?? "",
     }));
+
+    if (!hideGuessYears) {
+      const lowWins = scoringLowWins(settings);
+      roundGuesses.sort((a, b) =>
+        lowWins
+          ? a.points_total - b.points_total || a.display_name.localeCompare(b.display_name)
+          : b.points_total - a.points_total || a.display_name.localeCompare(b.display_name),
+      );
+    }
   }
 
-  const { data: allRounds } = await admin
-    .from("beatage_rounds")
-    .select("id")
-    .eq("quiz_id", quizId)
-    .eq("status", "revealed");
+  const revealedRoundIds = revealedList.map((r) => r.id);
+  const pastGuessesByRound = new Map<string, GuessRow[]>();
+  const myPointsByRound = new Map<string, number>();
 
-  const roundIds = ((allRounds ?? []) as Array<{ id: string }>).map((r) => r.id);
+  if (revealedRoundIds.length > 0) {
+    const { data: pastGuesses } = await admin
+      .from("beatage_guesses")
+      .select(
+        "round_id, user_id, guessed_year, guessed_was_number_one, points, points_total, submitted_at",
+      )
+      .in("round_id", revealedRoundIds)
+      .order("submitted_at", { ascending: false });
+
+    for (const g of (pastGuesses ?? []) as Array<{
+      round_id: string;
+      user_id: string;
+      guessed_year: number | null;
+      guessed_was_number_one: boolean | null;
+      points: number | null;
+      points_total: number | null;
+      submitted_at: string | null;
+    }>) {
+      const pts = g.points_total ?? g.points ?? 0;
+      if (g.user_id === user.id) {
+        myPointsByRound.set(g.round_id, pts);
+      }
+      if (!settings.showResultDetails) continue;
+      if (
+        !isHostMember &&
+        !settings.showOthersInPastResults &&
+        g.user_id !== user.id
+      ) {
+        continue;
+      }
+      const list = pastGuessesByRound.get(g.round_id) ?? [];
+      list.push({
+        user_id: g.user_id,
+        display_name: nameByUser.get(g.user_id) ?? "Player",
+        guessed_year: g.guessed_year,
+        guessed_was_number_one: g.guessed_was_number_one,
+        points_total: pts,
+        submitted_at: g.submitted_at ?? "",
+      });
+      pastGuessesByRound.set(g.round_id, list);
+    }
+
+    if (settings.showResultDetails) {
+      const lowWins = scoringLowWins(settings);
+      for (const [roundId, list] of pastGuessesByRound) {
+        list.sort((a, b) =>
+          lowWins
+            ? a.points_total - b.points_total || a.display_name.localeCompare(b.display_name)
+            : b.points_total - a.points_total || a.display_name.localeCompare(b.display_name),
+        );
+        pastGuessesByRound.set(roundId, list);
+      }
+    }
+  }
+
+  const pastRounds: PastRoundRow[] = revealedList.map((round) => ({
+    ...round,
+    has_correct_year: round.correct_release_year != null,
+    correct_release_year:
+      hideCorrectForViewer || !settings.showResultDetails
+        ? null
+        : round.correct_release_year,
+    original_release_year:
+      hideCorrectForViewer || !settings.showResultDetails
+        ? null
+        : round.original_release_year,
+    chart_was_number_one:
+      typeof round.chart_was_number_one === "boolean"
+        ? round.chart_was_number_one
+        : null,
+    my_points: myPointsByRound.has(round.id)
+      ? (myPointsByRound.get(round.id) as number)
+      : null,
+    guesses: settings.showResultDetails
+      ? (pastGuessesByRound.get(round.id) ?? [])
+      : [],
+  }));
+
   let leaderboard: LeaderboardRow[] = [];
+  const latestRevealedId = revealedList[0]?.id ?? null;
 
-  if (roundIds.length > 0) {
+  if (revealedRoundIds.length > 0) {
     const { data: allGuesses } = await admin
       .from("beatage_guesses")
-      .select("user_id, points, points_total")
-      .in("round_id", roundIds);
+      .select("user_id, round_id, points, points_total")
+      .in("round_id", revealedRoundIds);
 
     const totals = new Map<string, number>();
+    const lastRoundPts = new Map<string, number>();
     for (const g of (allGuesses ?? []) as Array<{
       user_id: string;
+      round_id: string;
       points: number | null;
       points_total: number | null;
     }>) {
       const pts = g.points_total ?? g.points ?? 0;
       totals.set(g.user_id, (totals.get(g.user_id) ?? 0) + pts);
+      if (latestRevealedId && g.round_id === latestRevealedId) {
+        lastRoundPts.set(g.user_id, pts);
+      }
     }
-
-    const nameByUser = new Map(
-      ((members ?? []) as Array<{ user_id: string; display_name: string }>).map(
-        (m) => [m.user_id, m.display_name] as const,
-      ),
-    );
 
     leaderboard = [...totals.entries()]
       .map(([userId, total_points]) => ({
         user_id: userId,
         display_name: nameByUser.get(userId) ?? "Player",
         total_points,
+        last_round_points: lastRoundPts.get(userId) ?? 0,
       }))
-      .sort(
-        (a, b) =>
-          b.total_points - a.total_points || a.display_name.localeCompare(b.display_name),
-      );
+      .sort((a, b) => {
+        const byPoints = scoringLowWins(settings)
+          ? a.total_points - b.total_points
+          : b.total_points - a.total_points;
+        return byPoints || a.display_name.localeCompare(b.display_name);
+      });
   }
 
   return {
@@ -325,9 +448,12 @@ export async function getQuizPlayState(
     pastRounds,
     roundGuesses,
     myGuessYear,
+    myGuessWasNumberOne,
     leaderboard,
     memberCount: ((members ?? []) as Array<{ user_id: string }>).length,
     quizStatus,
     maxCuratedTracks,
+    settings,
+    autoInterrupted: Boolean(runtime.autoInterrupted),
   };
 }

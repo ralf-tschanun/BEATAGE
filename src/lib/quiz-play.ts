@@ -1,5 +1,10 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { resolveQuizSettings, scoreYearGuess } from "@/lib/quiz-scoring";
+import { songWasSinglesNumberOne } from "@/lib/charts/was-number-one";
+import {
+  correctYearForScoring,
+  resolveQuizSettings,
+  scoreYearGuess,
+} from "@/lib/quiz-scoring";
 
 async function assertQuizHost(quizId: string, userId: string) {
   const admin = createAdminClient();
@@ -57,7 +62,7 @@ export async function startRoundForHost(
 
     const { data: quiz, error: quizError } = await admin
       .from("beatage_quizzes")
-      .select("current_round_number, status")
+      .select("current_round_number, status, settings, chart_countries")
       .eq("id", quizId)
       .maybeSingle();
 
@@ -71,6 +76,12 @@ export async function startRoundForHost(
     if (quiz.status === "payment_pending") {
       return { error: "QUIZ_NOT_JOINABLE" };
     }
+
+    const settings = resolveQuizSettings(quiz.settings);
+    const chartCountries =
+      settings.chartCountries.length > 0
+        ? settings.chartCountries
+        : ((quiz.chart_countries as string[] | null) ?? ["DE"]);
 
     const currentRoundNumber =
       typeof quiz.current_round_number === "number" ? quiz.current_round_number : 0;
@@ -117,6 +128,16 @@ export async function startRoundForHost(
     const roundNumber = currentRoundNumber + 1;
     const now = new Date().toISOString();
 
+    const needsChartFlag = settings.scoringModes.includes("chart_was_one");
+    const chartWasNumberOne = needsChartFlag
+      ? await songWasSinglesNumberOne({
+          supabase: admin,
+          title: track.track_name,
+          artist: track.artist_name,
+          countryCodes: chartCountries,
+        })
+      : false;
+
     const { error: insertError } = await admin.from("beatage_rounds").insert({
       quiz_id: quizId,
       round_number: roundNumber,
@@ -128,6 +149,7 @@ export async function startRoundForHost(
       preview_url: track.preview_url,
       correct_release_year: track.release_year,
       original_release_year: track.original_release_year ?? track.release_year,
+      chart_was_number_one: chartWasNumberOne,
       started_at: now,
       guess_opens_at: now,
       host_confirmed_at: now,
@@ -161,6 +183,7 @@ export async function submitGuessForMember(
   roundId: string,
   userId: string,
   guessedYear: number,
+  guessedWasNumberOne: boolean | null = null,
 ): Promise<{ error?: string }> {
   try {
     if (
@@ -194,6 +217,7 @@ export async function submitGuessForMember(
         round_id: roundId,
         user_id: userId,
         guessed_year: guessedYear,
+        guessed_was_number_one: guessedWasNumberOne,
         submitted_at: new Date().toISOString(),
       },
       { onConflict: "round_id,user_id" },
@@ -218,7 +242,9 @@ export async function closeRoundForHost(
     const admin = createAdminClient();
     const { data: round, error: roundError } = await admin
       .from("beatage_rounds")
-      .select("id, quiz_id, status, correct_release_year, original_release_year")
+      .select(
+        "id, quiz_id, status, correct_release_year, original_release_year, chart_was_number_one, track_name, artist_name",
+      )
       .eq("id", roundId)
       .maybeSingle();
 
@@ -234,22 +260,55 @@ export async function closeRoundForHost(
 
     const { data: quizRow } = await admin
       .from("beatage_quizzes")
-      .select("settings")
+      .select("settings, chart_countries")
       .eq("id", round.quiz_id)
       .maybeSingle();
     const settings = resolveQuizSettings(quizRow?.settings);
 
-    const correct = round.correct_release_year as number | null;
+    let wasNumberOne = Boolean(round.chart_was_number_one);
+    if (
+      settings.scoringModes.includes("chart_was_one") &&
+      round.chart_was_number_one == null &&
+      round.track_name
+    ) {
+      const countries =
+        settings.chartCountries.length > 0
+          ? settings.chartCountries
+          : ((quizRow?.chart_countries as string[] | null) ?? ["DE"]);
+      wasNumberOne = await songWasSinglesNumberOne({
+        supabase: admin,
+        title: round.track_name as string,
+        artist: (round.artist_name as string | null) ?? null,
+        countryCodes: countries,
+      });
+      await admin
+        .from("beatage_rounds")
+        .update({ chart_was_number_one: wasNumberOne })
+        .eq("id", roundId);
+    }
+
+    const correct = correctYearForScoring({
+      releaseYear: round.correct_release_year as number | null,
+      originalReleaseYear: round.original_release_year as number | null,
+      answerYearMode: settings.answerYearMode,
+    });
+
     const { data: guesses } = await admin
       .from("beatage_guesses")
-      .select("id, guessed_year")
+      .select("id, guessed_year, guessed_was_number_one")
       .eq("round_id", roundId);
 
-    for (const guess of (guesses ?? []) as Array<{ id: string; guessed_year: number | null }>) {
+    for (const guess of (guesses ?? []) as Array<{
+      id: string;
+      guessed_year: number | null;
+      guessed_was_number_one: boolean | null;
+    }>) {
       const scored = scoreYearGuess({
         guessedYear: guess.guessed_year,
         correctYear: correct,
         settings,
+        wasNumberOne,
+        guessedWasNumberOne: guess.guessed_was_number_one,
       });
       const { error: scoreError } = await admin
         .from("beatage_guesses")

@@ -8,8 +8,14 @@ import {
   startRoundForHost,
   submitGuessForMember,
 } from "@/lib/quiz-play";
+import {
+  mergeQuizSettingsForStorage,
+  readQuizSettingsRuntime,
+  resolveQuizSettings,
+} from "@/lib/quiz-scoring";
 import { ensureAnonymousSession } from "@/lib/supabase/auth";
 import { getQuizPlayState } from "@/lib/quizzes/play-state";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type QuizRoundActionState = {
   error?: string;
@@ -21,6 +27,7 @@ export type QuizRoundActionState = {
     roundId: string;
     userId: string;
     guessedYear: number;
+    guessedWasNumberOne: boolean | null;
   };
 } | null;
 
@@ -50,6 +57,57 @@ function mapError(message: string): string {
 
 function okResult(): QuizRoundActionState {
   return { ok: true, syncId: crypto.randomUUID() };
+}
+
+/** After closing a round: update empty-guess streak; may set autoInterrupted. */
+async function applyEmptyRoundStreak(
+  admin: SupabaseClient,
+  quizId: string,
+  closedRoundId: string,
+  rawSettings: unknown,
+): Promise<{ interrupted: boolean; emptyStreak: number }> {
+  const settings = resolveQuizSettings(rawSettings);
+  const runtime = readQuizSettingsRuntime(rawSettings);
+  const { count } = await admin
+    .from("beatage_guesses")
+    .select("id", { count: "exact", head: true })
+    .eq("round_id", closedRoundId);
+
+  const guessCount = count ?? 0;
+  const emptyStreak =
+    guessCount === 0 ? (runtime.autoEmptyStreak ?? 0) + 1 : 0;
+  const threshold = settings.autoInterruptAfterEmptyRounds;
+  const interrupted =
+    Boolean(runtime.autoInterrupted) || emptyStreak >= threshold;
+
+  await admin
+    .from("beatage_quizzes")
+    .update({
+      settings: mergeQuizSettingsForStorage(settings, {
+        autoEmptyStreak: emptyStreak,
+        autoInterrupted: interrupted,
+      }),
+    })
+    .eq("id", quizId);
+
+  return { interrupted, emptyStreak };
+}
+
+async function clearAutoInterrupt(
+  admin: SupabaseClient,
+  quizId: string,
+  rawSettings: unknown,
+) {
+  const settings = resolveQuizSettings(rawSettings);
+  await admin
+    .from("beatage_quizzes")
+    .update({
+      settings: mergeQuizSettingsForStorage(settings, {
+        autoEmptyStreak: 0,
+        autoInterrupted: false,
+      }),
+    })
+    .eq("id", quizId);
 }
 
 /** Client live-sync snapshot (same admin-backed loader as the quiz page). */
@@ -143,13 +201,21 @@ export async function submitGuessAction(
 ): Promise<QuizRoundActionState> {
   const roundId = String(formData.get("roundId") ?? "").trim();
   const guessedYear = Number(formData.get("guessedYear"));
+  const chartRaw = String(formData.get("guessedWasNumberOne") ?? "").trim();
+  const guessedWasNumberOne =
+    chartRaw === "true" ? true : chartRaw === "false" ? false : null;
 
   if (!roundId) {
     return { error: "Missing round id." };
   }
 
   const { user } = await ensureAnonymousSession();
-  const result = await submitGuessForMember(roundId, user.id, guessedYear);
+  const result = await submitGuessForMember(
+    roundId,
+    user.id,
+    guessedYear,
+    guessedWasNumberOne,
+  );
   if (result.error) {
     return { error: mapError(result.error) };
   }
@@ -160,6 +226,7 @@ export async function submitGuessAction(
       roundId,
       userId: user.id,
       guessedYear,
+      guessedWasNumberOne,
     },
   };
 }
@@ -217,6 +284,9 @@ export type AutoSpotifySyncState = {
   closedRound?: boolean;
   startedRound?: boolean;
   nothingPlaying?: boolean;
+  /** Auto Spotify paused after consecutive empty rounds. */
+  interrupted?: boolean;
+  emptyStreak?: number;
 };
 
 /** Close active round if needed, ensure curated track exists, start round for now-playing. */
@@ -247,6 +317,18 @@ export async function syncAutoSpotifyRoundAction(
     return { error: mapError("QUIZ_FINISHED") };
   }
 
+  let rawSettings = (quizRow as { settings?: unknown }).settings;
+  const runtime = readQuizSettingsRuntime(rawSettings);
+  if (runtime.autoInterrupted && openNewRound) {
+    return {
+      ok: true,
+      interrupted: true,
+      emptyStreak: runtime.autoEmptyStreak ?? 0,
+      startedRound: false,
+      closedRound: false,
+    };
+  }
+
   const { getCurrentlyPlayingForUser } = await import("@/lib/spotify-connect");
   const nowPlaying = await getCurrentlyPlayingForUser();
   if (!nowPlaying.ok) {
@@ -263,8 +345,26 @@ export async function syncAutoSpotifyRoundAction(
       if (active?.id) {
         const closed = await closeRoundForHost(active.id, user.id);
         if (closed.error) return { error: mapError(closed.error) };
+        const streak = await applyEmptyRoundStreak(
+          admin,
+          id,
+          active.id,
+          rawSettings,
+        );
+        const { data: refreshed } = await admin
+          .from("beatage_quizzes")
+          .select("settings")
+          .eq("id", id)
+          .maybeSingle();
+        rawSettings = refreshed?.settings ?? rawSettings;
         revalidatePath(`/q/${code}`);
-        return { ok: true, closedRound: true, nothingPlaying: true };
+        return {
+          ok: true,
+          closedRound: true,
+          nothingPlaying: true,
+          interrupted: streak.interrupted,
+          emptyStreak: streak.emptyStreak,
+        };
       }
     }
     return { ok: true, nothingPlaying: true };
@@ -280,12 +380,28 @@ export async function syncAutoSpotifyRoundAction(
     .maybeSingle();
 
   let closedRound = false;
+  let interrupted = Boolean(runtime.autoInterrupted);
+  let emptyStreak = runtime.autoEmptyStreak ?? 0;
   if (active?.id) {
     const sameTrack = active.spotify_track_id === track.spotifyTrackId;
     if (!sameTrack || opts?.forceClose) {
       const closed = await closeRoundForHost(active.id, user.id);
       if (closed.error) return { error: mapError(closed.error) };
       closedRound = true;
+      const streak = await applyEmptyRoundStreak(
+        admin,
+        id,
+        active.id,
+        rawSettings,
+      );
+      interrupted = streak.interrupted;
+      emptyStreak = streak.emptyStreak;
+      const { data: refreshed } = await admin
+        .from("beatage_quizzes")
+        .select("settings")
+        .eq("id", id)
+        .maybeSingle();
+      rawSettings = refreshed?.settings ?? rawSettings;
     } else if (!openNewRound) {
       return {
         ok: true,
@@ -314,6 +430,21 @@ export async function syncAutoSpotifyRoundAction(
       trackArtist: track.artist,
       closedRound,
       startedRound: false,
+      interrupted,
+      emptyStreak,
+    };
+  }
+
+  if (interrupted) {
+    revalidatePath(`/q/${code}`);
+    return {
+      ok: true,
+      trackTitle: track.title,
+      trackArtist: track.artist,
+      closedRound,
+      startedRound: false,
+      interrupted: true,
+      emptyStreak,
     };
   }
 
@@ -347,7 +478,35 @@ export async function syncAutoSpotifyRoundAction(
     trackArtist: track.artist,
     closedRound,
     startedRound: true,
+    interrupted: false,
+    emptyStreak,
   };
+}
+
+/** Host clears Auto Spotify empty-round interrupt and resumes ingest. */
+export async function resumeAutoSpotifyQuizAction(
+  quizId: string,
+  joinCode: string,
+): Promise<AutoSpotifySyncState> {
+  const id = quizId.trim();
+  const code = joinCode.trim().toUpperCase();
+  if (!id) return { error: "Missing quiz id." };
+
+  const { user } = await ensureAnonymousSession();
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const admin = createAdminClient();
+  const { data: quizRow } = await admin
+    .from("beatage_quizzes")
+    .select("host_user_id, settings")
+    .eq("id", id)
+    .maybeSingle();
+  if (!quizRow || quizRow.host_user_id !== user.id) {
+    return { error: mapError("NOT_HOST") };
+  }
+
+  await clearAutoInterrupt(admin, id, quizRow.settings);
+  revalidatePath(`/q/${code}`);
+  return { ok: true, interrupted: false, emptyStreak: 0 };
 }
 
 export async function skipSpotifyNextAction(

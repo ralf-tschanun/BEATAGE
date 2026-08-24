@@ -2,7 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import {
+  clampAutoInterruptAfterEmptyRounds,
+  clampYearRangeTolerance,
   DEFAULT_QUIZ_SETTINGS,
+  normalizeScoringModes,
   type BeatageQuizSettings,
   type ChartCountryCode,
   type ScoringModeId,
@@ -159,8 +162,47 @@ export async function createQuizAction(
         ...DEFAULT_QUIZ_SETTINGS,
         ...parsed,
         chartCountries: (parsed.chartCountries ?? DEFAULT_QUIZ_SETTINGS.chartCountries) as ChartCountryCode[],
-        scoringModes: (parsed.scoringModes ?? DEFAULT_QUIZ_SETTINGS.scoringModes) as ScoringModeId[],
+        scoringModes: normalizeScoringModes(
+          (parsed.scoringModes ?? DEFAULT_QUIZ_SETTINGS.scoringModes) as ScoringModeId[],
+        ),
+        yearRangeTolerance: clampYearRangeTolerance(
+          parsed.yearRangeTolerance ?? DEFAULT_QUIZ_SETTINGS.yearRangeTolerance,
+        ),
+        combinedScoring: false,
+        secondaryScoringMode: null,
+        answerYearMode:
+          parsed.answerYearMode === "original_recording" ||
+          parsed.answerYearMode === "this_release"
+            ? parsed.answerYearMode
+            : DEFAULT_QUIZ_SETTINGS.answerYearMode,
+        showTitleArtist: Boolean(
+          parsed.showTitleArtist ?? DEFAULT_QUIZ_SETTINGS.showTitleArtist,
+        ),
+        showCorrectAnswer: Boolean(
+          parsed.showCorrectAnswer ?? DEFAULT_QUIZ_SETTINGS.showCorrectAnswer,
+        ),
+        showOverallResults: Boolean(
+          parsed.showOverallResults ?? DEFAULT_QUIZ_SETTINGS.showOverallResults,
+        ),
+        showResultDetails: Boolean(
+          parsed.showResultDetails ?? DEFAULT_QUIZ_SETTINGS.showResultDetails,
+        ),
+        showOthersInPastResults: Boolean(
+          parsed.showOthersInPastResults ??
+            DEFAULT_QUIZ_SETTINGS.showOthersInPastResults,
+        ),
+        autoInterruptAfterEmptyRounds: clampAutoInterruptAfterEmptyRounds(
+          parsed.autoInterruptAfterEmptyRounds ??
+            DEFAULT_QUIZ_SETTINGS.autoInterruptAfterEmptyRounds,
+        ),
       };
+      settings.combinedScoring = settings.scoringModes.length > 1;
+      settings.secondaryScoringMode =
+        settings.scoringModes.length > 1
+          ? (settings.scoringModes.find((mode) => mode === "chart_was_one") ??
+            settings.scoringModes[1] ??
+            null)
+          : null;
     } catch {
       return { error: "Invalid quiz settings." };
     }

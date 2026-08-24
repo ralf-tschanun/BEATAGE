@@ -122,6 +122,22 @@ Start with `POLAR_SERVER=sandbox`, test checkout, then switch to `production`.
 6. Complete Porkbun CNAME (Phase 1)
 7. Set `NEXT_PUBLIC_SITE_URL=https://beatage.gosmooth.eu` → redeploy
 
+### Spotify Connect (host click-to-play)
+
+MyContest only opened Spotify via `spotify:track:` links (no OAuth). BEATAGE host
+playback uses Spotify Connect and needs Redirect URIs in the Spotify Dashboard:
+
+1. Open [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) → your app → Settings
+2. Add **Redirect URIs** (exact match; Spotify has no wildcards):
+   - `http://127.0.0.1:3001/api/spotify/callback` (local — HTTP only allowed for loopback IP; **not** `localhost`)
+   - `https://beatage.gosmooth.eu/api/spotify/callback`
+   - `https://YOUR-PROJECT.vercel.app/api/spotify/callback` (stable Vercel production URL)
+3. Local: set `NEXT_PUBLIC_SITE_URL=http://127.0.0.1:3001` and open the app at
+   that same origin (cookies + OAuth redirect must match).
+4. Vercel: set `NEXT_PUBLIC_SITE_URL=https://beatage.gosmooth.eu` so the OAuth
+   `redirect_uri` is HTTPS (falls back to `https://$VERCEL_URL` when unset).
+5. Host needs Spotify Premium + the Spotify app open (active device).
+
 ---
 
 ## Phase 7 — Smoke test checklist

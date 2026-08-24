@@ -1,3 +1,5 @@
+import { looksLikeCompilationName, looksLikeRemasterLabel, stripRecordingVersionLabel } from "@/lib/original-release-year";
+
 export type SpotifyTrackMatch = {
   id: string;
   url: string;
@@ -12,6 +14,8 @@ export type SpotifyTrackDetails = SpotifyTrackMatch & {
   releaseYear: number | null;
   releaseDate: string | null;
   originalReleaseYear: number | null;
+  albumName: string | null;
+  albumType: string | null;
 };
 
 function parseReleaseYear(releaseDate: string | null | undefined): number | null {
@@ -193,6 +197,8 @@ export async function getSpotifyTrackById(
       external_urls?: { spotify?: string };
       artists?: Array<{ name?: string }>;
       album?: {
+        name?: string;
+        album_type?: string;
         release_date?: string;
         images?: Array<{ url?: string }>;
       };
@@ -221,8 +227,76 @@ export async function getSpotifyTrackById(
       releaseYear,
       releaseDate,
       originalReleaseYear: releaseYear,
+      albumName: data.album?.name?.trim() || null,
+      albumType: data.album?.album_type?.trim() || null,
     };
   } catch {
     return null;
   }
 }
+
+/**
+ * Scan Spotify search hits for album/single years, skipping compilations and remaster labels.
+ * Used to recover an original year when the playing track is a remaster or sampler.
+ */
+export async function searchSpotifyOriginalYearCandidates(
+  title: string,
+  artist: string,
+  market = "DE",
+): Promise<number[]> {
+  const query = buildSearchQuery(stripRecordingVersionLabel(title), artist);
+  if (query.length < 2) return [];
+
+  const token = await getClientCredentialsToken();
+  if (!token) return [];
+
+  const url = new URL("https://api.spotify.com/v1/search");
+  url.searchParams.set("q", query);
+  url.searchParams.set("type", "track");
+  url.searchParams.set("limit", "10");
+  url.searchParams.set("market", market);
+
+  try {
+    const response = await fetch(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as {
+      tracks?: {
+        items?: Array<{
+          name?: string;
+          album?: {
+            name?: string;
+            album_type?: string;
+            release_date?: string;
+          };
+        }>;
+      };
+    };
+
+    const years: number[] = [];
+    for (const item of data.tracks?.items ?? []) {
+      const albumType = item.album?.album_type?.toLowerCase() ?? "";
+      const albumName = item.album?.name ?? "";
+      const trackName = item.name ?? "";
+      if (albumType === "compilation") continue;
+      if (looksLikeCompilationName(albumName) || looksLikeCompilationName(trackName)) {
+        continue;
+      }
+      if (looksLikeRemasterLabel(trackName) || looksLikeRemasterLabel(albumName)) {
+        continue;
+      }
+      const year = parseReleaseYear(item.album?.release_date);
+      if (year != null) years.push(year);
+    }
+    return years;
+  } catch {
+    return [];
+  }
+}
+

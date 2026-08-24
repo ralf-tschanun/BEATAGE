@@ -53,7 +53,18 @@ import {
 } from "@/lib/create-quiz-wizard";
 import type { PlanId } from "@/lib/quiz-plans";
 import { DEFAULT_MAX_CURATED_TRACKS, getQuizPlanLimits } from "@/lib/quiz-plans";
-import type { ChartCountryCode, ScoringModeId } from "@/lib/quiz-settings";
+import type {
+  AnswerYearMode,
+  ChartCountryCode,
+  ScoringModeId,
+} from "@/lib/quiz-settings";
+import {
+  answerYearModeLabel,
+  clampYearRangeTolerance,
+  toggleScoringModeSelection,
+  YEAR_RANGE_TOLERANCE_MAX,
+  YEAR_RANGE_TOLERANCE_MIN,
+} from "@/lib/quiz-settings";
 import { useWizardInputFocus } from "@/lib/wizard-input-focus";
 import { cn } from "@/lib/utils";
 
@@ -61,13 +72,24 @@ const initialState: QuizActionState = null;
 
 const QUIZ_CHART_COUNTRIES: ChartCountryCode[] = ["DE", "AT", "GB"];
 
-const SCORING_OPTIONS: { id: ScoringModeId; label: string }[] = [
-  { id: "year_exact", label: "Exact year" },
-  { id: "year_distance", label: "Closer wins" },
-  { id: "year_range", label: "Within range" },
-  { id: "chart_was_one", label: "Chart #1 guess" },
-  { id: "chart_weeks", label: "Weeks at #1 guess" },
+const YEAR_SCORING_OPTIONS: {
+  id: "year_distance" | "year_range";
+  label: string;
+  body: string;
+}[] = [
+  {
+    id: "year_distance",
+    label: "Closer wins",
+    body: "Penalty points = years off the answer. Lowest score wins.",
+  },
+  {
+    id: "year_range",
+    label: "Range",
+    body: "Score within ± years of the answer. Highest score wins.",
+  },
 ];
+
+const RANGE_TOLERANCE_PRESETS = [0, 5, 10, 15, 20] as const;
 
 type CreateQuizWizardFormProps = {
   defaultHostName?: string | null;
@@ -219,11 +241,19 @@ export function CreateQuizWizardForm({
         source: current.playMode === "auto_spotify" ? "spotify_live" : "curated",
         chartCountries: current.chartCountries,
         scoringModes: current.scoringModes,
+        yearRangeTolerance: current.yearRangeTolerance,
         hostParticipates: current.hostParticipates,
         guessPeriod:
           current.playMode === "auto_spotify" ? "until_next_track" : "host_manual",
         releaseMode:
           current.playMode === "auto_spotify" ? "automatic" : "host_manual",
+        answerYearMode: current.answerYearMode,
+        showTitleArtist: current.showTitleArtist,
+        showCorrectAnswer: current.showCorrectAnswer,
+        showOverallResults: current.showOverallResults,
+        showResultDetails: current.showResultDetails,
+        showOthersInPastResults: current.showOthersInPastResults,
+        autoInterruptAfterEmptyRounds: current.autoInterruptAfterEmptyRounds,
         roundReveal: "after_round",
       }),
     );
@@ -276,12 +306,10 @@ export function CreateQuizWizardForm({
   }
 
   function toggleScoringMode(mode: ScoringModeId) {
-    setWizard((prev) => {
-      const selected = new Set(prev.scoringModes);
-      if (selected.has(mode)) selected.delete(mode);
-      else selected.add(mode);
-      return { ...prev, scoringModes: Array.from(selected) as ScoringModeId[] };
-    });
+    setWizard((prev) => ({
+      ...prev,
+      scoringModes: toggleScoringModeSelection(prev.scoringModes, mode),
+    }));
   }
 
   const wizardReady = hydrated && slotAcked;
@@ -625,23 +653,148 @@ export function CreateQuizWizardForm({
                       <WizardOptionsDivider />
 
                       <div className="space-y-2">
-                        <Label>Scoring modes</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {SCORING_OPTIONS.map((option) => {
-                            const selected = wizard.scoringModes.includes(option.id);
+                        <Label>Answer year</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Remasters and sampler / hits albums are filtered out in
+                          both modes.
+                        </p>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {(
+                            [
+                              {
+                                id: "this_release" as AnswerYearMode,
+                                title: "This release / cover",
+                                body: "Use the year of the played version (e.g. Fugees).",
+                              },
+                              {
+                                id: "original_recording" as AnswerYearMode,
+                                title: "Original recording",
+                                body: "Use the first recording of the song (e.g. Roberta Flack).",
+                              },
+                            ] as const
+                          ).map((option) => {
+                            const selected = wizard.answerYearMode === option.id;
                             return (
-                              <Button
+                              <button
                                 key={option.id}
                                 type="button"
-                                variant={selected ? "default" : "outline"}
-                                size="sm"
-                                onClick={() => toggleScoringMode(option.id)}
+                                onClick={() =>
+                                  patchWizard({ answerYearMode: option.id })
+                                }
+                                className={cn(
+                                  "rounded-2xl border p-4 text-left transition-colors",
+                                  selected
+                                    ? "border-primary bg-primary/5"
+                                    : "border-border/60 hover:bg-muted/40",
+                                )}
                               >
-                                {option.label}
-                              </Button>
+                                <p className="font-medium">{option.title}</p>
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                  {option.body}
+                                </p>
+                              </button>
                             );
                           })}
                         </div>
+                      </div>
+
+                      <WizardOptionsDivider />
+
+                      <div className="space-y-3">
+                        <div className="space-y-1">
+                          <Label>Scoring</Label>
+                          <p className="text-sm text-muted-foreground">
+                            Pick Closer wins or Range (not both). Chart #1 can be
+                            added alone or on top.
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {YEAR_SCORING_OPTIONS.map((option) => {
+                            const selected = wizard.scoringModes.includes(option.id);
+                            return (
+                              <button
+                                key={option.id}
+                                type="button"
+                                onClick={() => toggleScoringMode(option.id)}
+                                className={cn(
+                                  "rounded-2xl border p-4 text-left transition-colors",
+                                  selected
+                                    ? "border-primary bg-primary/5"
+                                    : "border-border/60 hover:bg-muted/40",
+                                )}
+                              >
+                                <p className="font-medium">{option.label}</p>
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                  {option.body}
+                                </p>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {wizard.scoringModes.includes("year_range") ? (
+                          <div className="space-y-2 rounded-2xl border border-border/60 p-4">
+                            <Label htmlFor="yearRangeTolerance">
+                              Range (± years)
+                            </Label>
+                            <p className="text-sm text-muted-foreground">
+                              Exact hit scores the tolerance (or 1 at ±0). Each
+                              year off loses 1 point, down to 0.
+                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {RANGE_TOLERANCE_PRESETS.map((preset) => (
+                                <Button
+                                  key={preset}
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    wizard.yearRangeTolerance === preset
+                                      ? "default"
+                                      : "outline"
+                                  }
+                                  onClick={() =>
+                                    patchWizard({ yearRangeTolerance: preset })
+                                  }
+                                >
+                                  ±{preset}
+                                </Button>
+                              ))}
+                              <Input
+                                id="yearRangeTolerance"
+                                type="number"
+                                min={YEAR_RANGE_TOLERANCE_MIN}
+                                max={YEAR_RANGE_TOLERANCE_MAX}
+                                value={wizard.yearRangeTolerance}
+                                onChange={(event) =>
+                                  patchWizard({
+                                    yearRangeTolerance: clampYearRangeTolerance(
+                                      Number(event.target.value),
+                                    ),
+                                  })
+                                }
+                                className="w-24"
+                              />
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <button
+                          type="button"
+                          onClick={() => toggleScoringMode("chart_was_one")}
+                          className={cn(
+                            "w-full rounded-2xl border p-4 text-left transition-colors",
+                            wizard.scoringModes.includes("chart_was_one")
+                              ? "border-primary bg-primary/5"
+                              : "border-border/60 hover:bg-muted/40",
+                          )}
+                        >
+                          <p className="font-medium">Chart #1</p>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            Alone: 1 point if the song was a singles #1. Combined
+                            with Closer wins or Range: players also guess Yes/No
+                            (correct / skipped / wrong add extra points).
+                          </p>
+                        </button>
                       </div>
 
                       <AdminSwitchField
@@ -653,6 +806,89 @@ export function CreateQuizWizardForm({
                           patchWizard({ hostParticipates: checked })
                         }
                       />
+
+                      <WizardOptionsDivider />
+
+                      <div className="space-y-3">
+                        <Label>Visibility</Label>
+                        <AdminSwitchField
+                          id="showTitleArtist"
+                          label="Show song & artist"
+                          description="Show title and artist to participants during the live round (host always sees them)."
+                          checked={wizard.showTitleArtist}
+                          onCheckedChange={(checked) =>
+                            patchWizard({ showTitleArtist: checked })
+                          }
+                        />
+                        <AdminSwitchField
+                          id="showCorrectAnswer"
+                          label="Show correct answer"
+                          description="Reveal the correct release year after each round closes."
+                          checked={wizard.showCorrectAnswer}
+                          onCheckedChange={(checked) =>
+                            patchWizard({ showCorrectAnswer: checked })
+                          }
+                        />
+                        <AdminSwitchField
+                          id="showOverallResults"
+                          label="Show overall results"
+                          description="Show the running leaderboard with scores during the quiz."
+                          checked={wizard.showOverallResults}
+                          onCheckedChange={(checked) =>
+                            patchWizard({ showOverallResults: checked })
+                          }
+                        />
+                        <AdminSwitchField
+                          id="showResultDetails"
+                          label="Show details in results list"
+                          description="Previous rounds show release years and expand to full round results. When off, players only see their points for each past round."
+                          checked={wizard.showResultDetails}
+                          onCheckedChange={(checked) =>
+                            patchWizard({ showResultDetails: checked })
+                          }
+                        />
+                        {wizard.showResultDetails ? (
+                          <AdminSwitchField
+                            id="showOthersInPastResults"
+                            label="Show others in past results"
+                            description="Let participants see other players’ guesses in expanded previous rounds. Host always sees everyone. Turn off for large groups."
+                            checked={wizard.showOthersInPastResults}
+                            onCheckedChange={(checked) =>
+                              patchWizard({ showOthersInPastResults: checked })
+                            }
+                          />
+                        ) : null}
+                      </div>
+
+                      {wizard.playMode === "auto_spotify" ? (
+                        <>
+                          <WizardOptionsDivider />
+                          <div className="space-y-2">
+                            <Label htmlFor="autoInterruptAfterEmptyRounds">
+                              Interrupt after empty songs
+                            </Label>
+                            <p className="text-sm text-muted-foreground">
+                              If this many songs in a row get no guesses, Auto
+                              Spotify pauses until you continue (1–10).
+                            </p>
+                            <Input
+                              id="autoInterruptAfterEmptyRounds"
+                              type="number"
+                              min={1}
+                              max={10}
+                              value={wizard.autoInterruptAfterEmptyRounds}
+                              onChange={(event) =>
+                                patchWizard({
+                                  autoInterruptAfterEmptyRounds: Number(
+                                    event.target.value,
+                                  ),
+                                })
+                              }
+                              className="w-24"
+                            />
+                          </div>
+                        </>
+                      ) : null}
                     </div>
                   ) : null}
 
@@ -677,6 +913,10 @@ export function CreateQuizWizardForm({
                           ? "Auto Spotify"
                           : "Curated playlist"}
                       </p>
+                      <p>
+                        <span className="font-medium">Answer year:</span>{" "}
+                        {answerYearModeLabel(wizard.answerYearMode)}
+                      </p>
                       {wizard.playMode === "curate" ? (
                         <p>
                           <span className="font-medium">Playlist:</span>{" "}
@@ -688,6 +928,37 @@ export function CreateQuizWizardForm({
                         <span className="font-medium">Settings:</span>{" "}
                         {quizWizardSettingsSummary(wizard)}
                       </p>
+                      <p>
+                        <span className="font-medium">Show song & artist:</span>{" "}
+                        {wizard.showTitleArtist ? "yes" : "no"}
+                      </p>
+                      <p>
+                        <span className="font-medium">Show correct answer:</span>{" "}
+                        {wizard.showCorrectAnswer ? "yes" : "no"}
+                      </p>
+                      <p>
+                        <span className="font-medium">Show overall results:</span>{" "}
+                        {wizard.showOverallResults ? "yes" : "no"}
+                      </p>
+                      <p>
+                        <span className="font-medium">Result details:</span>{" "}
+                        {wizard.showResultDetails ? "yes" : "no"}
+                      </p>
+                      {wizard.showResultDetails ? (
+                        <p>
+                          <span className="font-medium">
+                            Others in past results:
+                          </span>{" "}
+                          {wizard.showOthersInPastResults ? "yes" : "no"}
+                        </p>
+                      ) : null}
+                      {wizard.playMode === "auto_spotify" ? (
+                        <p>
+                          <span className="font-medium">Auto interrupt:</span>{" "}
+                          after {wizard.autoInterruptAfterEmptyRounds} empty
+                          songs
+                        </p>
+                      ) : null}
                       <p className="text-muted-foreground">
                         Press Create quiz to publish. Nothing is stored until now — same flow as
                         MyContest.

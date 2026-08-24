@@ -4,6 +4,10 @@ import {
   parseItunesReleaseYear,
   type ItunesTrackResult,
 } from "@/lib/music";
+import {
+  looksLikeCompilationName,
+  looksLikeRemasterLabel,
+} from "@/lib/original-release-year";
 
 type ItunesApiResult = {
   trackId?: number;
@@ -34,7 +38,8 @@ export async function GET(request: Request) {
   url.searchParams.set("term", term);
   url.searchParams.set("media", "music");
   url.searchParams.set("entity", "song");
-  url.searchParams.set("limit", "8");
+  // Fetch a few extra so filtering remasters/samplers still leaves enough hits.
+  url.searchParams.set("limit", "20");
   url.searchParams.set("country", country);
 
   try {
@@ -59,6 +64,18 @@ export async function GET(request: Request) {
           Boolean(item.trackName?.trim()) &&
           Boolean(item.artistName?.trim()),
       )
+      .filter((item) => {
+        const trackName = item.trackName ?? "";
+        const collection = item.collectionName ?? "";
+        if (looksLikeCompilationName(collection) || looksLikeCompilationName(trackName)) {
+          return false;
+        }
+        if (looksLikeRemasterLabel(collection) || looksLikeRemasterLabel(trackName)) {
+          return false;
+        }
+        return true;
+      })
+      .slice(0, 8)
       .map((item) => ({
         trackId: item.trackId as number,
         trackName: (item.trackName as string).trim(),

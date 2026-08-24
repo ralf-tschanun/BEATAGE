@@ -9,8 +9,11 @@ import type {
   CuratedTrackRow,
   GuessRow,
   LeaderboardRow,
+  PastRoundRow,
   RoundRow,
 } from "@/lib/quizzes/play-state";
+import type { BeatageQuizSettings } from "@/lib/quiz-settings";
+import { DEFAULT_QUIZ_SETTINGS } from "@/lib/quiz-settings";
 
 type QuizLiveRefreshProps = {
   quizId: string;
@@ -31,13 +34,16 @@ export type QuizPlaySnapshot = {
   tracks: CuratedTrackRow[];
   activeRound: RoundRow | null;
   resultRound: RoundRow | null;
-  pastRounds: RoundRow[];
+  pastRounds: PastRoundRow[];
   roundGuesses: GuessRow[];
   myGuessYear: number | null;
+  myGuessWasNumberOne: boolean | null;
   leaderboard: LeaderboardRow[];
   memberCount: number;
   quizStatus: string;
   maxCuratedTracks: number | null;
+  settings: BeatageQuizSettings;
+  autoInterrupted: boolean;
 };
 
 export type QuizPlayLivePatch =
@@ -122,6 +128,7 @@ async function fetchQuizPlaySnapshot(
     pastRounds: state.pastRounds ?? [],
     roundGuesses: state.roundGuesses,
     myGuessYear: state.myGuessYear,
+    myGuessWasNumberOne: state.myGuessWasNumberOne ?? null,
     leaderboard: state.leaderboard,
     memberCount: state.memberCount ?? 0,
     quizStatus: state.quizStatus ?? "open",
@@ -129,6 +136,8 @@ async function fetchQuizPlaySnapshot(
       state.maxCuratedTracks === undefined
         ? DEFAULT_MAX_CURATED_TRACKS
         : state.maxCuratedTracks,
+    settings: state.settings ?? { ...DEFAULT_QUIZ_SETTINGS },
+    autoInterrupted: Boolean(state.autoInterrupted),
   };
 }
 
@@ -143,12 +152,28 @@ function snapshotFingerprint(snapshot: QuizPlaySnapshot): string {
     snapshot.resultRound?.status ?? "",
     snapshot.pastRounds.map((r) => r.id).join(","),
     snapshot.myGuessYear ?? "",
+    snapshot.myGuessWasNumberOne === true
+      ? "1"
+      : snapshot.myGuessWasNumberOne === false
+        ? "0"
+        : "",
     snapshot.memberCount,
     snapshot.roundGuesses
-      .map((g) => `${g.user_id}:${g.submitted_at}:${g.guessed_year}:${g.points_total}`)
+      .map(
+        (g) =>
+          `${g.user_id}:${g.submitted_at}:${g.guessed_year}:${g.guessed_was_number_one}:${g.points_total}`,
+      )
       .join(","),
-    snapshot.leaderboard.map((r) => `${r.user_id}:${r.total_points}`).join(","),
+    snapshot.leaderboard
+      .map((r) => `${r.user_id}:${r.total_points}:${r.last_round_points}`)
+      .join(","),
     snapshot.tracks.map((t) => t.id).join(","),
+    snapshot.autoInterrupted ? "1" : "0",
+    snapshot.settings.showTitleArtist ? "1" : "0",
+    snapshot.settings.showCorrectAnswer ? "1" : "0",
+    snapshot.settings.showOverallResults ? "1" : "0",
+    snapshot.settings.showResultDetails ? "1" : "0",
+    snapshot.settings.showOthersInPastResults ? "1" : "0",
   ].join("|");
 }
 

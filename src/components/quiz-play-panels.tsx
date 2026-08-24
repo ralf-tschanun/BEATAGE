@@ -24,11 +24,15 @@ import { SpotifyTrackLink } from "@/components/spotify-track-link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CaretDownIcon, CheckIcon, XIcon } from "@phosphor-icons/react";
 import { BILLING_SKU_LABELS } from "@/lib/billing-copy";
+import { DEFAULT_QUIZ_SETTINGS, scoringCombinesChart, scoringLowWins, type BeatageQuizSettings } from "@/lib/quiz-settings";
+import { cn } from "@/lib/utils";
 import type {
   CuratedTrackRow,
   GuessRow,
   LeaderboardRow,
+  PastRoundRow,
   RoundRow,
 } from "@/lib/quizzes/play-state";
 import { useWizardInputFocus } from "@/lib/wizard-input-focus";
@@ -59,6 +63,108 @@ function spotifyOpenForHostTrack(opts: {
   };
 }
 
+function ChartGuessVerdict({
+  guessed,
+  wasNumberOne,
+}: {
+  guessed: boolean | null;
+  wasNumberOne: boolean | null;
+}) {
+  if (guessed == null || wasNumberOne == null) return null;
+  const correct = guessed === wasNumberOne;
+  return correct ? (
+    <CheckIcon
+      className="inline size-3.5 shrink-0 text-emerald-600"
+      weight="bold"
+      aria-label="correct"
+    />
+  ) : (
+    <XIcon
+      className="inline size-3.5 shrink-0 text-red-600"
+      weight="bold"
+      aria-label="wrong"
+    />
+  );
+}
+
+function RoundGuessesList({
+  guesses,
+  emptyLabel = "No guesses this round.",
+  showChartGuess = false,
+  wasNumberOne = null,
+}: {
+  guesses: GuessRow[];
+  emptyLabel?: string;
+  showChartGuess?: boolean;
+  wasNumberOne?: boolean | null;
+}) {
+  return (
+    <ul className="divide-y divide-border/60 rounded-xl border border-border/60 text-sm">
+      {guesses.length > 0 ? (
+        guesses.map((g) => (
+          <li key={g.user_id} className="flex justify-between gap-3 px-4 py-2">
+            <span>{g.display_name}</span>
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              {g.guessed_year ?? "—"}
+              {showChartGuess ? (
+                <>
+                  {g.guessed_was_number_one == null
+                    ? " · #1: —"
+                    : g.guessed_was_number_one
+                      ? " · #1: yes"
+                      : " · #1: no"}
+                  <ChartGuessVerdict
+                    guessed={g.guessed_was_number_one}
+                    wasNumberOne={wasNumberOne}
+                  />
+                </>
+              ) : null}
+              {" · "}
+              {g.points_total} pt
+            </span>
+          </li>
+        ))
+      ) : (
+        <li className="px-4 py-3 text-muted-foreground">{emptyLabel}</li>
+      )}
+    </ul>
+  );
+}
+
+function RoundCorrectYear({
+  round,
+  show,
+  showChartOne,
+}: {
+  round: RoundRow;
+  show: boolean;
+  showChartOne?: boolean;
+}) {
+  if (!show && !showChartOne) return null;
+  return (
+    <div className="space-y-1">
+      {show ? (
+        <p className="text-sm font-medium text-emerald-700">
+          Correct release year:{" "}
+          <span className="font-bold">{round.correct_release_year ?? "—"}</span>
+          {round.original_release_year &&
+          round.original_release_year !== round.correct_release_year
+            ? ` (original ${round.original_release_year})`
+            : null}
+        </p>
+      ) : null}
+      {showChartOne && typeof round.chart_was_number_one === "boolean" ? (
+        <p className="text-sm font-medium text-emerald-700">
+          Chart #1:{" "}
+          <span className="font-bold">
+            {round.chart_was_number_one ? "yes" : "no"}
+          </span>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 type QuizPlayPanelsProps = {
   quizId: string;
   joinCode: string;
@@ -70,14 +176,19 @@ type QuizPlayPanelsProps = {
   currentRoundNumber: number;
   activeRound: RoundRow | null;
   resultRound: RoundRow | null;
-  pastRounds?: RoundRow[];
+  pastRounds?: PastRoundRow[];
   roundGuesses: GuessRow[];
   myGuessYear: number | null;
+  myGuessWasNumberOne?: boolean | null;
   leaderboard: LeaderboardRow[];
   quizStatus: string;
   maxCuratedTracks: number | null;
+  settings?: BeatageQuizSettings;
+  autoInterrupted?: boolean;
   /** Guest sessions need an email account before Polar unlock checkout. */
   isAnonymous?: boolean;
+  currentUserId?: string | null;
+  hostUserId?: string | null;
 };
 
 export function QuizPlayPanels({
@@ -93,10 +204,15 @@ export function QuizPlayPanels({
   pastRounds: pastRoundsProp = [],
   roundGuesses: roundGuessesProp,
   myGuessYear: myGuessYearProp,
+  myGuessWasNumberOne: myGuessWasNumberOneProp = null,
   leaderboard: leaderboardProp,
   quizStatus: quizStatusProp,
   maxCuratedTracks: maxCuratedTracksProp,
+  settings: settingsProp = DEFAULT_QUIZ_SETTINGS,
+  autoInterrupted: autoInterruptedProp = false,
   isAnonymous = false,
+  currentUserId = null,
+  hostUserId = null,
 }: QuizPlayPanelsProps) {
   const router = useRouter();
   const lastSyncIdRef = useRef<string | null>(null);
@@ -120,6 +236,10 @@ export function QuizPlayPanels({
     focusById("host-add-track-search", { keyboardSafe: true });
   }, [showAddTrack, focusById]);
 
+  const [expandedPastRoundId, setExpandedPastRoundId] = useState<string | null>(
+    null,
+  );
+
   const isAutoSpotify = quizSource === "spotify_live";
 
   // Live snapshot (MyContest pattern) — client fetch beats waiting on RSC alone.
@@ -131,10 +251,13 @@ export function QuizPlayPanels({
     pastRounds: pastRoundsProp,
     roundGuesses: roundGuessesProp,
     myGuessYear: myGuessYearProp,
+    myGuessWasNumberOne: myGuessWasNumberOneProp,
     leaderboard: leaderboardProp,
     memberCount: memberCountProp,
     quizStatus: quizStatusProp,
     maxCuratedTracks: maxCuratedTracksProp,
+    settings: settingsProp,
+    autoInterrupted: autoInterruptedProp,
   }));
 
   const tracks = live.tracks;
@@ -144,11 +267,22 @@ export function QuizPlayPanels({
   const pastRounds = live.pastRounds ?? [];
   const roundGuesses = live.roundGuesses;
   const myGuessYear = live.myGuessYear;
+  const myGuessWasNumberOne = live.myGuessWasNumberOne ?? null;
   const leaderboard = live.leaderboard;
   const memberCount = live.memberCount;
   const quizStatus = live.quizStatus;
   const isFinished = quizStatus === "finished" || quizStatus === "expired";
   const maxCuratedTracks = live.maxCuratedTracks;
+  const settings = live.settings ?? settingsProp;
+  const autoInterrupted = live.autoInterrupted ?? autoInterruptedProp;
+  const showLeaderboard =
+    leaderboard.length > 0 &&
+    (isHost || settings.showOverallResults || isFinished);
+  // Hide the latest result from Previous rounds only while it is shown
+  // in the results card. Once the next song starts, include it again.
+  const historyRounds = pastRounds.filter(
+    (round) => Boolean(activeRound) || round.id !== resultRound?.id,
+  );
   const atTrackLimit =
     !isAutoSpotify &&
     maxCuratedTracks != null &&
@@ -165,6 +299,9 @@ export function QuizPlayPanels({
 
   const [guessYear, setGuessYear] = useState(
     myGuessYearProp != null ? String(myGuessYearProp) : "",
+  );
+  const [guessWasNumberOne, setGuessWasNumberOne] = useState<boolean | null>(
+    myGuessWasNumberOneProp,
   );
   const [optimisticGuessYear, setOptimisticGuessYear] = useState<number | null>(
     null,
@@ -197,8 +334,9 @@ export function QuizPlayPanels({
 
   useEffect(() => {
     setGuessYear(myGuessYear != null ? String(myGuessYear) : "");
+    setGuessWasNumberOne(myGuessWasNumberOne);
     if (myGuessYear != null) setOptimisticGuessYear(null);
-  }, [myGuessYear, activeRound?.id]);
+  }, [myGuessYear, myGuessWasNumberOne, activeRound?.id]);
 
   useEffect(() => {
     setOptimisticGuessYear(null);
@@ -206,9 +344,16 @@ export function QuizPlayPanels({
 
   async function submitGuess(formData: FormData) {
     const year = Number(formData.get("guessedYear"));
+    const chartRaw = String(formData.get("guessedWasNumberOne") ?? "").trim();
+    const chartGuess =
+      chartRaw === "true" ? true : chartRaw === "false" ? false : null;
     if (Number.isFinite(year)) {
       setOptimisticGuessYear(year);
-      setLive((prev) => ({ ...prev, myGuessYear: year }));
+      setLive((prev) => ({
+        ...prev,
+        myGuessYear: year,
+        myGuessWasNumberOne: chartGuess,
+      }));
     }
     setGuessBusy(true);
     let settled = false;
@@ -222,7 +367,12 @@ export function QuizPlayPanels({
       if (!settled) {
         setGuessState(next);
         if (next?.guess?.guessedYear != null) {
-          setLive((prev) => ({ ...prev, myGuessYear: next.guess!.guessedYear }));
+          setLive((prev) => ({
+            ...prev,
+            myGuessYear: next.guess!.guessedYear,
+            myGuessWasNumberOne: next.guess!.guessedWasNumberOne ?? null,
+          }));
+          setGuessWasNumberOne(next.guess!.guessedWasNumberOne ?? null);
         }
       }
     } catch (error) {
@@ -253,6 +403,7 @@ export function QuizPlayPanels({
             user_id: patch.userId,
             display_name: patch.displayName ?? "Player",
             guessed_year: null,
+            guessed_was_number_one: null,
             points_total: 0,
             submitted_at: new Date().toISOString(),
           },
@@ -262,6 +413,7 @@ export function QuizPlayPanels({
     });
   }, [quizId, activeRound]);
 
+  const chartComboEnabled = scoringCombinesChart(settings);
   // After any successful play action: notify peers + soft refresh (MyContest pattern).
   useEffect(() => {
     const syncId =
@@ -300,6 +452,8 @@ export function QuizPlayPanels({
             quizId={quizId}
             joinCode={joinCode}
             disabled={isFinished}
+            autoInterrupted={autoInterrupted}
+            emptyStreakThreshold={settings.autoInterruptAfterEmptyRounds}
           />
           {canFinish ? (
             <form action={finishAction} className="flex flex-wrap gap-2">
@@ -622,6 +776,15 @@ export function QuizPlayPanels({
                   </span>
                 )}
               </>
+            ) : settings.showTitleArtist ? (
+              <>
+                <span className="font-medium text-foreground">
+                  {activeRound.track_name}
+                </span>
+                {activeRound.artist_name ? ` — ${activeRound.artist_name}` : ""}
+                {" · "}
+                Listen, then enter the release year. Updates appear live for everyone.
+              </>
             ) : (
               "Listen to the track the host is playing, then enter the release year. Updates appear live for everyone."
             )}
@@ -637,6 +800,17 @@ export function QuizPlayPanels({
           <form action={submitGuess} className="flex flex-wrap items-end gap-3">
             <input type="hidden" name="roundId" value={activeRound.id} />
             <input type="hidden" name="joinCode" value={joinCode} />
+            <input
+              type="hidden"
+              name="guessedWasNumberOne"
+              value={
+                guessWasNumberOne == null
+                  ? ""
+                  : guessWasNumberOne
+                    ? "true"
+                    : "false"
+              }
+            />
             <div className="space-y-2">
               <Label htmlFor="guessedYear">Release year</Label>
               <Input
@@ -651,6 +825,38 @@ export function QuizPlayPanels({
                 className="w-32"
               />
             </div>
+            {chartComboEnabled ? (
+              <div className="space-y-2">
+                <Label>Was this a chart #1?</Label>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={guessWasNumberOne === true ? "default" : "outline"}
+                    onClick={() =>
+                      setGuessWasNumberOne((prev) => (prev === true ? null : true))
+                    }
+                  >
+                    Yes
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={guessWasNumberOne === false ? "default" : "outline"}
+                    onClick={() =>
+                      setGuessWasNumberOne((prev) =>
+                        prev === false ? null : false,
+                      )
+                    }
+                  >
+                    No
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Optional — leave blank if unsure.
+                </p>
+              </div>
+            ) : null}
             <Button type="submit" disabled={guessBusy}>
               {guessBusy
                 ? "Saving…"
@@ -664,6 +870,13 @@ export function QuizPlayPanels({
             {myGuessYear != null && !guessState?.error ? (
               <p className="w-full text-sm text-muted-foreground">
                 Your current guess: {myGuessYear}
+                {chartComboEnabled
+                  ? myGuessWasNumberOne == null
+                    ? " · #1: skipped"
+                    : myGuessWasNumberOne
+                      ? " · #1: yes"
+                      : " · #1: no"
+                  : null}
               </p>
             ) : null}
           </form>
@@ -742,34 +955,29 @@ export function QuizPlayPanels({
               label={`${resultRound.track_name ?? "Track"} preview`}
             />
           ) : null}
-          <p className="text-sm font-medium text-emerald-700">
-            Correct release year:{" "}
-            <span className="font-bold">{resultRound.correct_release_year ?? "—"}</span>
-            {resultRound.original_release_year &&
-            resultRound.original_release_year !== resultRound.correct_release_year
-              ? ` (original ${resultRound.original_release_year})`
-              : null}
-          </p>
-          <ul className="divide-y divide-border/60 rounded-xl border border-border/60 text-sm">
-            {roundGuesses.length > 0 ? (
-              roundGuesses.map((g) => (
-                <li key={g.user_id} className="flex justify-between px-4 py-2">
-                  <span>{g.display_name}</span>
-                  <span className="text-muted-foreground">
-                    {g.guessed_year ?? "—"} · {g.points_total} pt
-                  </span>
-                </li>
-              ))
-            ) : (
-              <li className="px-4 py-3 text-muted-foreground">No guesses this round.</li>
-            )}
-          </ul>
+          <RoundCorrectYear
+            round={resultRound}
+            show={isHost || settings.showCorrectAnswer}
+            showChartOne={chartComboEnabled}
+          />
+          <RoundGuessesList
+            guesses={roundGuesses}
+            showChartGuess={chartComboEnabled}
+            wasNumberOne={
+              chartComboEnabled ? resultRound.chart_was_number_one : null
+            }
+          />
         </section>
       ) : null}
 
-      {leaderboard.length > 0 ? (
+      {showLeaderboard ? (
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Leaderboard</h2>
+          <div>
+            <h2 className="text-lg font-semibold">Leaderboard</h2>
+            {scoringLowWins(settings) ? (
+              <p className="text-sm text-muted-foreground">Lowest score wins.</p>
+            ) : null}
+          </div>
           <ul className="divide-y divide-border/60 rounded-2xl border border-border/60">
             {leaderboard.map((row, index) => (
               <li
@@ -778,35 +986,101 @@ export function QuizPlayPanels({
               >
                 <span>
                   #{index + 1} {row.display_name}
+                  {row.user_id === currentUserId ? (
+                    <span className="text-muted-foreground"> (You)</span>
+                  ) : null}
+                  {hostUserId && row.user_id === hostUserId ? (
+                    <span className="text-muted-foreground"> (Host)</span>
+                  ) : null}
                 </span>
-                <span className="font-medium">{row.total_points} pt</span>
+                <span className="font-medium">
+                  {row.total_points} pt
+                  <span className="ml-2 font-normal text-muted-foreground">
+                    {scoringLowWins(settings)
+                      ? `(${row.last_round_points ?? 0})`
+                      : `(+${row.last_round_points ?? 0})`}
+                  </span>
+                </span>
               </li>
             ))}
           </ul>
         </section>
       ) : null}
 
-      {pastRounds.length > 0 ? (
+      {historyRounds.length > 0 ? (
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">Previous rounds</h2>
           <ul className="divide-y divide-border/60 rounded-2xl border border-border/60">
-            {pastRounds.map((round) => (
-              <li key={round.id} className="space-y-1 px-4 py-3 text-sm">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <p>
-                    <span className="text-muted-foreground">
-                      Round {round.round_number}
-                    </span>
-                    {" · "}
-                    <span className="font-medium">{round.track_name}</span>
-                    {round.artist_name ? ` — ${round.artist_name}` : ""}
-                  </p>
-                  <p className="font-medium text-emerald-700">
-                    {round.correct_release_year ?? "—"}
-                  </p>
-                </div>
-              </li>
-            ))}
+            {historyRounds.map((round) => {
+              const expanded =
+                settings.showResultDetails && expandedPastRoundId === round.id;
+              const canExpand = settings.showResultDetails;
+              return (
+                <li key={round.id} className="space-y-2 px-3 py-2 text-sm">
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex w-full items-start justify-between gap-3 text-left",
+                      canExpand && "cursor-pointer",
+                    )}
+                    disabled={!canExpand}
+                    aria-expanded={canExpand ? expanded : undefined}
+                    onClick={() => {
+                      if (!canExpand) return;
+                      setExpandedPastRoundId((id) =>
+                        id === round.id ? null : round.id,
+                      );
+                    }}
+                  >
+                    <p className="min-w-0 flex-1">
+                      <span className="text-muted-foreground tabular-nums">
+                        {round.round_number}
+                      </span>
+                      {" · "}
+                      <span className="font-medium">{round.track_name}</span>
+                      {round.artist_name ? ` — ${round.artist_name}` : ""}
+                    </p>
+                    <p className="flex shrink-0 items-center gap-1 font-medium tabular-nums text-emerald-700">
+                      {settings.showResultDetails
+                        ? isHost || settings.showCorrectAnswer
+                          ? (round.correct_release_year ?? "—")
+                          : "—"
+                        : `${round.my_points ?? 0} pt`}
+                      {canExpand ? (
+                        <CaretDownIcon
+                          className={cn(
+                            "size-4 text-muted-foreground transition-transform",
+                            expanded && "rotate-180",
+                          )}
+                          aria-hidden
+                        />
+                      ) : null}
+                    </p>
+                  </button>
+                  {expanded ? (
+                    <div className="space-y-3 rounded-xl border border-border/60 bg-card/40 p-4">
+                      <RoundCorrectYear
+                        round={round}
+                        show={isHost || settings.showCorrectAnswer}
+                        showChartOne={chartComboEnabled}
+                      />
+                      <RoundGuessesList
+                        guesses={round.guesses}
+                        showChartGuess={chartComboEnabled}
+                        wasNumberOne={
+                          chartComboEnabled ? round.chart_was_number_one : null
+                        }
+                        emptyLabel={
+                          !isHost && !settings.showOthersInPastResults
+                            ? "Only your guess is shown for this round."
+                            : "No guesses this round."
+                        }
+                      />
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </section>
       ) : null}

@@ -1,3 +1,8 @@
+import {
+  looksLikeCompilationName,
+  looksLikeRemasterLabel,
+} from "@/lib/original-release-year";
+
 export type ItunesTrackResult = {
   trackId: number;
   trackName: string;
@@ -57,6 +62,7 @@ export async function lookupItunesTrackMeta(
       results?: Array<{
         trackName?: string;
         artistName?: string;
+        collectionName?: string;
         previewUrl?: string;
         releaseDate?: string;
         kind?: string;
@@ -88,9 +94,40 @@ export async function lookupItunesTrackMeta(
     });
 
     const best = ranked[0];
+    const years = ranked
+      .filter((item) => {
+        const collection = item.collectionName ?? "";
+        const trackName = item.trackName ?? "";
+        if (looksLikeCompilationName(collection) || looksLikeCompilationName(trackName)) {
+          return false;
+        }
+        if (looksLikeRemasterLabel(collection) || looksLikeRemasterLabel(trackName)) {
+          return false;
+        }
+        return true;
+      })
+      .map((item) => parseItunesReleaseYear(item.releaseDate))
+      .filter((year): year is number => year != null);
+
+    const bestClean =
+      ranked.find((item) => {
+        const collection = item.collectionName ?? "";
+        const trackName = item.trackName ?? "";
+        if (looksLikeCompilationName(collection) || looksLikeCompilationName(trackName)) {
+          return false;
+        }
+        if (looksLikeRemasterLabel(collection) || looksLikeRemasterLabel(trackName)) {
+          return false;
+        }
+        return true;
+      }) ?? best;
+
     return {
-      releaseYear: parseItunesReleaseYear(best.releaseDate),
-      previewUrl: normalizePreviewUrl(best.previewUrl ?? null),
+      releaseYear:
+        years.length > 0
+          ? Math.min(...years)
+          : parseItunesReleaseYear(bestClean.releaseDate),
+      previewUrl: normalizePreviewUrl(bestClean.previewUrl ?? null),
     };
   } catch {
     return null;

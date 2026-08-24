@@ -1,7 +1,10 @@
 import {
+  clampAutoInterruptAfterEmptyRounds,
+  clampYearRangeTolerance,
   DEFAULT_QUIZ_SETTINGS,
+  normalizeScoringModes,
   type BeatageQuizSettings,
-  type ScoringModeId,
+  type QuizSettingsRuntime,
 } from "@/lib/quiz-settings";
 
 export type YearScoreResult = {
@@ -9,119 +12,189 @@ export type YearScoreResult = {
   breakdown: Record<string, number>;
 };
 
-function scoreExact(guessed: number, correct: number): number {
-  return guessed === correct ? 10 : 0;
-}
+export type ChartGuessOutcome = "correct" | "none" | "wrong";
 
-/** Closer is better — 10 at exact, −1 per year off, floor 0. */
+/** Closer wins: penalty = years off (lowest total wins). */
 function scoreDistance(guessed: number, correct: number): number {
-  return Math.max(0, 10 - Math.abs(guessed - correct));
+  return Math.abs(guessed - correct);
 }
 
+/**
+ * Range: at tolerance T>0, exact = T, each year off loses 1, floor 0.
+ * At T=0, only an exact year scores 1.
+ */
 function scoreRange(
   guessed: number,
   correct: number,
   tolerance: number,
 ): number {
-  return Math.abs(guessed - correct) <= tolerance ? 5 : 0;
+  const diff = Math.abs(guessed - correct);
+  if (tolerance === 0) return diff === 0 ? 1 : 0;
+  return Math.max(0, tolerance - diff);
 }
 
-/** Hitster-style proximity buckets. */
-function scoreHitster(guessed: number, correct: number): number {
-  const diff = Math.abs(guessed - correct);
-  if (diff === 0) return 10;
-  if (diff <= 2) return 5;
-  if (diff <= 5) return 3;
-  if (diff <= 10) return 1;
+/** Correct answer year for the quiz’s answerYearMode. */
+export function correctYearForScoring(opts: {
+  releaseYear: number | null;
+  originalReleaseYear: number | null;
+  answerYearMode: BeatageQuizSettings["answerYearMode"];
+}): number | null {
+  if (opts.answerYearMode === "original_recording") {
+    return opts.originalReleaseYear ?? opts.releaseYear;
+  }
+  return opts.releaseYear;
+}
+
+export function chartGuessOutcome(
+  guessedWasNumberOne: boolean | null | undefined,
+  wasNumberOne: boolean,
+): ChartGuessOutcome {
+  if (guessedWasNumberOne == null) return "none";
+  return guessedWasNumberOne === wasNumberOne ? "correct" : "wrong";
+}
+
+/**
+ * Extra Chart #1 points when combined with a year mode.
+ * Closer wins (low wins): correct 0, no answer 1, wrong 2 (penalty).
+ * Range (high wins): correct 2, no answer 1, wrong 0 (mirror of closer).
+ */
+export function chartComboExtraPoints(
+  outcome: ChartGuessOutcome,
+  yearMode: "year_distance" | "year_range",
+): number {
+  if (yearMode === "year_distance") {
+    if (outcome === "correct") return 0;
+    if (outcome === "none") return 1;
+    return 2;
+  }
+  if (outcome === "correct") return 2;
+  if (outcome === "none") return 1;
   return 0;
 }
 
-function scoreOneMode(
-  mode: ScoringModeId,
-  guessed: number,
-  correct: number,
-  tolerance: number,
-): number {
-  switch (mode) {
-    case "year_exact":
-      return scoreExact(guessed, correct);
-    case "year_distance":
-      return scoreDistance(guessed, correct);
-    case "year_range":
-      return scoreRange(guessed, correct, tolerance);
-    case "year_hitster":
-      return scoreHitster(guessed, correct);
-    case "chart_was_one":
-    case "chart_weeks":
-      // Chart modes need chart metadata — not scored on year alone yet.
-      return 0;
-    default:
-      return 0;
-  }
-}
-
 /** Normalize partial/legacy settings JSON from the quiz row. */
-export function resolveQuizSettings(
-  raw: unknown,
-): BeatageQuizSettings {
+export function resolveQuizSettings(raw: unknown): BeatageQuizSettings {
   if (!raw || typeof raw !== "object") {
     return { ...DEFAULT_QUIZ_SETTINGS };
   }
   const partial = raw as Partial<BeatageQuizSettings>;
-  const modes = Array.isArray(partial.scoringModes)
-    ? (partial.scoringModes.filter(Boolean) as ScoringModeId[])
-    : DEFAULT_QUIZ_SETTINGS.scoringModes;
+  const scoringModes = normalizeScoringModes(partial.scoringModes);
   return {
     ...DEFAULT_QUIZ_SETTINGS,
     ...partial,
-    scoringModes: modes.length > 0 ? modes : DEFAULT_QUIZ_SETTINGS.scoringModes,
-    yearRangeTolerance:
-      partial.yearRangeTolerance === 5 ||
-      partial.yearRangeTolerance === 10 ||
-      partial.yearRangeTolerance === 15
-        ? partial.yearRangeTolerance
-        : DEFAULT_QUIZ_SETTINGS.yearRangeTolerance,
+    scoringModes,
+    combinedScoring: scoringModes.length > 1,
+    secondaryScoringMode:
+      scoringModes.length > 1
+        ? (scoringModes.find((mode) => mode === "chart_was_one") ??
+          scoringModes[1] ??
+          null)
+        : null,
+    yearRangeTolerance: clampYearRangeTolerance(partial.yearRangeTolerance),
+    answerYearMode:
+      partial.answerYearMode === "original_recording" ||
+      partial.answerYearMode === "this_release"
+        ? partial.answerYearMode
+        : DEFAULT_QUIZ_SETTINGS.answerYearMode,
+    showTitleArtist: Boolean(
+      partial.showTitleArtist ?? DEFAULT_QUIZ_SETTINGS.showTitleArtist,
+    ),
+    showCorrectAnswer: Boolean(
+      partial.showCorrectAnswer ?? DEFAULT_QUIZ_SETTINGS.showCorrectAnswer,
+    ),
+    showOverallResults: Boolean(
+      partial.showOverallResults ?? DEFAULT_QUIZ_SETTINGS.showOverallResults,
+    ),
+    showResultDetails: Boolean(
+      partial.showResultDetails ?? DEFAULT_QUIZ_SETTINGS.showResultDetails,
+    ),
+    showOthersInPastResults: Boolean(
+      partial.showOthersInPastResults ??
+        DEFAULT_QUIZ_SETTINGS.showOthersInPastResults,
+    ),
+    autoInterruptAfterEmptyRounds: clampAutoInterruptAfterEmptyRounds(
+      partial.autoInterruptAfterEmptyRounds ??
+        DEFAULT_QUIZ_SETTINGS.autoInterruptAfterEmptyRounds,
+    ),
+  };
+}
+
+/** Read Auto Spotify runtime pause flags from the raw settings JSON. */
+export function readQuizSettingsRuntime(raw: unknown): QuizSettingsRuntime {
+  if (!raw || typeof raw !== "object") return {};
+  const row = raw as QuizSettingsRuntime;
+  return {
+    autoEmptyStreak:
+      typeof row.autoEmptyStreak === "number" && Number.isFinite(row.autoEmptyStreak)
+        ? Math.max(0, Math.round(row.autoEmptyStreak))
+        : 0,
+    autoInterrupted: Boolean(row.autoInterrupted),
+  };
+}
+
+/** Merge play settings + runtime flags for persistence on beatage_quizzes.settings. */
+export function mergeQuizSettingsForStorage(
+  settings: BeatageQuizSettings,
+  runtime: QuizSettingsRuntime = {},
+): BeatageQuizSettings & QuizSettingsRuntime {
+  return {
+    ...settings,
+    autoEmptyStreak: runtime.autoEmptyStreak ?? 0,
+    autoInterrupted: Boolean(runtime.autoInterrupted),
   };
 }
 
 /**
- * Score a year guess using the quiz scoring model(s).
- * Combined mode sums selected year modes; otherwise only the first mode applies.
+ * Score a guess with the active models.
+ * Combined Chart #1 uses the player’s yes/no guess (correct / none / wrong).
+ * Standalone Chart #1 still awards 1 if the song was a #1, else 0.
  */
 export function scoreYearGuess(opts: {
   guessedYear: number | null;
   correctYear: number | null;
   settings: BeatageQuizSettings;
+  wasNumberOne?: boolean;
+  guessedWasNumberOne?: boolean | null;
 }): YearScoreResult {
-  const { guessedYear, correctYear, settings } = opts;
+  const modes = normalizeScoringModes(opts.settings.scoringModes);
+  const hasDistance = modes.includes("year_distance");
+  const hasRange = modes.includes("year_range");
+  const hasChart = modes.includes("chart_was_one");
   const breakdown: Record<string, number> = {};
+  const wasOne = Boolean(opts.wasNumberOne);
 
-  if (guessedYear == null || correctYear == null) {
-    return { points: 0, breakdown };
+  let yearPts = 0;
+  if (
+    (hasDistance || hasRange) &&
+    opts.guessedYear != null &&
+    opts.correctYear != null
+  ) {
+    if (hasDistance) {
+      yearPts = scoreDistance(opts.guessedYear, opts.correctYear);
+      breakdown.year_distance = yearPts;
+    } else {
+      yearPts = scoreRange(
+        opts.guessedYear,
+        opts.correctYear,
+        clampYearRangeTolerance(opts.settings.yearRangeTolerance),
+      );
+      breakdown.year_range = yearPts;
+    }
   }
 
-  const yearModes = settings.scoringModes.filter(
-    (mode) =>
-      mode === "year_exact" ||
-      mode === "year_distance" ||
-      mode === "year_range" ||
-      mode === "year_hitster",
-  );
-  const modes =
-    yearModes.length > 0 ? yearModes : (["year_exact"] as ScoringModeId[]);
-
-  const activeModes = settings.combinedScoring ? modes : [modes[0]];
-  let points = 0;
-  for (const mode of activeModes) {
-    const pts = scoreOneMode(
-      mode,
-      guessedYear,
-      correctYear,
-      settings.yearRangeTolerance,
-    );
-    breakdown[mode] = pts;
-    points += pts;
+  let chartPts = 0;
+  if (hasChart) {
+    if (hasDistance || hasRange) {
+      const outcome = chartGuessOutcome(opts.guessedWasNumberOne, wasOne);
+      chartPts = chartComboExtraPoints(
+        outcome,
+        hasDistance ? "year_distance" : "year_range",
+      );
+    } else {
+      chartPts = wasOne ? 1 : 0;
+    }
+    breakdown.chart_was_one = chartPts;
   }
 
-  return { points, breakdown };
+  return { points: yearPts + chartPts, breakdown };
 }

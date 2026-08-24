@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { ScrollIcon, UserPlusIcon } from "@phosphor-icons/react";
 import { InviteShare } from "@/components/invite-share";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,7 +18,7 @@ type QuizPageHeaderProps = {
   joinUrl: string;
   /** Open invite dialog on mount (e.g. after create). */
   openInviteOnMount?: boolean;
-  isHost: boolean;
+  rulesContent: ReactNode;
 };
 
 export function QuizPageHeader({
@@ -25,9 +26,10 @@ export function QuizPageHeader({
   joinCode,
   joinUrl,
   openInviteOnMount = false,
-  isHost,
+  rulesContent,
 }: QuizPageHeaderProps) {
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
 
   useEffect(() => {
     if (!openInviteOnMount) return;
@@ -44,20 +46,45 @@ export function QuizPageHeader({
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="secondary" onClick={() => setInviteOpen(true)}>
-          Invite
-        </Button>
-        {isHost ? (
-          <p className="text-sm text-muted-foreground">
-            Share the invite so players can join, then start rounds below.
-          </p>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            Waiting for the host to start the next round.
-          </p>
-        )}
+      <div className="flex items-center gap-2">
+        <h1 className="min-w-0 flex-1 truncate text-lg font-semibold leading-tight tracking-tight">
+          {title}
+        </h1>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="outline"
+            onClick={() => setRulesOpen(true)}
+            aria-label="Quiz rules"
+            title="Quiz rules"
+          >
+            <ScrollIcon />
+          </Button>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="outline"
+            onClick={() => setInviteOpen(true)}
+            aria-label="Invite players"
+            title="Invite"
+          >
+            <UserPlusIcon />
+          </Button>
+        </div>
       </div>
+
+      <Dialog open={rulesOpen} onOpenChange={setRulesOpen}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Quiz rules</DialogTitle>
+            <DialogDescription>
+              What this quiz is and how it works.
+            </DialogDescription>
+          </DialogHeader>
+          {rulesContent}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">

@@ -1,6 +1,15 @@
-import { findSpotifyTrack, getSpotifyTrackById } from "@/lib/spotify";
+import { findSpotifyTrack, getSpotifyTrackById, searchSpotifyOriginalYearCandidates } from "@/lib/spotify";
 import { lookupItunesTrackMeta } from "@/lib/music";
+import {
+  lookupMusicBrainzOriginalYear,
+  looksLikeCompilationName,
+  looksLikeRemasterLabel,
+  pickOriginalReleaseYear,
+  stripRecordingVersionLabel,
+} from "@/lib/original-release-year";
 import { DEFAULT_MAX_CURATED_TRACKS } from "@/lib/quiz-plans";
+import { resolveQuizSettings } from "@/lib/quiz-scoring";
+import type { AnswerYearMode } from "@/lib/quiz-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -64,11 +73,22 @@ export async function countQuizCuratedTracks(quizId: string): Promise<number> {
   return count ?? 0;
 }
 
+async function getQuizAnswerYearMode(quizId: string): Promise<AnswerYearMode> {
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("beatage_quizzes")
+    .select("settings")
+    .eq("id", quizId)
+    .maybeSingle();
+  return resolveQuizSettings(data?.settings).answerYearMode;
+}
+
 export async function resolveQuizTrackMetadata(
   input: QuizTrackInput,
+  options?: { answerYearMode?: AnswerYearMode },
 ): Promise<ResolvedQuizTrack> {
   const trackName = input.title.trim();
-  const artistName = input.artist.trim() || null;
+  let artistName = input.artist.trim() || null;
   let releaseYear: number | null =
     typeof input.releaseYear === "number" && Number.isFinite(input.releaseYear)
       ? input.releaseYear
@@ -77,39 +97,90 @@ export async function resolveQuizTrackMetadata(
   let albumArtUrl = input.albumArtUrl?.trim() || null;
   let previewUrl = input.previewUrl?.trim() || null;
   let spotifyTrackId = input.spotifyTrackId?.trim() || null;
+  let albumYear: number | null = releaseYear;
+  let albumType: string | null = null;
+  let albumName: string | null = null;
 
   try {
     if (spotifyTrackId) {
       const details = await getSpotifyTrackById(spotifyTrackId);
       if (details) {
+        albumYear = details.releaseYear ?? albumYear;
         releaseYear = details.releaseYear ?? releaseYear;
         originalReleaseYear = details.originalReleaseYear ?? releaseYear;
         albumArtUrl = details.albumArtUrl ?? albumArtUrl;
         previewUrl = details.previewUrl ?? previewUrl;
         spotifyTrackId = details.id;
+        albumType = details.albumType;
+        albumName = details.albumName;
+        if (!artistName && details.artistName) {
+          artistName = details.artistName;
+        }
       }
     } else if (artistName) {
       const match = await findSpotifyTrack(trackName, artistName);
       if (match) {
         const details = await getSpotifyTrackById(match.id);
         if (details) {
+          albumYear = details.releaseYear ?? albumYear;
           releaseYear = details.releaseYear ?? releaseYear;
           originalReleaseYear = details.originalReleaseYear ?? releaseYear;
           albumArtUrl = details.albumArtUrl ?? albumArtUrl;
           previewUrl = details.previewUrl ?? previewUrl;
           spotifyTrackId = details.id;
+          albumType = details.albumType;
+          albumName = details.albumName;
         }
       }
     }
 
-    // iTunes fallback when Spotify left year (or preview) empty.
-    if ((!releaseYear || !previewUrl) && artistName) {
-      const itunes = await lookupItunesTrackMeta(trackName, artistName);
-      if (itunes) {
-        releaseYear = releaseYear ?? itunes.releaseYear;
-        originalReleaseYear = originalReleaseYear ?? itunes.releaseYear;
-        previewUrl = previewUrl ?? itunes.previewUrl;
+    const lookupTitle = stripRecordingVersionLabel(trackName);
+    const lookupArtist = artistName ?? "";
+    const albumLooksCompiled =
+      albumType === "compilation" || looksLikeCompilationName(albumName);
+    const albumLooksRemaster =
+      looksLikeRemasterLabel(albumName) || looksLikeRemasterLabel(trackName);
+    const albumIsDirty = albumLooksCompiled || albumLooksRemaster;
+    const answerYearMode = options?.answerYearMode ?? "this_release";
+    const musicBrainzScope =
+      answerYearMode === "original_recording" ? "any_artist" : "this_artist";
+
+    const [musicBrainzYear, spotifyYears, itunes] = await Promise.all([
+      lookupArtist || musicBrainzScope === "any_artist"
+        ? lookupMusicBrainzOriginalYear(lookupTitle, lookupArtist, musicBrainzScope)
+        : Promise.resolve(null),
+      lookupArtist
+        ? searchSpotifyOriginalYearCandidates(lookupTitle, lookupArtist)
+        : Promise.resolve([] as number[]),
+      lookupArtist
+        ? lookupItunesTrackMeta(lookupTitle, lookupArtist)
+        : Promise.resolve(null),
+    ]);
+
+    if (answerYearMode === "this_release" && !albumIsDirty && albumYear != null) {
+      originalReleaseYear = albumYear;
+      releaseYear = albumYear;
+    } else {
+      originalReleaseYear = pickOriginalReleaseYear(
+        [
+          musicBrainzYear,
+          ...spotifyYears,
+          itunes?.releaseYear,
+          albumIsDirty ? null : albumYear,
+        ],
+        albumIsDirty ? null : albumYear,
+      );
+      if (originalReleaseYear != null) {
+        releaseYear = originalReleaseYear;
       }
+    }
+
+    if (!previewUrl && itunes?.previewUrl) {
+      previewUrl = itunes.previewUrl;
+    }
+    if (releaseYear == null && itunes?.releaseYear != null) {
+      releaseYear = itunes.releaseYear;
+      originalReleaseYear = originalReleaseYear ?? itunes.releaseYear;
     }
   } catch {
     // Best-effort enrichment only — still store the curated title/artist.
@@ -187,6 +258,7 @@ export async function seedCuratedTracksForQuiz(
 
   let saved = 0;
   let sortOrder = await nextSortOrder(quizId);
+  const answerYearMode = await getQuizAnswerYearMode(quizId);
 
   for (const input of inputs) {
     if (!input.title?.trim() || !input.artist?.trim()) continue;
@@ -196,7 +268,7 @@ export async function seedCuratedTracksForQuiz(
         saved,
       };
     }
-    const resolved = await resolveQuizTrackMetadata(input);
+    const resolved = await resolveQuizTrackMetadata(input, { answerYearMode });
     const result = await insertCuratedTrackAdmin(quizId, resolved, sortOrder);
     if (result.error) {
       return { error: `${resolved.trackName}: ${result.error}`, saved };
@@ -213,7 +285,9 @@ export async function addCuratedTrackToQuiz(
   quizId: string,
   input: QuizTrackInput,
 ): Promise<{ error?: string; trackId?: string }> {
-  const resolved = await resolveQuizTrackMetadata(input);
+  const resolved = await resolveQuizTrackMetadata(input, {
+    answerYearMode: await getQuizAnswerYearMode(quizId),
+  });
 
   const admin = createAdminClient();
 
@@ -314,6 +388,7 @@ export async function backfillMissingReleaseYearsForQuiz(
   }
 
   let updated = 0;
+  const answerYearMode = await getQuizAnswerYearMode(quizId);
   for (const row of rows as Array<{
     id: string;
     track_name: string;
@@ -324,13 +399,16 @@ export async function backfillMissingReleaseYearsForQuiz(
     original_release_year: number | null;
     album_art_url: string | null;
   }>) {
-    const resolved = await resolveQuizTrackMetadata({
-      title: row.track_name,
-      artist: row.artist_name ?? "",
-      previewUrl: row.preview_url ?? undefined,
-      spotifyTrackId: row.spotify_track_id ?? undefined,
-      albumArtUrl: row.album_art_url ?? undefined,
-    });
+    const resolved = await resolveQuizTrackMetadata(
+      {
+        title: row.track_name,
+        artist: row.artist_name ?? "",
+        previewUrl: row.preview_url ?? undefined,
+        spotifyTrackId: row.spotify_track_id ?? undefined,
+        albumArtUrl: row.album_art_url ?? undefined,
+      },
+      { answerYearMode },
+    );
     if (resolved.releaseYear == null) continue;
 
     const { error: updateError } = await admin

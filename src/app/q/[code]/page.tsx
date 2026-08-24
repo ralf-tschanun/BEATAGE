@@ -2,12 +2,14 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { QuizPageHeader } from "@/components/quiz-page-header";
 import { QuizPlayPanels } from "@/components/quiz-play-panels";
+import { QuizRulesContent } from "@/components/quiz-rules-content";
 import { QuizLiveRefresh } from "@/components/quiz-live-refresh";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { Badge } from "@/components/ui/badge";
 import { BRAND_NAME } from "@/lib/brand";
-import { quizSourceLabel } from "@/lib/quiz-settings";
+import { DEFAULT_QUIZ_SETTINGS, quizSourceLabel } from "@/lib/quiz-settings";
+import { resolveQuizSettings } from "@/lib/quiz-scoring";
 import { getQuizPlayState } from "@/lib/quizzes/play-state";
 import { getQuizDashboardData } from "@/lib/quizzes/dashboard";
 import { ensureAnonymousSession } from "@/lib/supabase/auth";
@@ -21,6 +23,7 @@ type QuizPageProps = {
 
 type QuizMember = {
   id: string;
+  user_id: string;
   display_name: string;
   role: string;
   joined_at: string;
@@ -98,7 +101,7 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
 
   const { data: members } = await supabase
     .from("beatage_quiz_members")
-    .select("id, display_name, role, joined_at")
+    .select("id, user_id, display_name, role, joined_at")
     .eq("quiz_id", quiz.id)
     .order("joined_at", { ascending: true });
 
@@ -108,15 +111,21 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
 
   let unlockedAt: string | null = null;
   let quizStatus = quiz.status;
+  let createdAt: string | null = null;
+  let settings = { ...DEFAULT_QUIZ_SETTINGS };
   try {
     const admin = createAdminClient();
     const { data: quizRow } = await admin
       .from("beatage_quizzes")
-      .select("unlocked_at, status")
+      .select("unlocked_at, status, settings, created_at")
       .eq("id", quiz.id)
       .maybeSingle();
     unlockedAt = (quizRow as { unlocked_at?: string | null } | null)?.unlocked_at ?? null;
     quizStatus = (quizRow as { status?: string } | null)?.status ?? quiz.status;
+    createdAt = (quizRow as { created_at?: string | null } | null)?.created_at ?? null;
+    settings = resolveQuizSettings(
+      (quizRow as { settings?: unknown } | null)?.settings,
+    );
   } catch {
     // Service role optional in some local setups.
   }
@@ -159,24 +168,29 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
 
       <main className="mx-auto w-full max-w-3xl flex-1 space-y-8 px-6 py-10">
         <div className="space-y-3">
+          <QuizPageHeader
+            title={quiz.title}
+            joinCode={quiz.join_code}
+            joinUrl={`/j/${quiz.join_code}`}
+            openInviteOnMount={created === "1"}
+            rulesContent={
+              <QuizRulesContent
+                joinCode={quiz.join_code}
+                createdAt={createdAt}
+                source={quiz.source}
+                settings={settings}
+                trackCount={playState?.tracks?.length ?? 0}
+              />
+            }
+          />
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary">{quiz.status}</Badge>
             <Badge variant="outline">{quizSourceLabel(quiz.source)}</Badge>
-            <span className="text-sm text-muted-foreground">Code {quiz.join_code}</span>
           </div>
-          <h1 className="text-3xl font-semibold tracking-tight">{quiz.title}</h1>
           {quiz.description ? (
             <p className="text-muted-foreground">{quiz.description}</p>
           ) : null}
         </div>
-
-        <QuizPageHeader
-          title={quiz.title}
-          joinCode={quiz.join_code}
-          joinUrl={`/j/${quiz.join_code}`}
-          openInviteOnMount={created === "1"}
-          isHost={isHost}
-        />
         <QuizLiveRefresh quizId={quiz.id} joinCode={joinCode} />
         <QuizPlayPanels
           quizId={quiz.id}
@@ -191,10 +205,19 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
           pastRounds={playState?.pastRounds ?? []}
           roundGuesses={playState?.roundGuesses ?? []}
           myGuessYear={playState?.myGuessYear ?? null}
+          myGuessWasNumberOne={playState?.myGuessWasNumberOne ?? null}
           leaderboard={playState?.leaderboard ?? []}
           quizStatus={playState?.quizStatus ?? quiz.status}
           maxCuratedTracks={playState?.maxCuratedTracks ?? 10}
+          settings={settings}
+          autoInterrupted={playState?.autoInterrupted ?? false}
           isAnonymous={Boolean(identity?.isAnonymous)}
+          currentUserId={user.id}
+          hostUserId={
+            quiz.host_user_id ??
+            memberRows.find((member) => member.role === "host")?.user_id ??
+            null
+          }
         />
 
         <section className="space-y-3">
@@ -209,7 +232,12 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
                   key={member.id}
                   className="flex items-center justify-between px-4 py-3 text-sm"
                 >
-                  <span>{member.display_name}</span>
+                  <span>
+                    {member.display_name}
+                    {member.user_id === user.id ? (
+                      <span className="text-muted-foreground"> (You)</span>
+                    ) : null}
+                  </span>
                   <span className="text-muted-foreground capitalize">{member.role}</span>
                 </li>
               ))}
