@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { ChangePlanForm } from "@/components/change-plan-form";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { BILLING_SKU_LABELS } from "@/lib/billing-copy";
+import { goToBilling } from "@/lib/billing-nav";
 import type { PlanLimitOverageSummary } from "@/lib/contest-unlock";
 import type { PlanId } from "@/lib/plans";
 
@@ -39,8 +39,6 @@ export function CreateUnlockSummaryDialog({
   pending = false,
   error = null,
 }: CreateUnlockSummaryDialogProps) {
-  const router = useRouter();
-
   const lines: string[] = [];
   if (summary.nominationsPerParticipant && summary.nominationPlanMax != null) {
     lines.push(
@@ -101,7 +99,7 @@ export function CreateUnlockSummaryDialog({
             <Button
               type="button"
               variant="outline"
-              onClick={() => router.push("/api/billing/checkout?sku=plus_monthly")}
+              onClick={() => goToBilling("/api/billing/checkout?sku=plus_monthly")}
             >
               Upgrade to Plus ({BILLING_SKU_LABELS.plus_monthly})
             </Button>
@@ -110,7 +108,7 @@ export function CreateUnlockSummaryDialog({
             <Button
               type="button"
               variant="outline"
-              onClick={() => router.push("/api/billing/checkout?sku=pro_monthly")}
+              onClick={() => goToBilling("/api/billing/checkout?sku=pro_monthly")}
             >
               Upgrade to Pro ({BILLING_SKU_LABELS.pro_monthly})
             </Button>

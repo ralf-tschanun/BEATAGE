@@ -38,6 +38,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
               ? "Sign in with email before checkout."
               : billing === "unavailable"
                 ? "Billing is not configured on this server yet."
+                : billing === "error"
+                  ? "Checkout could not start. Please try again in a moment."
                 : billing === "invalid"
                   ? "That checkout link is not valid."
                   : null}

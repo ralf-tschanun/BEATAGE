@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { ChangePlanForm } from "@/components/change-plan-form";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { BILLING_SKU_LABELS } from "@/lib/billing-copy";
+import { goToBilling } from "@/lib/billing-nav";
 import type { PlanId } from "@/lib/quiz-plans";
 import { getQuizPlanLimits } from "@/lib/quiz-plans";
 
@@ -135,7 +135,6 @@ export function CreateQuizUnlockDialog({
   error = null,
   reason = "slot",
 }: CreateQuizUnlockDialogProps) {
-  const router = useRouter();
   const plan = getQuizPlanLimits(planId);
   const showPlus = planId === "free";
   const showPro = planId === "free" || planId === "plus";
@@ -216,7 +215,7 @@ export function CreateQuizUnlockDialog({
               variant="outline"
               disabled={pending}
               onClick={() =>
-                router.push("/api/billing/checkout?sku=plus_monthly")
+                goToBilling("/api/billing/checkout?sku=plus_monthly")
               }
             >
               Upgrade to Plus ({BILLING_SKU_LABELS.plus_monthly})
@@ -228,7 +227,7 @@ export function CreateQuizUnlockDialog({
               variant="outline"
               disabled={pending}
               onClick={() =>
-                router.push("/api/billing/checkout?sku=pro_monthly")
+                goToBilling("/api/billing/checkout?sku=pro_monthly")
               }
             >
               Upgrade to Pro ({BILLING_SKU_LABELS.pro_monthly})

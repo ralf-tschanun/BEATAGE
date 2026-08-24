@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CustomerPortal } from "@polar-sh/nextjs";
 import { getOptionalUser } from "@/lib/supabase/auth";
-import { getSiteUrl } from "@/lib/site-url";
+import { getRequestSiteUrl, getSiteUrl } from "@/lib/site-url";
 import { isPolarConfigured, polarServer } from "@/lib/polar";
 
 const portal = CustomerPortal({
@@ -16,7 +16,7 @@ const portal = CustomerPortal({
 });
 
 export async function GET(request: NextRequest) {
-  const siteUrl = getSiteUrl();
+  const siteUrl = getRequestSiteUrl(request);
   if (!isPolarConfigured()) {
     return NextResponse.redirect(`${siteUrl}/?billing=unavailable`);
   }

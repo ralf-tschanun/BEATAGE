@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { AccountAuthForm } from "@/components/account-auth-form";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { QUIZ_PLANS, type PlanId } from "@/lib/quiz-plans";
 import { BILLING_SKU_LABELS, type BillingSku } from "@/lib/billing-copy";
+import { goToBilling } from "@/lib/billing-nav";
 import { cn } from "@/lib/utils";
 
 type UnlockContestOption = {
@@ -69,7 +69,6 @@ export function ChangePlanForm({
   showTrigger = true,
   unlockContest = null,
 }: ChangePlanFormProps) {
-  const router = useRouter();
   const [step, setStep] = useState<Step>("closed");
   const [pendingSku, setPendingSku] = useState<BillingSku | null>(null);
 
@@ -100,7 +99,7 @@ export function ChangePlanForm({
       return;
     }
     setPendingSku(sku);
-    router.push(checkoutHref(sku, unlockContest?.id));
+    goToBilling(checkoutHref(sku, unlockContest?.id));
   }
 
   const planCards = useMemo(() => {
@@ -281,7 +280,7 @@ export function ChangePlanForm({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => router.push("/api/billing/portal")}
+                onClick={() => goToBilling("/api/billing/portal")}
               >
                 Manage billing
               </Button>

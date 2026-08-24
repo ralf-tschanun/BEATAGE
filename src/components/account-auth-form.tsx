@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { goToBilling } from "@/lib/billing-nav";
 
 const initialState: AuthActionState = null;
 
@@ -69,6 +70,10 @@ export function AccountAuthForm({
     if (!saveState?.success) return;
     setSignupOpen(false);
     if (nextPath) {
+      if (nextPath.startsWith("/api/billing")) {
+        goToBilling(nextPath);
+        return;
+      }
       router.push(nextPath);
       router.refresh();
     }
@@ -76,7 +81,12 @@ export function AccountAuthForm({
 
   useEffect(() => {
     if (!signInState?.redirectTo) return;
-    router.push(signInState.redirectTo);
+    const target = signInState.redirectTo;
+    if (target.startsWith("/api/billing")) {
+      goToBilling(target);
+      return;
+    }
+    router.push(target);
     router.refresh();
   }, [signInState?.redirectTo, router]);
 
@@ -99,7 +109,7 @@ export function AccountAuthForm({
           <p className="text-sm text-muted-foreground">
             You are signed in. Continue to checkout.
           </p>
-          <Button type="button" className="w-full" onClick={() => router.push(nextPath)}>
+          <Button type="button" className="w-full" onClick={() => goToBilling(nextPath)}>
             Continue to checkout
           </Button>
         </div>

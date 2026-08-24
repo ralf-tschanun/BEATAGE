@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOptionalUser } from "@/lib/supabase/auth";
-import { getSiteUrl } from "@/lib/site-url";
+import { getRequestSiteUrl } from "@/lib/site-url";
 import {
   createPolarClient,
   isPolarConfigured,
@@ -13,7 +13,7 @@ function accountGateUrl(siteUrl: string, continuePath: string): string {
 }
 
 export async function GET(request: NextRequest) {
-  const siteUrl = getSiteUrl();
+  const siteUrl = getRequestSiteUrl(request);
   if (!isPolarConfigured()) {
     return NextResponse.redirect(`${siteUrl}/?billing=unavailable`);
   }
@@ -90,7 +90,8 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.redirect(checkout.url);
-  } catch {
-    return NextResponse.redirect(`${siteUrl}/?billing=unavailable`);
+  } catch (error) {
+    console.error("[billing/checkout] Polar checkout failed", error);
+    return NextResponse.redirect(`${siteUrl}/?billing=error`);
   }
 }
