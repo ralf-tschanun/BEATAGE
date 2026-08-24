@@ -1,4 +1,9 @@
-import { looksLikeCompilationName, looksLikeRemasterLabel, stripRecordingVersionLabel } from "@/lib/original-release-year";
+import {
+  artistsLooselyMatch,
+  looksLikeCompilationName,
+  looksLikeRemasterLabel,
+  stripRecordingVersionLabel,
+} from "@/lib/original-release-year";
 
 export type SpotifyTrackMatch = {
   id: string;
@@ -243,8 +248,12 @@ export async function searchSpotifyOriginalYearCandidates(
   title: string,
   artist: string,
   market = "DE",
+  artistScope: "this_artist" | "any_artist" = "this_artist",
 ): Promise<number[]> {
-  const query = buildSearchQuery(stripRecordingVersionLabel(title), artist);
+  const query =
+    artistScope === "any_artist"
+      ? buildSearchQuery(stripRecordingVersionLabel(title), "")
+      : buildSearchQuery(stripRecordingVersionLabel(title), artist);
   if (query.length < 2) return [];
 
   const token = await getClientCredentialsToken();
@@ -270,6 +279,7 @@ export async function searchSpotifyOriginalYearCandidates(
       tracks?: {
         items?: Array<{
           name?: string;
+          artists?: Array<{ name?: string }>;
           album?: {
             name?: string;
             album_type?: string;
@@ -281,6 +291,16 @@ export async function searchSpotifyOriginalYearCandidates(
 
     const years: number[] = [];
     for (const item of data.tracks?.items ?? []) {
+      const resultArtist =
+        item.artists?.map((a) => a.name?.trim() ?? "").filter(Boolean).join(", ") ?? "";
+      if (
+        artistScope === "this_artist" &&
+        artist.trim() &&
+        resultArtist &&
+        !artistsLooselyMatch(artist, resultArtist)
+      ) {
+        continue;
+      }
       const albumType = item.album?.album_type?.toLowerCase() ?? "";
       const albumName = item.album?.name ?? "";
       const trackName = item.name ?? "";
@@ -291,6 +311,8 @@ export async function searchSpotifyOriginalYearCandidates(
       if (looksLikeRemasterLabel(trackName) || looksLikeRemasterLabel(albumName)) {
         continue;
       }
+      // Skip live/remix takes when searching for the studio original year.
+      if (/\b(live|remix)\b/i.test(trackName)) continue;
       const year = parseReleaseYear(item.album?.release_date);
       if (year != null) years.push(year);
     }

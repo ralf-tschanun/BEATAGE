@@ -1,4 +1,5 @@
 import {
+  artistsLooselyMatch,
   looksLikeCompilationName,
   looksLikeRemasterLabel,
 } from "@/lib/original-release-year";
@@ -40,6 +41,7 @@ export async function lookupItunesTrackMeta(
   title: string,
   artist: string,
   country = "de",
+  artistScope: "this_artist" | "any_artist" = "this_artist",
 ): Promise<{ releaseYear: number | null; previewUrl: string | null } | null> {
   const term = `${title} ${artist}`.trim();
   if (term.length < 2) return null;
@@ -93,8 +95,17 @@ export async function lookupItunesTrackMeta(
       return bScore - aScore;
     });
 
-    const best = ranked[0];
-    const years = ranked
+    // this_artist: never fall back to other acts (Nancy Sinatra / Dagames bleed).
+    // any_artist: allow other acts so original_recording finds the first hit.
+    const pool =
+      artistScope === "any_artist"
+        ? ranked
+        : ranked.filter((item) => artistsLooselyMatch(artist, item.artistName ?? ""));
+    if (pool.length === 0) {
+      return { releaseYear: null, previewUrl: null };
+    }
+
+    const years = pool
       .filter((item) => {
         const collection = item.collectionName ?? "";
         const trackName = item.trackName ?? "";
@@ -110,7 +121,7 @@ export async function lookupItunesTrackMeta(
       .filter((year): year is number => year != null);
 
     const bestClean =
-      ranked.find((item) => {
+      pool.find((item) => {
         const collection = item.collectionName ?? "";
         const trackName = item.trackName ?? "";
         if (looksLikeCompilationName(collection) || looksLikeCompilationName(trackName)) {
@@ -120,14 +131,22 @@ export async function lookupItunesTrackMeta(
           return false;
         }
         return true;
-      }) ?? best;
+      }) ?? pool[0];
+
+    // Prefer earliest clean year; if remaster filters wiped them, fall back to
+    // the best pool hit (often a deluxe that still carries the original date).
+    const poolYears = pool
+      .map((item) => parseItunesReleaseYear(item.releaseDate))
+      .filter((year): year is number => year != null);
 
     return {
       releaseYear:
         years.length > 0
           ? Math.min(...years)
-          : parseItunesReleaseYear(bestClean.releaseDate),
-      previewUrl: normalizePreviewUrl(bestClean.previewUrl ?? null),
+          : poolYears.length > 0
+            ? Math.min(...poolYears)
+            : null,
+      previewUrl: normalizePreviewUrl(bestClean?.previewUrl ?? null),
     };
   } catch {
     return null;

@@ -19,6 +19,9 @@ const LIVE_EVENT_SUFFIX =
 
 const YEAR_TOKEN = /\b((?:19|20)\d{2})\b/;
 
+const NON_ORIGINAL_TAKE =
+  /\b(live|remix(?:ed)?|rmx|instrumental|karaoke|tribute)\b/i;
+
 export function stripRecordingVersionLabel(title: string): string {
   let cleaned = title.trim();
   for (let i = 0; i < 3; i += 1) {
@@ -54,19 +57,36 @@ export function normalizeArtistName(name: string): string {
     .trim();
 }
 
-/** True when result artist matches the queried artist (primary name / contains). */
+/** First billed artist (ignore ", X" / "& X" collaborators). */
+export function primaryArtistName(name: string): string {
+  const first = name.split(/[,&]|\/|\b(?:and|x|vs\.?)\b/i)[0] ?? name;
+  return first.trim();
+}
+
+/**
+ * True when result's primary artist matches the queried artist.
+ * Avoids substring traps ("Queen" ≠ "Queen Machine") and cover bleed
+ * (Nancy Sinatra when looking up Symarip).
+ */
 export function artistsLooselyMatch(
   queryArtist: string,
   resultArtist: string,
 ): boolean {
-  const query = normalizeArtistName(queryArtist);
-  const result = normalizeArtistName(resultArtist);
+  const stripThe = (value: string) => value.replace(/^the\s+/, "");
+  const query = stripThe(normalizeArtistName(primaryArtistName(queryArtist)));
+  const result = stripThe(normalizeArtistName(primaryArtistName(resultArtist)));
   if (!query || !result) return false;
   if (query === result) return true;
-  if (result.includes(query) || query.includes(result)) return true;
-  // Multi-artist Spotify strings: "Queen, David Bowie"
-  const parts = result.split(/\s+/).filter(Boolean);
-  if (parts.length >= 1 && query.split(/\s+/).every((token) => result.includes(token))) {
+
+  const qTokens = query.split(/\s+/).filter(Boolean);
+  const rTokens = result.split(/\s+/).filter(Boolean);
+  // Allow "rolling stones" vs "the rolling stones" (already stripped) and
+  // identical token sequences only — not "queen" inside "queen machine".
+  if (
+    qTokens.length > 0 &&
+    qTokens.length === rTokens.length &&
+    qTokens.every((token, index) => token === rTokens[index])
+  ) {
     return true;
   }
   return false;
@@ -126,6 +146,86 @@ export function pickOriginalReleaseYear(
   return earliest;
 }
 
+function looksLikeNonOriginalTake(text: string | null | undefined): boolean {
+  if (!text?.trim()) return false;
+  return NON_ORIGINAL_TAKE.test(text);
+}
+
+/** Title spellings that often differ across covers (Walkin' vs Walking). */
+function recordingTitleVariants(title: string): string[] {
+  const base = stripRecordingVersionLabel(title);
+  if (base.length < 2) return [];
+  const variants = [base];
+  if (/\bwalking\b/i.test(base)) {
+    variants.push(base.replace(/\bwalking\b/i, "Walkin'"));
+  }
+  if (/\bwalkin['’]?\b/i.test(base)) {
+    variants.push(base.replace(/\bwalkin['’]?\b/i, "Walking"));
+  }
+  return [...new Set(variants.map((value) => value.trim()).filter((value) => value.length >= 2))];
+}
+
+async function queryMusicBrainzRecordingYears(
+  recordingTitle: string,
+  artistName: string,
+  scope: "this_artist" | "any_artist",
+  wasLive: boolean,
+): Promise<number[]> {
+  const safeTitle = recordingTitle.replace(/"/g, "");
+  const query =
+    scope === "any_artist" || !artistName
+      ? `recording:"${safeTitle}" AND status:official`
+      : `recording:"${safeTitle}" AND artist:"${artistName.replace(/"/g, "")}" AND status:official`;
+
+  const url = new URL("https://musicbrainz.org/ws/2/recording");
+  url.searchParams.set("query", query);
+  url.searchParams.set("fmt", "json");
+  // Higher limit surfaces early singles buried under later reissue hits
+  // (e.g. Plastic Bertrand "Ça plane pour moi" 1977).
+  url.searchParams.set("limit", "25");
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "BEATAGE/1.0 (https://beatage.gosmooth.eu)",
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) return [];
+
+  const data = (await response.json()) as {
+    recordings?: Array<{
+      title?: string;
+      disambiguation?: string;
+      "first-release-date"?: string;
+      score?: number;
+      "artist-credit"?: Array<{ name?: string; artist?: { name?: string } }>;
+    }>;
+  };
+
+  const minScore = scope === "any_artist" ? 50 : 60;
+  return (data.recordings ?? [])
+    .filter((row) => (row.score ?? 0) >= minScore)
+    .filter((row) => {
+      const rowTitle = row.title ?? "";
+      const disambiguation = row.disambiguation ?? "";
+      // When looking up a studio title, skip live/remix takes so reissue
+      // dates of concerts don't drown the original single/album year.
+      if (!wasLive && looksLikeNonOriginalTake(`${rowTitle} ${disambiguation}`)) {
+        return false;
+      }
+      if (scope !== "this_artist" || !artistName) return true;
+      const credit =
+        row["artist-credit"]?.map((c) => c.name ?? c.artist?.name ?? "").join(" ") ??
+        "";
+      // Require a matching credit — never accept empty credits (cover bleed).
+      if (!credit.trim()) return false;
+      return artistsLooselyMatch(artistName, credit);
+    })
+    .map((row) => parseYearPrefix(row["first-release-date"]))
+    .filter((year): year is number => year != null);
+}
+
 /**
  * MusicBrainz first-release-date for an official recording.
  * - this_artist: restrict to the played artist (covers stay with that act)
@@ -136,53 +236,29 @@ export async function lookupMusicBrainzOriginalYear(
   artist: string,
   scope: "this_artist" | "any_artist" = "this_artist",
 ): Promise<number | null> {
-  const recording = stripRecordingVersionLabel(title);
-  if (recording.length < 2) return null;
+  const wasLive = /\blive\b/i.test(title);
+  // Alternate spellings (Walkin'/Walking) matter most when scanning any artist
+  // for the first recording of a song.
+  const variants =
+    scope === "any_artist"
+      ? recordingTitleVariants(title)
+      : [stripRecordingVersionLabel(title)].filter((value) => value.length >= 2);
+  if (variants.length === 0) return null;
 
   const artistName = artist.trim();
-  const safeTitle = recording.replace(/"/g, "");
-  const query =
-    scope === "any_artist" || !artistName
-      ? `recording:"${safeTitle}" AND status:official`
-      : `recording:"${safeTitle}" AND artist:"${artistName.replace(/"/g, "")}" AND status:official`;
-
-  const url = new URL("https://musicbrainz.org/ws/2/recording");
-  url.searchParams.set("query", query);
-  url.searchParams.set("fmt", "json");
-  url.searchParams.set("limit", "10");
 
   try {
-    const response = await fetch(url.toString(), {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "BEATAGE/1.0 (https://beatage.gosmooth.eu)",
-      },
-      cache: "no-store",
-    });
-    if (!response.ok) return null;
-
-    const data = (await response.json()) as {
-      recordings?: Array<{
-        title?: string;
-        "first-release-date"?: string;
-        score?: number;
-        "artist-credit"?: Array<{ name?: string; artist?: { name?: string } }>;
-      }>;
-    };
-
-    const minScore = scope === "any_artist" ? 50 : 60;
-    const years = (data.recordings ?? [])
-      .filter((row) => (row.score ?? 0) >= minScore)
-      .filter((row) => {
-        if (scope !== "this_artist" || !artistName) return true;
-        const credit =
-          row["artist-credit"]?.map((c) => c.name ?? c.artist?.name ?? "").join(" ") ??
-          "";
-        return artistsLooselyMatch(artistName, credit);
-      })
-      .map((row) => parseYearPrefix(row["first-release-date"]))
-      .filter((year): year is number => year != null);
-
+    const yearLists: number[][] = [];
+    for (const variant of variants) {
+      // MusicBrainz asks for ~1 req/sec; keep variants sequential.
+      if (yearLists.length > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1100));
+      }
+      yearLists.push(
+        await queryMusicBrainzRecordingYears(variant, artistName, scope, wasLive),
+      );
+    }
+    const years = yearLists.flat();
     if (years.length === 0) return null;
     return Math.min(...years);
   } catch {

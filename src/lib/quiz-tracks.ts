@@ -1,6 +1,7 @@
 import { findSpotifyTrack, getSpotifyTrackById, searchSpotifyOriginalYearCandidates } from "@/lib/spotify";
 import { lookupItunesTrackMeta } from "@/lib/music";
 import {
+  extractPerformanceYearFromTitle,
   lookupMusicBrainzOriginalYear,
   looksLikeCompilationName,
   looksLikeRemasterLabel,
@@ -141,46 +142,60 @@ export async function resolveQuizTrackMetadata(
     const albumLooksRemaster =
       looksLikeRemasterLabel(albumName) || looksLikeRemasterLabel(trackName);
     const albumIsDirty = albumLooksCompiled || albumLooksRemaster;
+    const performanceYear = extractPerformanceYearFromTitle(trackName);
     const answerYearMode = options?.answerYearMode ?? "this_release";
     const musicBrainzScope =
       answerYearMode === "original_recording" ? "any_artist" : "this_artist";
 
-    const [musicBrainzYear, spotifyYears, itunes] = await Promise.all([
-      lookupArtist || musicBrainzScope === "any_artist"
-        ? lookupMusicBrainzOriginalYear(lookupTitle, lookupArtist, musicBrainzScope)
-        : Promise.resolve(null),
-      lookupArtist
-        ? searchSpotifyOriginalYearCandidates(lookupTitle, lookupArtist)
-        : Promise.resolve([] as number[]),
-      lookupArtist
-        ? lookupItunesTrackMeta(lookupTitle, lookupArtist)
-        : Promise.resolve(null),
-    ]);
-
-    if (answerYearMode === "this_release" && !albumIsDirty && albumYear != null) {
-      originalReleaseYear = albumYear;
-      releaseYear = albumYear;
+    // Live concert year in the title (Hyde Park 1976) wins for this_release —
+    // don't let deluxe/reissue catalog dates (2011/2017) override it.
+    if (performanceYear != null && answerYearMode === "this_release") {
+      originalReleaseYear = performanceYear;
+      releaseYear = performanceYear;
     } else {
+      const [musicBrainzYear, spotifyYears, itunes] = await Promise.all([
+        lookupArtist || musicBrainzScope === "any_artist"
+          ? // Pass raw title so MB can skip live takes when the query isn't live.
+            lookupMusicBrainzOriginalYear(trackName, lookupArtist, musicBrainzScope)
+          : Promise.resolve(null),
+        lookupArtist
+          ? searchSpotifyOriginalYearCandidates(
+              lookupTitle,
+              lookupArtist,
+              "DE",
+              musicBrainzScope,
+            )
+          : Promise.resolve([] as number[]),
+        lookupArtist
+          ? lookupItunesTrackMeta(lookupTitle, lookupArtist, "de", musicBrainzScope)
+          : Promise.resolve(null),
+      ]);
+
+      // Always merge external candidates. A "clean" Spotify album date is often a
+      // reissue year (Plastic Bertrand 2008) while MusicBrainz/iTunes know 1977.
+      // this_release still uses this_artist scope so covers stay with that act.
+      // Keep albumYear even when dirty — Spotify remasters often keep the original date.
       originalReleaseYear = pickOriginalReleaseYear(
         [
+          performanceYear,
           musicBrainzYear,
           ...spotifyYears,
           itunes?.releaseYear,
-          albumIsDirty ? null : albumYear,
+          albumYear,
         ],
-        albumIsDirty ? null : albumYear,
+        albumIsDirty && performanceYear == null ? null : albumYear,
       );
       if (originalReleaseYear != null) {
         releaseYear = originalReleaseYear;
       }
-    }
 
-    if (!previewUrl && itunes?.previewUrl) {
-      previewUrl = itunes.previewUrl;
-    }
-    if (releaseYear == null && itunes?.releaseYear != null) {
-      releaseYear = itunes.releaseYear;
-      originalReleaseYear = originalReleaseYear ?? itunes.releaseYear;
+      if (!previewUrl && itunes?.previewUrl) {
+        previewUrl = itunes.previewUrl;
+      }
+      if (releaseYear == null && itunes?.releaseYear != null) {
+        releaseYear = itunes.releaseYear;
+        originalReleaseYear = originalReleaseYear ?? itunes.releaseYear;
+      }
     }
   } catch {
     // Best-effort enrichment only — still store the curated title/artist.
