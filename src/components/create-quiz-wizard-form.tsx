@@ -206,15 +206,25 @@ export function CreateQuizWizardForm({
           title: song.title.trim(),
           artist: song.artist.trim(),
           previewUrl: song.previewUrl.trim(),
+          releaseYear:
+            typeof song.releaseYear === "number" && Number.isFinite(song.releaseYear)
+              ? song.releaseYear
+              : null,
         })),
       ),
     );
     formData.set(
       "settingsJson",
       JSON.stringify({
+        source: current.playMode === "auto_spotify" ? "spotify_live" : "curated",
         chartCountries: current.chartCountries,
         scoringModes: current.scoringModes,
         hostParticipates: current.hostParticipates,
+        guessPeriod:
+          current.playMode === "auto_spotify" ? "until_next_track" : "host_manual",
+        releaseMode:
+          current.playMode === "auto_spotify" ? "automatic" : "host_manual",
+        roundReveal: "after_round",
       }),
     );
     return formData;
@@ -427,6 +437,55 @@ export function CreateQuizWizardForm({
 
                   {wizard.step === 1 ? (
                     <div className="space-y-4">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          onClick={() => patchWizard({ playMode: "curate" })}
+                          className={cn(
+                            "rounded-xl border px-4 py-3 text-left transition",
+                            wizard.playMode === "curate"
+                              ? "border-primary bg-primary/5 ring-1 ring-primary/40"
+                              : "border-border/60 hover:border-border",
+                          )}
+                        >
+                          <p className="text-sm font-semibold text-foreground">
+                            Curate playlist
+                          </p>
+                          <p className="mt-1 text-xs leading-snug text-muted-foreground">
+                            Build a song list ahead of time, and add tracks ad hoc during
+                            the quiz.
+                          </p>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => patchWizard({ playMode: "auto_spotify" })}
+                          className={cn(
+                            "rounded-xl border px-4 py-3 text-left transition",
+                            wizard.playMode === "auto_spotify"
+                              ? "border-primary bg-primary/5 ring-1 ring-primary/40"
+                              : "border-border/60 hover:border-border",
+                          )}
+                        >
+                          <p className="text-sm font-semibold text-foreground">
+                            Auto Spotify
+                          </p>
+                          <p className="mt-1 text-xs leading-snug text-muted-foreground">
+                            Play any song in Spotify — everyone guesses its release year
+                            while it plays.
+                          </p>
+                        </button>
+                      </div>
+
+                      {wizard.playMode === "auto_spotify" ? (
+                        <div className="rounded-xl border border-border/60 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                          No playlist needed here. In the quiz, rounds open and close
+                          automatically from whatever is playing in Spotify (with a short
+                          5s delay so skips do not start a round by accident).
+                        </div>
+                      ) : null}
+
+                      {wizard.playMode === "curate" ? (
+                        <>
                       <p className="text-sm text-muted-foreground">
                         Build your playlist in play order
                         {unlockForTracks
@@ -490,7 +549,7 @@ export function CreateQuizWizardForm({
                                   ...prev,
                                   draftSongs: [
                                     ...prev.draftSongs,
-                                    { title: "", artist: "", previewUrl: "" },
+                                    { title: "", artist: "", previewUrl: "", releaseYear: null },
                                   ],
                                 }));
                                 focusById(`song-${newIndex}-search`, {
@@ -523,7 +582,7 @@ export function CreateQuizWizardForm({
                               ...prev,
                               draftSongs: [
                                 ...prev.draftSongs,
-                                { title: "", artist: "", previewUrl: "" },
+                                { title: "", artist: "", previewUrl: "", releaseYear: null },
                               ],
                             }));
                             focusById(`song-${newIndex}-search`, {
@@ -535,6 +594,8 @@ export function CreateQuizWizardForm({
                           {unlockForTracks ? " (unlock at create)" : ""}
                         </WizardAddAnotherButton>
                       )}
+                        </>
+                      ) : null}
                     </div>
                   ) : null}
 
@@ -611,10 +672,18 @@ export function CreateQuizWizardForm({
                         </p>
                       ) : null}
                       <p>
-                        <span className="font-medium">Playlist:</span>{" "}
-                        {filledQuizSongs(wizard).length} song
-                        {filledQuizSongs(wizard).length === 1 ? "" : "s"}
+                        <span className="font-medium">Mode:</span>{" "}
+                        {wizard.playMode === "auto_spotify"
+                          ? "Auto Spotify"
+                          : "Curated playlist"}
                       </p>
+                      {wizard.playMode === "curate" ? (
+                        <p>
+                          <span className="font-medium">Playlist:</span>{" "}
+                          {filledQuizSongs(wizard).length} song
+                          {filledQuizSongs(wizard).length === 1 ? "" : "s"}
+                        </p>
+                      ) : null}
                       <p>
                         <span className="font-medium">Settings:</span>{" "}
                         {quizWizardSettingsSummary(wizard)}

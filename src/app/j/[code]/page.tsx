@@ -1,4 +1,4 @@
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { JoinQuizDialog } from "@/components/join-quiz-form";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getOptionalUser } from "@/lib/supabase/auth";
@@ -27,7 +27,7 @@ export default async function JoinByCodePage({ params }: JoinPageProps) {
   });
 
   if (error || !preview) {
-    notFound();
+    redirect("/?removed=1");
   }
 
   const quiz = preview as QuizPreview;

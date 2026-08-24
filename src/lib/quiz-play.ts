@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveQuizSettings, scoreYearGuess } from "@/lib/quiz-scoring";
 
 async function assertQuizHost(quizId: string, userId: string) {
   const admin = createAdminClient();
@@ -189,6 +190,7 @@ export async function submitGuessForMember(
 
     const { error } = await admin.from("beatage_guesses").upsert(
       {
+        quiz_id: round.quiz_id,
         round_id: roundId,
         user_id: userId,
         guessed_year: guessedYear,
@@ -230,6 +232,13 @@ export async function closeRoundForHost(
       return { error: "ROUND_NOT_ACTIVE" };
     }
 
+    const { data: quizRow } = await admin
+      .from("beatage_quizzes")
+      .select("settings")
+      .eq("id", round.quiz_id)
+      .maybeSingle();
+    const settings = resolveQuizSettings(quizRow?.settings);
+
     const correct = round.correct_release_year as number | null;
     const { data: guesses } = await admin
       .from("beatage_guesses")
@@ -237,13 +246,17 @@ export async function closeRoundForHost(
       .eq("round_id", roundId);
 
     for (const guess of (guesses ?? []) as Array<{ id: string; guessed_year: number | null }>) {
-      const exact = correct != null && guess.guessed_year === correct ? 1 : 0;
+      const scored = scoreYearGuess({
+        guessedYear: guess.guessed_year,
+        correctYear: correct,
+        settings,
+      });
       const { error: scoreError } = await admin
         .from("beatage_guesses")
         .update({
-          points: exact,
-          points_total: exact,
-          points_breakdown: { year_exact: exact },
+          points: scored.points,
+          points_total: scored.points,
+          points_breakdown: scored.breakdown,
         })
         .eq("id", guess.id);
       if (scoreError) {

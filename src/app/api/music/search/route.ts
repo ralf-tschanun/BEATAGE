@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { normalizePreviewUrl, type ItunesTrackResult } from "@/lib/music";
+import {
+  normalizePreviewUrl,
+  parseItunesReleaseYear,
+  type ItunesTrackResult,
+} from "@/lib/music";
 
 type ItunesApiResult = {
   trackId?: number;
@@ -9,6 +13,7 @@ type ItunesApiResult = {
   artworkUrl60?: string;
   artworkUrl100?: string;
   previewUrl?: string;
+  releaseDate?: string;
   kind?: string;
 };
 
@@ -61,6 +66,7 @@ export async function GET(request: Request) {
         collectionName: item.collectionName?.trim() || null,
         artworkUrl: item.artworkUrl100 || item.artworkUrl60 || null,
         previewUrl: normalizePreviewUrl(item.previewUrl),
+        releaseYear: parseItunesReleaseYear(item.releaseDate),
       }));
 
     return NextResponse.json({ results });

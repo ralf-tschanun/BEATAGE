@@ -151,15 +151,6 @@ export async function createQuizAction(
     }
   }
 
-  if (wizardCreate && tracks.length < 1) {
-    return { error: "Please add at least one song before creating the quiz." };
-  }
-  if (tracks.length > DEFAULT_MAX_CURATED_TRACKS && !requiresUnlock) {
-    return {
-      error: `Please keep the playlist to ${DEFAULT_MAX_CURATED_TRACKS} songs or fewer (or unlock this quiz).`,
-    };
-  }
-
   let settings: BeatageQuizSettings = { ...DEFAULT_QUIZ_SETTINGS };
   if (settingsPayload) {
     try {
@@ -175,13 +166,23 @@ export async function createQuizAction(
     }
   }
 
+  const isAutoSpotify = settings.source === "spotify_live";
+  if (wizardCreate && tracks.length < 1 && !isAutoSpotify) {
+    return { error: "Please add at least one song before creating the quiz." };
+  }
+  if (tracks.length > DEFAULT_MAX_CURATED_TRACKS && !requiresUnlock) {
+    return {
+      error: `Please keep the playlist to ${DEFAULT_MAX_CURATED_TRACKS} songs or fewer (or unlock this quiz).`,
+    };
+  }
+
   try {
     const { supabase, user } = await ensureAnonymousSession();
     const { data, error } = await supabase.rpc("create_beatage_quiz", {
       p_title: title,
       p_host_name: hostName,
       p_description: description || null,
-      p_source: "curated",
+      p_source: settings.source === "spotify_live" ? "spotify_live" : "curated",
       p_settings: settings,
       p_chart_countries: settings.chartCountries,
       p_requires_unlock: requiresUnlock,

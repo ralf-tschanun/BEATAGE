@@ -6,17 +6,29 @@ import { getQuizDashboardData } from "@/lib/quizzes/dashboard";
 import type { PlanId } from "@/lib/quiz-plans";
 
 type HomePageProps = {
-  searchParams: Promise<{ billing?: string }>;
+  searchParams: Promise<{ billing?: string; removed?: string; deleted?: string }>;
 };
 
 export default async function HomePage({ searchParams }: HomePageProps) {
-  const { billing } = await searchParams;
+  const { billing, removed, deleted } = await searchParams;
   const { hosted, joined, plan, canCreate, identity, activeHostedCount } =
     await getQuizDashboardData();
 
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-background via-background to-muted/30">
       <SiteHeader identity={identity} currentPlan={plan.id as PlanId} />
+
+      {removed === "1" ? (
+        <p className="mx-auto w-full max-w-5xl px-6 pt-4 text-sm text-foreground">
+          That quiz is no longer available.
+        </p>
+      ) : null}
+
+      {deleted === "1" ? (
+        <p className="mx-auto w-full max-w-5xl px-6 pt-4 text-sm text-foreground">
+          Quiz deleted.
+        </p>
+      ) : null}
 
       {billing ? (
         <p className="mx-auto w-full max-w-5xl px-6 pt-4 text-sm text-foreground">

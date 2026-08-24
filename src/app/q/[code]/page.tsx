@@ -1,4 +1,4 @@
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { QuizPageHeader } from "@/components/quiz-page-header";
 import { QuizPlayPanels } from "@/components/quiz-play-panels";
@@ -39,7 +39,7 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
   });
 
   if (error || !preview) {
-    notFound();
+    redirect("/?removed=1");
   }
 
   const quiz = preview as {
@@ -182,11 +182,13 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
           quizId={quiz.id}
           joinCode={joinCode}
           isHost={isHost}
+          quizSource={quiz.source}
           memberCount={memberRows.length || quiz.member_count || 0}
           tracks={playState?.tracks ?? []}
           currentRoundNumber={playState?.currentRoundNumber ?? 0}
           activeRound={playState?.activeRound ?? null}
           resultRound={playState?.resultRound ?? null}
+          pastRounds={playState?.pastRounds ?? []}
           roundGuesses={playState?.roundGuesses ?? []}
           myGuessYear={playState?.myGuessYear ?? null}
           leaderboard={playState?.leaderboard ?? []}

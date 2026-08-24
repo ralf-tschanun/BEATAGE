@@ -31,6 +31,7 @@ export type QuizPlaySnapshot = {
   tracks: CuratedTrackRow[];
   activeRound: RoundRow | null;
   resultRound: RoundRow | null;
+  pastRounds: RoundRow[];
   roundGuesses: GuessRow[];
   myGuessYear: number | null;
   leaderboard: LeaderboardRow[];
@@ -118,6 +119,7 @@ async function fetchQuizPlaySnapshot(
     tracks: state.tracks,
     activeRound: state.activeRound,
     resultRound: state.resultRound,
+    pastRounds: state.pastRounds ?? [],
     roundGuesses: state.roundGuesses,
     myGuessYear: state.myGuessYear,
     leaderboard: state.leaderboard,
@@ -139,10 +141,11 @@ function snapshotFingerprint(snapshot: QuizPlaySnapshot): string {
     snapshot.activeRound?.status ?? "",
     snapshot.resultRound?.id ?? "",
     snapshot.resultRound?.status ?? "",
+    snapshot.pastRounds.map((r) => r.id).join(","),
     snapshot.myGuessYear ?? "",
     snapshot.memberCount,
     snapshot.roundGuesses
-      .map((g) => `${g.user_id}:${g.guessed_year}:${g.points_total}`)
+      .map((g) => `${g.user_id}:${g.submitted_at}:${g.guessed_year}:${g.points_total}`)
       .join(","),
     snapshot.leaderboard.map((r) => `${r.user_id}:${r.total_points}`).join(","),
     snapshot.tracks.map((t) => t.id).join(","),
@@ -170,13 +173,18 @@ export async function broadcastQuizResync(
 
   // Sender tab: apply snapshot now (MyContest relies on postgres_changes for this;
   // quiz play must not wait on RSC / self:false broadcast).
-  try {
-    const snapshot = await fetchQuizPlaySnapshot(quizId, joinCode);
-    if (snapshot) {
-      emitPlayPatch(quizId, { type: "replace", snapshot });
+  // Guess-only resync: patch the host list locally. Skip the full PostgREST snapshot.
+  if (payload.guess) {
+    emitGuessPatch(quizId, payload.guess);
+  } else {
+    try {
+      const snapshot = await fetchQuizPlaySnapshot(quizId, joinCode);
+      if (snapshot) {
+        emitPlayPatch(quizId, { type: "replace", snapshot });
+      }
+    } catch {
+      // Best-effort — peers still get broadcast sync.
     }
-  } catch {
-    // Best-effort — peers still get broadcast sync.
   }
 
   async function sendOnce(): Promise<boolean> {
@@ -396,6 +404,7 @@ export function QuizLiveRefresh({
             event: "*",
             schema: "public",
             table: "beatage_guesses",
+            filter: `quiz_id=eq.${quizId}`,
           },
           (payload) => onGuessChange(payload as { new?: Record<string, unknown> | null }),
         )

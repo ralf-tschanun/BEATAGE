@@ -17,8 +17,10 @@ import {
   type QuizGuessLivePatch,
   type QuizPlaySnapshot,
 } from "@/components/quiz-live-refresh";
+import { AutoSpotifyHostControls } from "@/components/auto-spotify-host-controls";
 import { SongPickFields } from "@/components/song-pick-fields";
 import { SongPreviewPlayer } from "@/components/song-preview-player";
+import { SpotifyTrackLink } from "@/components/spotify-track-link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,18 +31,46 @@ import type {
   LeaderboardRow,
   RoundRow,
 } from "@/lib/quizzes/play-state";
+import { useWizardInputFocus } from "@/lib/wizard-input-focus";
 
 const initial: QuizRoundActionState = null;
+
+/** Host open-in-Spotify: prefer track id, else search by title + artist. */
+function spotifyOpenForHostTrack(opts: {
+  spotifyTrackId?: string | null;
+  trackName?: string | null;
+  artistName?: string | null;
+}): { href: string; uri: string | null } | null {
+  const id = opts.spotifyTrackId?.trim();
+  if (id) {
+    return {
+      href: `https://open.spotify.com/track/${id}`,
+      uri: `spotify:track:${id}`,
+    };
+  }
+  const query = [opts.trackName?.trim(), opts.artistName?.trim()]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  if (!query) return null;
+  return {
+    href: `https://open.spotify.com/search/${encodeURIComponent(query)}`,
+    uri: `spotify:search:${encodeURIComponent(query)}`,
+  };
+}
 
 type QuizPlayPanelsProps = {
   quizId: string;
   joinCode: string;
   isHost: boolean;
+  /** curated | spotify_live | … — drives Auto Spotify host UI. */
+  quizSource?: string;
   memberCount: number;
   tracks: CuratedTrackRow[];
   currentRoundNumber: number;
   activeRound: RoundRow | null;
   resultRound: RoundRow | null;
+  pastRounds?: RoundRow[];
   roundGuesses: GuessRow[];
   myGuessYear: number | null;
   leaderboard: LeaderboardRow[];
@@ -54,11 +84,13 @@ export function QuizPlayPanels({
   quizId,
   joinCode,
   isHost,
+  quizSource = "curated",
   memberCount: memberCountProp,
   tracks: tracksProp,
   currentRoundNumber: currentRoundNumberProp,
   activeRound: activeRoundProp,
   resultRound: resultRoundProp,
+  pastRounds: pastRoundsProp = [],
   roundGuesses: roundGuessesProp,
   myGuessYear: myGuessYearProp,
   leaderboard: leaderboardProp,
@@ -78,7 +110,16 @@ export function QuizPlayPanels({
     title: "",
     artist: "",
     previewUrl: "",
+    releaseYear: null as number | null,
   });
+  const { focusById } = useWizardInputFocus([showAddTrack]);
+
+  useEffect(() => {
+    if (!showAddTrack) return;
+    focusById("host-add-track-search", { keyboardSafe: true });
+  }, [showAddTrack, focusById]);
+
+  const isAutoSpotify = quizSource === "spotify_live";
 
   // Live snapshot (MyContest pattern) — client fetch beats waiting on RSC alone.
   const [live, setLive] = useState<QuizPlaySnapshot>(() => ({
@@ -86,6 +127,7 @@ export function QuizPlayPanels({
     tracks: tracksProp,
     activeRound: activeRoundProp,
     resultRound: resultRoundProp,
+    pastRounds: pastRoundsProp,
     roundGuesses: roundGuessesProp,
     myGuessYear: myGuessYearProp,
     leaderboard: leaderboardProp,
@@ -98,6 +140,7 @@ export function QuizPlayPanels({
   const currentRoundNumber = live.currentRoundNumber;
   const activeRound = live.activeRound;
   const resultRound = live.resultRound;
+  const pastRounds = live.pastRounds ?? [];
   const roundGuesses = live.roundGuesses;
   const myGuessYear = live.myGuessYear;
   const leaderboard = live.leaderboard;
@@ -106,7 +149,9 @@ export function QuizPlayPanels({
   const isFinished = quizStatus === "finished" || quizStatus === "expired";
   const maxCuratedTracks = live.maxCuratedTracks;
   const atTrackLimit =
-    maxCuratedTracks != null && tracks.length >= maxCuratedTracks;
+    !isAutoSpotify &&
+    maxCuratedTracks != null &&
+    tracks.length >= maxCuratedTracks;
   const addHitTrackLimit = Boolean(
     addState?.error &&
       (addState.error.includes("maximum of") || addState.error.includes("TRACK_LIMIT")),
@@ -135,7 +180,7 @@ export function QuizPlayPanels({
 
   useEffect(() => {
     if (!addState?.ok) return;
-    setDraftTrack({ title: "", artist: "", previewUrl: "" });
+    setDraftTrack({ title: "", artist: "", previewUrl: "", releaseYear: null });
     // Keep typing: focus the cleared search field for the next song.
     window.requestAnimationFrame(() => {
       const input = document.getElementById("host-add-track-search");
@@ -158,25 +203,18 @@ export function QuizPlayPanels({
     return subscribeQuizGuesses(quizId, (patch: QuizGuessLivePatch) => {
       if (!activeRound || patch.roundId !== activeRound.id) return;
       setLiveGuesses((prev) => {
-        const index = prev.findIndex((row) => row.user_id === patch.userId);
-        if (index === -1) {
-          return [
-            ...prev,
-            {
-              user_id: patch.userId,
-              display_name: patch.displayName ?? "Player",
-              guessed_year: patch.guessedYear,
-              points_total: 0,
-            },
-          ];
-        }
-        const next = [...prev];
-        next[index] = {
-          ...next[index],
-          guessed_year: patch.guessedYear,
-          display_name: patch.displayName ?? next[index].display_name,
-        };
-        return next;
+        const rest = prev.filter((row) => row.user_id !== patch.userId);
+        // Newest submission on top; never store the year for the host list.
+        return [
+          {
+            user_id: patch.userId,
+            display_name: patch.displayName ?? "Player",
+            guessed_year: null,
+            points_total: 0,
+            submitted_at: new Date().toISOString(),
+          },
+          ...rest,
+        ];
       });
     });
   }, [quizId, activeRound]);
@@ -192,25 +230,50 @@ export function QuizPlayPanels({
       null;
     if (!syncId || syncId === lastSyncIdRef.current) return;
     lastSyncIdRef.current = syncId;
+    const guessOnly = guessState?.syncId === syncId && Boolean(guessState.guess);
     void broadcastQuizResync(
       quizId,
       joinCode,
-      guessState?.syncId === syncId && guessState.guess
-        ? { guess: guessState.guess }
-        : undefined,
+      guessOnly && guessState.guess ? { guess: guessState.guess } : undefined,
     );
-    router.refresh();
+    // Guess patches already update the host list — skip a full RSC/PostgREST reload.
+    if (!guessOnly) {
+      router.refresh();
+    }
   }, [addState, startState, guessState, closeState, finishState, quizId, joinCode, router]);
 
   const remainingCount = Math.max(0, tracks.length - currentRoundNumber);
-  const allTracksPlayed = tracks.length > 0 && remainingCount === 0 && !activeRound;
+  const allTracksPlayed =
+    !isAutoSpotify && tracks.length > 0 && remainingCount === 0 && !activeRound;
   const quizComplete = isFinished || allTracksPlayed;
   const canFinish = isHost && !isFinished && !activeRound;
   const waitingForHost = !isHost && !activeRound && !quizComplete && !isFinished;
 
   return (
     <div className="space-y-8">
-      {isHost ? (
+      {isHost && isAutoSpotify ? (
+        <section className="space-y-4">
+          <AutoSpotifyHostControls
+            quizId={quizId}
+            joinCode={joinCode}
+            disabled={isFinished}
+          />
+          {canFinish ? (
+            <form action={finishAction} className="flex flex-wrap gap-2">
+              <input type="hidden" name="quizId" value={quizId} />
+              <input type="hidden" name="joinCode" value={joinCode} />
+              <Button type="submit" variant="secondary" disabled={finishPending}>
+                {finishPending ? "Finishing…" : "End quiz"}
+              </Button>
+              {finishState?.error ? (
+                <p className="w-full text-sm text-destructive">{finishState.error}</p>
+              ) : null}
+            </form>
+          ) : null}
+        </section>
+      ) : null}
+
+      {isHost && !isAutoSpotify ? (
         <section className="space-y-4 rounded-2xl border border-border/60 bg-card/40 p-6">
           <div className="space-y-1">
             <h2 className="text-lg font-semibold">Host controls</h2>
@@ -230,6 +293,11 @@ export function QuizPlayPanels({
               {tracks.map((track, index) => {
                 const played = index < currentRoundNumber;
                 const isNext = !activeRound && index === currentRoundNumber;
+                const spotify = spotifyOpenForHostTrack({
+                  spotifyTrackId: track.spotify_track_id,
+                  trackName: track.track_name,
+                  artistName: track.artist_name,
+                });
                 return (
                   <li
                     key={track.id}
@@ -241,16 +309,38 @@ export function QuizPlayPanels({
                           : undefined
                     }
                   >
-                    <span className="font-medium">{track.track_name}</span>
-                    {track.artist_name ? ` — ${track.artist_name}` : ""}
-                    {track.release_year ? (
-                      <span className="text-muted-foreground"> · {track.release_year}</span>
-                    ) : (
-                      <span className="text-muted-foreground"> · year unknown</span>
-                    )}
-                    {isNext ? (
-                      <span className="ml-2 text-xs text-primary">next</span>
-                    ) : null}
+                    <div className="flex min-w-0 items-center gap-2">
+                      <p className="min-w-0 flex-1 truncate">
+                        <span className="font-medium">{track.track_name}</span>
+                        {track.artist_name ? ` — ${track.artist_name}` : ""}
+                        {isNext ? (
+                          <span className="ml-2 text-xs text-primary">next</span>
+                        ) : null}
+                      </p>
+                      <span
+                        className={
+                          track.has_release_year
+                            ? "shrink-0 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-xs font-medium text-emerald-800"
+                            : "shrink-0 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-800"
+                        }
+                        title={
+                          track.has_release_year
+                            ? "Release year found — answer stays hidden until you close the round"
+                            : "Release year missing — scoring needs a year; try re-adding the song"
+                        }
+                      >
+                        {track.has_release_year ? "Year found" : "Year missing"}
+                      </span>
+                      {spotify ? (
+                        <SpotifyTrackLink
+                          href={spotify.href}
+                          uri={spotify.uri}
+                          openedKey={`${quizId}:${track.id}`}
+                          preferApiPlay
+                          className="shrink-0"
+                        />
+                      ) : null}
+                    </div>
                   </li>
                 );
               })}
@@ -356,13 +446,32 @@ export function QuizPlayPanels({
               <input type="hidden" name="joinCode" value={joinCode} />
               <input type="hidden" name="trackName" value={draftTrack.title} />
               <input type="hidden" name="artistName" value={draftTrack.artist} />
+              <input type="hidden" name="previewUrl" value={draftTrack.previewUrl} />
+              <input
+                type="hidden"
+                name="releaseYear"
+                value={draftTrack.releaseYear ?? ""}
+              />
               <SongPickFields
                 compact
                 value={draftTrack}
                 idPrefix="host-add-track"
                 searchLabel="Search song to add"
-                onChange={setDraftTrack}
+                onChange={(value) =>
+                  setDraftTrack({
+                    title: value.title,
+                    artist: value.artist,
+                    previewUrl: value.previewUrl,
+                    releaseYear: value.releaseYear ?? null,
+                  })
+                }
               />
+              {draftTrack.title ? (
+                <p className="text-xs text-muted-foreground">
+                  Release year is resolved on save and stays hidden until you close the
+                  round.
+                </p>
+              ) : null}
               <Button
                 type="submit"
                 disabled={addPending || !draftTrack.title.trim() || !draftTrack.artist.trim()}
@@ -395,9 +504,13 @@ export function QuizPlayPanels({
         <section className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-muted/20 p-6">
           <h2 className="text-lg font-semibold">Waiting for the host</h2>
           <p className="text-sm text-muted-foreground">
-            {currentRoundNumber > 0
-              ? `Round ${currentRoundNumber} is done. Hang tight — the host will start the next round.`
-              : "The quiz is live. This page updates automatically when the host starts a round."}
+            {isAutoSpotify
+              ? currentRoundNumber > 0
+                ? "Round results are on the board. The next song in Spotify will open a new round."
+                : "Auto Spotify is on — this page updates when the host starts playing a song."
+              : currentRoundNumber > 0
+                ? `Round ${currentRoundNumber} is done. Hang tight — the host will start the next round.`
+                : "The quiz is live. This page updates automatically when the host starts a round."}
           </p>
         </section>
       ) : null}
@@ -433,17 +546,38 @@ export function QuizPlayPanels({
           <p className="text-sm text-muted-foreground">
             {isHost ? (
               <>
-                <span className="font-medium text-foreground">{activeRound.track_name}</span>
-                {activeRound.artist_name ? ` — ${activeRound.artist_name}` : ""}
-                {activeRound.correct_release_year ? (
-                  <span className="mt-1 block text-primary">
-                    Host only: {activeRound.correct_release_year}
-                    {activeRound.original_release_year &&
-                    activeRound.original_release_year !== activeRound.correct_release_year
-                      ? ` (original ${activeRound.original_release_year})`
-                      : null}
+                <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-2">
+                  <span className="font-medium text-foreground">
+                    {activeRound.track_name}
                   </span>
-                ) : null}
+                  {activeRound.artist_name ? ` — ${activeRound.artist_name}` : ""}
+                  {(() => {
+                    const spotify = spotifyOpenForHostTrack({
+                      spotifyTrackId: activeRound.spotify_track_id,
+                      trackName: activeRound.track_name,
+                      artistName: activeRound.artist_name,
+                    });
+                    return spotify ? (
+                      <SpotifyTrackLink
+                        href={spotify.href}
+                        uri={spotify.uri}
+                        openedKey={`${quizId}:round:${activeRound.id}`}
+                        preferApiPlay
+                      />
+                    ) : null;
+                  })()}
+                </span>
+                {activeRound.has_correct_year ? (
+                  <span className="mt-1 block text-sm text-muted-foreground">
+                    Release year on file — it will be revealed when you close the
+                    round (so you can guess too).
+                  </span>
+                ) : (
+                  <span className="mt-1 block text-sm text-amber-800">
+                    No release year stored for this track — close will score 0
+                    until the year is resolved.
+                  </span>
+                )}
               </>
             ) : (
               "Listen to the track the host is playing, then enter the release year. Updates appear live for everyone."
@@ -487,7 +621,7 @@ export function QuizPlayPanels({
             ) : null}
           </form>
 
-          {isHost ? (
+          {isHost && !isAutoSpotify ? (
             <form action={closeAction}>
               <input type="hidden" name="roundId" value={activeRound.id} />
               <input type="hidden" name="joinCode" value={joinCode} />
@@ -511,7 +645,7 @@ export function QuizPlayPanels({
                   {liveGuesses.map((g) => (
                     <li key={g.user_id} className="flex justify-between px-4 py-2">
                       <span>{g.display_name}</span>
-                      <span className="text-muted-foreground">{g.guessed_year ?? "—"}</span>
+                      <span className="text-muted-foreground">Guessed</span>
                     </li>
                   ))}
                 </ul>
@@ -531,8 +665,29 @@ export function QuizPlayPanels({
             Round {resultRound.round_number} results
           </h2>
           <p className="text-sm">
-            <span className="font-medium">{resultRound.track_name}</span>
-            {resultRound.artist_name ? ` — ${resultRound.artist_name}` : ""}
+            <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-2">
+              <span>
+                <span className="font-medium">{resultRound.track_name}</span>
+                {resultRound.artist_name ? ` — ${resultRound.artist_name}` : ""}
+              </span>
+              {isHost
+                ? (() => {
+                    const spotify = spotifyOpenForHostTrack({
+                      spotifyTrackId: resultRound.spotify_track_id,
+                      trackName: resultRound.track_name,
+                      artistName: resultRound.artist_name,
+                    });
+                    return spotify ? (
+                      <SpotifyTrackLink
+                        href={spotify.href}
+                        uri={spotify.uri}
+                        openedKey={`${quizId}:result:${resultRound.id}`}
+                        preferApiPlay
+                      />
+                    ) : null;
+                  })()
+                : null}
+            </span>
           </p>
           {resultRound.preview_url ? (
             <SongPreviewPlayer
@@ -540,8 +695,9 @@ export function QuizPlayPanels({
               label={`${resultRound.track_name ?? "Track"} preview`}
             />
           ) : null}
-          <p className="text-sm font-medium text-primary">
-            Correct release year: {resultRound.correct_release_year ?? "—"}
+          <p className="text-sm font-medium text-emerald-700">
+            Correct release year:{" "}
+            <span className="font-bold">{resultRound.correct_release_year ?? "—"}</span>
             {resultRound.original_release_year &&
             resultRound.original_release_year !== resultRound.correct_release_year
               ? ` (original ${resultRound.original_release_year})`
@@ -577,6 +733,31 @@ export function QuizPlayPanels({
                   #{index + 1} {row.display_name}
                 </span>
                 <span className="font-medium">{row.total_points} pt</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {pastRounds.length > 0 ? (
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold">Previous rounds</h2>
+          <ul className="divide-y divide-border/60 rounded-2xl border border-border/60">
+            {pastRounds.map((round) => (
+              <li key={round.id} className="space-y-1 px-4 py-3 text-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p>
+                    <span className="text-muted-foreground">
+                      Round {round.round_number}
+                    </span>
+                    {" · "}
+                    <span className="font-medium">{round.track_name}</span>
+                    {round.artist_name ? ` — ${round.artist_name}` : ""}
+                  </p>
+                  <p className="font-medium text-emerald-700">
+                    {round.correct_release_year ?? "—"}
+                  </p>
+                </div>
               </li>
             ))}
           </ul>

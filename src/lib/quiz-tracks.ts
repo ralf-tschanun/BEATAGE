@@ -1,4 +1,5 @@
 import { findSpotifyTrack, getSpotifyTrackById } from "@/lib/spotify";
+import { lookupItunesTrackMeta } from "@/lib/music";
 import { DEFAULT_MAX_CURATED_TRACKS } from "@/lib/quiz-plans";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -100,6 +101,16 @@ export async function resolveQuizTrackMetadata(
         }
       }
     }
+
+    // iTunes fallback when Spotify left year (or preview) empty.
+    if ((!releaseYear || !previewUrl) && artistName) {
+      const itunes = await lookupItunesTrackMeta(trackName, artistName);
+      if (itunes) {
+        releaseYear = releaseYear ?? itunes.releaseYear;
+        originalReleaseYear = originalReleaseYear ?? itunes.releaseYear;
+        previewUrl = previewUrl ?? itunes.previewUrl;
+      }
+    }
   } catch {
     // Best-effort enrichment only — still store the curated title/artist.
   }
@@ -119,26 +130,30 @@ async function insertCuratedTrackAdmin(
   quizId: string,
   resolved: ResolvedQuizTrack,
   sortOrder: number,
-): Promise<{ error?: string }> {
+): Promise<{ error?: string; trackId?: string }> {
   const admin = createAdminClient();
 
-  const { error } = await admin.from("beatage_curated_tracks").insert({
-    quiz_id: quizId,
-    sort_order: sortOrder,
-    spotify_track_id: resolved.spotifyTrackId,
-    track_name: resolved.trackName,
-    artist_name: resolved.artistName,
-    album_art_url: resolved.albumArtUrl,
-    preview_url: resolved.previewUrl,
-    release_year: resolved.releaseYear,
-    original_release_year: resolved.originalReleaseYear ?? resolved.releaseYear,
-  });
+  const { data, error } = await admin
+    .from("beatage_curated_tracks")
+    .insert({
+      quiz_id: quizId,
+      sort_order: sortOrder,
+      spotify_track_id: resolved.spotifyTrackId,
+      track_name: resolved.trackName,
+      artist_name: resolved.artistName,
+      album_art_url: resolved.albumArtUrl,
+      preview_url: resolved.previewUrl,
+      release_year: resolved.releaseYear,
+      original_release_year: resolved.originalReleaseYear ?? resolved.releaseYear,
+    })
+    .select("id")
+    .single();
 
   if (error) {
     return { error: error.message };
   }
 
-  return {};
+  return { trackId: typeof data?.id === "string" ? data.id : undefined };
 }
 
 async function nextSortOrder(quizId: string): Promise<number> {
@@ -197,21 +212,46 @@ export async function addCuratedTrackToQuiz(
   _supabase: SupabaseClient,
   quizId: string,
   input: QuizTrackInput,
-): Promise<{ error?: string }> {
-  const limit = await getQuizCuratedTrackLimit(quizId);
-  const existing = await countQuizCuratedTracks(quizId);
-  if (limit != null && existing >= limit) {
-    return { error: `TRACK_LIMIT:${limit}` };
+): Promise<{ error?: string; trackId?: string }> {
+  const resolved = await resolveQuizTrackMetadata(input);
+
+  const admin = createAdminClient();
+
+  // Reuse an existing curated row for the same Spotify track (Auto Spotify).
+  if (resolved.spotifyTrackId) {
+    const { data: existingTrack } = await admin
+      .from("beatage_curated_tracks")
+      .select("id")
+      .eq("quiz_id", quizId)
+      .eq("spotify_track_id", resolved.spotifyTrackId)
+      .maybeSingle();
+    if (existingTrack && typeof existingTrack.id === "string") {
+      return { trackId: existingTrack.id };
+    }
   }
 
-  const resolved = await resolveQuizTrackMetadata(input);
+  // Auto Spotify grows the playlist from now-playing — do not apply curated caps.
+  const { data: quizMeta } = await admin
+    .from("beatage_quizzes")
+    .select("source")
+    .eq("id", quizId)
+    .maybeSingle();
+  const isAutoSpotify = quizMeta?.source === "spotify_live";
+
+  if (!isAutoSpotify) {
+    const limit = await getQuizCuratedTrackLimit(quizId);
+    const existing = await countQuizCuratedTracks(quizId);
+    if (limit != null && existing >= limit) {
+      return { error: `TRACK_LIMIT:${limit}` };
+    }
+  }
 
   // Prefer admin insert: play RPCs (003) are often not applied on the remote DB yet.
   try {
     const sortOrder = await nextSortOrder(quizId);
     const inserted = await insertCuratedTrackAdmin(quizId, resolved, sortOrder);
     if (!inserted.error) {
-      return {};
+      return { trackId: inserted.trackId };
     }
 
     // Fall back to RPC if admin insert fails for any reason.
@@ -227,6 +267,17 @@ export async function addCuratedTrackToQuiz(
     });
 
     if (!error) {
+      if (resolved.spotifyTrackId) {
+        const { data: insertedRow } = await admin
+          .from("beatage_curated_tracks")
+          .select("id")
+          .eq("quiz_id", quizId)
+          .eq("spotify_track_id", resolved.spotifyTrackId)
+          .maybeSingle();
+        if (insertedRow && typeof insertedRow.id === "string") {
+          return { trackId: insertedRow.id };
+        }
+      }
       return {};
     }
 
@@ -237,4 +288,66 @@ export async function addCuratedTrackToQuiz(
     const message = error instanceof Error ? error.message : "Track insert failed.";
     return { error: message };
   }
+}
+
+/**
+ * Fill missing release years for curated tracks (Spotify first, iTunes fallback).
+ * Caps work per call so host page load stays snappy.
+ */
+export async function backfillMissingReleaseYearsForQuiz(
+  quizId: string,
+  limit = 5,
+): Promise<number> {
+  const admin = createAdminClient();
+  const { data: rows, error } = await admin
+    .from("beatage_curated_tracks")
+    .select(
+      "id, track_name, artist_name, spotify_track_id, preview_url, release_year, original_release_year, album_art_url",
+    )
+    .eq("quiz_id", quizId)
+    .is("release_year", null)
+    .order("sort_order", { ascending: true })
+    .limit(limit);
+
+  if (error || !rows?.length) {
+    return 0;
+  }
+
+  let updated = 0;
+  for (const row of rows as Array<{
+    id: string;
+    track_name: string;
+    artist_name: string | null;
+    spotify_track_id: string | null;
+    preview_url: string | null;
+    release_year: number | null;
+    original_release_year: number | null;
+    album_art_url: string | null;
+  }>) {
+    const resolved = await resolveQuizTrackMetadata({
+      title: row.track_name,
+      artist: row.artist_name ?? "",
+      previewUrl: row.preview_url ?? undefined,
+      spotifyTrackId: row.spotify_track_id ?? undefined,
+      albumArtUrl: row.album_art_url ?? undefined,
+    });
+    if (resolved.releaseYear == null) continue;
+
+    const { error: updateError } = await admin
+      .from("beatage_curated_tracks")
+      .update({
+        release_year: resolved.releaseYear,
+        original_release_year:
+          resolved.originalReleaseYear ?? resolved.releaseYear,
+        spotify_track_id: resolved.spotifyTrackId ?? row.spotify_track_id,
+        preview_url: resolved.previewUrl ?? row.preview_url,
+        album_art_url: resolved.albumArtUrl ?? row.album_art_url,
+      })
+      .eq("id", row.id)
+      .eq("quiz_id", quizId);
+
+    if (!updateError) updated += 1;
+  }
+
+  return updated;
 }

@@ -7,13 +7,18 @@ export type DraftQuizSong = {
   title: string;
   artist: string;
   previewUrl: string;
+  releaseYear?: number | null;
 };
+
+export type QuizPlayMode = "curate" | "auto_spotify";
 
 export type CreateQuizWizardState = {
   step: number;
   hostName: string;
   title: string;
   description: string;
+  /** Step 2: curated playlist vs Auto Spotify live rounds. */
+  playMode: QuizPlayMode;
   draftSongs: DraftQuizSong[];
   chartCountries: ChartCountryCode[];
   scoringModes: ScoringModeId[];
@@ -22,7 +27,7 @@ export type CreateQuizWizardState = {
 
 export const QUIZ_WIZARD_STEP_TITLES = [
   "Setup",
-  "Curate playlist",
+  "Playlist mode",
   "Quiz options",
   "Review",
 ] as const;
@@ -33,7 +38,8 @@ export function defaultQuizWizardState(hostName = ""): CreateQuizWizardState {
     hostName: hostName.trim(),
     title: "",
     description: "",
-    draftSongs: [{ title: "", artist: "", previewUrl: "" }],
+    playMode: "curate",
+    draftSongs: [{ title: "", artist: "", previewUrl: "", releaseYear: null }],
     chartCountries: [...DEFAULT_QUIZ_SETTINGS.chartCountries],
     scoringModes: [...DEFAULT_QUIZ_SETTINGS.scoringModes],
     hostParticipates: DEFAULT_QUIZ_SETTINGS.hostParticipates,
@@ -56,6 +62,9 @@ export function validateQuizWizardStep(state: CreateQuizWizardState, step: numbe
   }
 
   if (step === 1) {
+    if (state.playMode === "auto_spotify") {
+      return null;
+    }
     const filled = filledQuizSongs(state);
     if (filled.length < 1) return "Please add at least one song.";
     if (
@@ -80,10 +89,15 @@ export function validateQuizWizardStep(state: CreateQuizWizardState, step: numbe
 }
 
 export function quizWizardSettingsSummary(state: CreateQuizWizardState): string {
+  const mode =
+    state.playMode === "auto_spotify" ? "Auto Spotify" : "Curated playlist";
   const songs = filledQuizSongs(state).length;
   const countries = state.chartCountries.join(", ");
   const scoring = state.scoringModes.join(", ");
-  return `${songs} song${songs === 1 ? "" : "s"} · Charts: ${countries} · Scoring: ${scoring}`;
+  if (state.playMode === "auto_spotify") {
+    return `${mode} · Charts: ${countries} · Scoring: ${scoring}`;
+  }
+  return `${mode} · ${songs} song${songs === 1 ? "" : "s"} · Charts: ${countries} · Scoring: ${scoring}`;
 }
 
 type PersistedQuizWizardState = CreateQuizWizardState;
@@ -111,12 +125,20 @@ export function loadQuizWizardState(hostName: string): CreateQuizWizardState | n
     return {
       ...base,
       ...parsed,
+      playMode:
+        parsed.playMode === "auto_spotify" || parsed.playMode === "curate"
+          ? parsed.playMode
+          : base.playMode,
       draftSongs:
         Array.isArray(parsed.draftSongs) && parsed.draftSongs.length > 0
           ? parsed.draftSongs.map((song) => ({
               title: String(song?.title ?? ""),
               artist: String(song?.artist ?? ""),
               previewUrl: String(song?.previewUrl ?? ""),
+              releaseYear:
+                typeof song?.releaseYear === "number" && Number.isFinite(song.releaseYear)
+                  ? song.releaseYear
+                  : null,
             }))
           : base.draftSongs,
       chartCountries:

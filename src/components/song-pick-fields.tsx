@@ -10,6 +10,8 @@ export type SongPickValue = {
   title: string;
   artist: string;
   previewUrl: string;
+  /** From iTunes pick when available; Spotify may overwrite on save. */
+  releaseYear?: number | null;
 };
 
 type SongPickFieldsProps = {
@@ -122,10 +124,11 @@ export function SongPickFields({
 
   function selectTrack(track: ItunesTrackResult) {
     skipSearchRef.current = true;
-    const next = {
+    const next: SongPickValue = {
       title: track.trackName,
       artist: track.artistName,
       previewUrl: track.previewUrl ?? "",
+      releaseYear: track.releaseYear ?? null,
     };
     onChange(next);
     setQuery(`${track.trackName} — ${track.artistName}`);
@@ -134,7 +137,7 @@ export function SongPickFields({
   }
 
   function clearPreview() {
-    onChange({ ...value, previewUrl: "" });
+    onChange({ ...value, previewUrl: "", releaseYear: null });
     setPicked(false);
   }
 
@@ -150,7 +153,7 @@ export function SongPickFields({
           onChange={(event) => {
             setQuery(event.target.value);
             setPicked(false);
-            onChange({ title: "", artist: "", previewUrl: "" });
+            onChange({ title: "", artist: "", previewUrl: "", releaseYear: null });
           }}
           placeholder="Type a song or artist…"
           autoComplete="off"
@@ -220,6 +223,7 @@ export function SongPickFields({
                   title: event.target.value,
                   artist: value.artist,
                   previewUrl: "",
+                  releaseYear: null,
                 });
               }}
               placeholder="Song title"
@@ -239,6 +243,7 @@ export function SongPickFields({
                   title: value.title,
                   artist: event.target.value,
                   previewUrl: "",
+                  releaseYear: null,
                 });
               }}
               placeholder="Artist"
