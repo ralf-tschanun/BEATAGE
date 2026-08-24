@@ -20,6 +20,33 @@ export function parseChartCountry(value: string | null | undefined): ChartCountr
   return "US";
 }
 
+/** Quiz Chart #1 copy: UK / D / A. */
+export const CHART_COUNTRY_SHORT_LABEL: Record<StoredChartCountry, string> = {
+  GB: "UK",
+  DE: "D",
+  AT: "A",
+};
+
+const CHART_COUNTRY_SHORT_ORDER = ["GB", "DE", "AT"] as const satisfies readonly StoredChartCountry[];
+
+/** e.g. `UK/D/A` from the selected quiz chart countries. */
+export function chartCountriesShortLabel(
+  codes: readonly string[] | null | undefined,
+): string {
+  const selected = new Set(codes ?? []);
+  return CHART_COUNTRY_SHORT_ORDER.filter((code) => selected.has(code))
+    .map((code) => CHART_COUNTRY_SHORT_LABEL[code])
+    .join("/");
+}
+
+/** e.g. `Chart #1 (UK/D/A)`. */
+export function chartWasOneLabel(
+  codes: readonly string[] | null | undefined,
+): string {
+  const short = chartCountriesShortLabel(codes);
+  return short ? `Chart #1 (${short})` : "Chart #1";
+}
+
 export const CHART_COUNTRY_OPTIONS: Record<
   ChartCountry,
   {

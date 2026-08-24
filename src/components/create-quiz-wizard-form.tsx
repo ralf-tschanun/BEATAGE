@@ -778,23 +778,15 @@ export function CreateQuizWizardForm({
                           </div>
                         ) : null}
 
-                        <button
-                          type="button"
-                          onClick={() => toggleScoringMode("chart_was_one")}
-                          className={cn(
-                            "w-full rounded-2xl border p-4 text-left transition-colors",
-                            wizard.scoringModes.includes("chart_was_one")
-                              ? "border-primary bg-primary/5"
-                              : "border-border/60 hover:bg-muted/40",
-                          )}
-                        >
-                          <p className="font-medium">Chart #1</p>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            Alone: 1 point if the song was a singles #1. Combined
-                            with Closer wins or Range: players also guess Yes/No
-                            (correct / skipped / wrong add extra points).
-                          </p>
-                        </button>
+                        <AdminSwitchField
+                          id="chartWasOne"
+                          label="Add Chart #1 Guessing Option"
+                          description="Players also guess Yes/No: right = good, wrong = bad, no guess = neutral."
+                          checked={wizard.scoringModes.includes("chart_was_one")}
+                          onCheckedChange={() =>
+                            toggleScoringMode("chart_was_one")
+                          }
+                        />
                       </div>
 
                       <AdminSwitchField

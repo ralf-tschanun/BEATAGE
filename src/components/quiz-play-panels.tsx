@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CaretDownIcon, CheckIcon, XIcon } from "@phosphor-icons/react";
 import { BILLING_SKU_LABELS } from "@/lib/billing-copy";
+import { chartCountriesShortLabel, chartWasOneLabel } from "@/lib/charts";
 import { DEFAULT_QUIZ_SETTINGS, scoringCombinesChart, scoringLowWins, type BeatageQuizSettings } from "@/lib/quiz-settings";
 import { cn } from "@/lib/utils";
 import type {
@@ -135,10 +136,12 @@ function RoundCorrectYear({
   round,
   show,
   showChartOne,
+  chartCountries,
 }: {
   round: RoundRow;
   show: boolean;
   showChartOne?: boolean;
+  chartCountries?: BeatageQuizSettings["chartCountries"];
 }) {
   if (!show && !showChartOne) return null;
   return (
@@ -155,7 +158,7 @@ function RoundCorrectYear({
       ) : null}
       {showChartOne && typeof round.chart_was_number_one === "boolean" ? (
         <p className="text-sm font-medium text-emerald-700">
-          Chart #1:{" "}
+          {chartWasOneLabel(chartCountries)}:{" "}
           <span className="font-bold">
             {round.chart_was_number_one ? "yes" : "no"}
           </span>
@@ -414,6 +417,7 @@ export function QuizPlayPanels({
   }, [quizId, activeRound]);
 
   const chartComboEnabled = scoringCombinesChart(settings);
+  const chartCountriesShort = chartCountriesShortLabel(settings.chartCountries);
   // After any successful play action: notify peers + soft refresh (MyContest pattern).
   useEffect(() => {
     const syncId =
@@ -827,7 +831,10 @@ export function QuizPlayPanels({
             </div>
             {chartComboEnabled ? (
               <div className="space-y-2">
-                <Label>Was this a chart #1?</Label>
+                <Label>
+                  Was this a chart #1
+                  {chartCountriesShort ? ` (${chartCountriesShort})` : ""}?
+                </Label>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
@@ -959,6 +966,7 @@ export function QuizPlayPanels({
             round={resultRound}
             show={isHost || settings.showCorrectAnswer}
             showChartOne={chartComboEnabled}
+            chartCountries={settings.chartCountries}
           />
           <RoundGuessesList
             guesses={roundGuesses}
@@ -1063,6 +1071,7 @@ export function QuizPlayPanels({
                         round={round}
                         show={isHost || settings.showCorrectAnswer}
                         showChartOne={chartComboEnabled}
+                        chartCountries={settings.chartCountries}
                       />
                       <RoundGuessesList
                         guesses={round.guesses}
