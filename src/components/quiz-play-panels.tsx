@@ -102,7 +102,8 @@ export function QuizPlayPanels({
   const lastSyncIdRef = useRef<string | null>(null);
   const [addState, addAction, addPending] = useActionState(addCuratedTrackAction, initial);
   const [startState, startAction, startPending] = useActionState(startRoundAction, initial);
-  const [guessState, guessAction, guessPending] = useActionState(submitGuessAction, initial);
+  const [guessState, setGuessState] = useState<QuizRoundActionState>(initial);
+  const [guessBusy, setGuessBusy] = useState(false);
   const [closeState, closeAction, closePending] = useActionState(closeRoundAction, initial);
   const [finishState, finishAction, finishPending] = useActionState(finishQuizAction, initial);
   const [showAddTrack, setShowAddTrack] = useState(false);
@@ -165,6 +166,9 @@ export function QuizPlayPanels({
   const [guessYear, setGuessYear] = useState(
     myGuessYearProp != null ? String(myGuessYearProp) : "",
   );
+  const [optimisticGuessYear, setOptimisticGuessYear] = useState<number | null>(
+    null,
+  );
   // Host list: patch from broadcast/postgres immediately (don't wait on snapshot alone).
   const [liveGuesses, setLiveGuesses] = useState(roundGuessesProp);
 
@@ -193,7 +197,46 @@ export function QuizPlayPanels({
 
   useEffect(() => {
     setGuessYear(myGuessYear != null ? String(myGuessYear) : "");
+    if (myGuessYear != null) setOptimisticGuessYear(null);
   }, [myGuessYear, activeRound?.id]);
+
+  useEffect(() => {
+    setOptimisticGuessYear(null);
+  }, [activeRound?.id]);
+
+  async function submitGuess(formData: FormData) {
+    const year = Number(formData.get("guessedYear"));
+    if (Number.isFinite(year)) {
+      setOptimisticGuessYear(year);
+      setLive((prev) => ({ ...prev, myGuessYear: year }));
+    }
+    setGuessBusy(true);
+    let settled = false;
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      setGuessBusy(false);
+    }, 8000);
+    try {
+      const next = await submitGuessAction(null, formData);
+      if (!settled) {
+        setGuessState(next);
+        if (next?.guess?.guessedYear != null) {
+          setLive((prev) => ({ ...prev, myGuessYear: next.guess!.guessedYear }));
+        }
+      }
+    } catch (error) {
+      if (!settled) {
+        setGuessState({
+          error: error instanceof Error ? error.message : "Could not save guess.",
+        });
+      }
+    } finally {
+      settled = true;
+      window.clearTimeout(timeout);
+      setGuessBusy(false);
+    }
+  }
 
   useEffect(() => {
     setLiveGuesses(roundGuesses);
@@ -591,7 +634,7 @@ export function QuizPlayPanels({
             />
           ) : null}
 
-          <form action={guessAction} className="flex flex-wrap items-end gap-3">
+          <form action={submitGuess} className="flex flex-wrap items-end gap-3">
             <input type="hidden" name="roundId" value={activeRound.id} />
             <input type="hidden" name="joinCode" value={joinCode} />
             <div className="space-y-2">
@@ -608,8 +651,12 @@ export function QuizPlayPanels({
                 className="w-32"
               />
             </div>
-            <Button type="submit" disabled={guessPending}>
-              {guessPending ? "Saving…" : myGuessYear != null ? "Update guess" : "Submit guess"}
+            <Button type="submit" disabled={guessBusy}>
+              {guessBusy
+                ? "Saving…"
+                : (myGuessYear ?? optimisticGuessYear) != null
+                  ? "Update guess"
+                  : "Submit guess"}
             </Button>
             {guessState?.error ? (
               <p className="w-full text-sm text-destructive">{guessState.error}</p>

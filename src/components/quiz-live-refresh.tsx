@@ -340,7 +340,8 @@ export function QuizLiveRefresh({
           guessedYear: row.guessed_year,
         });
       }
-      scheduleReconcile(200);
+      // Do not snapshot/router.refresh() here: on Vercel that aborts the in-flight
+      // submitGuessAction and leaves the button stuck on "Saving…".
     }
 
     async function syncRealtimeAuth(accessToken: string | undefined | null) {
@@ -412,6 +413,8 @@ export function QuizLiveRefresh({
           const body = payload as QuizResyncPayload | null;
           if (body?.guess) {
             emitGuessPatch(quizId, body.guess);
+            // Guess-only: patch lists locally. A full refresh races the submitter.
+            return;
           }
           void syncFromServer(true);
         })
