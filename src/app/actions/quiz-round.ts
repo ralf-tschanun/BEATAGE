@@ -142,7 +142,6 @@ export async function submitGuessAction(
   formData: FormData,
 ): Promise<QuizRoundActionState> {
   const roundId = String(formData.get("roundId") ?? "").trim();
-  const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
   const guessedYear = Number(formData.get("guessedYear"));
 
   if (!roundId) {
@@ -155,7 +154,6 @@ export async function submitGuessAction(
     return { error: mapError(result.error) };
   }
 
-  revalidatePath(`/q/${joinCode}`);
   return {
     ...okResult(),
     guess: {
