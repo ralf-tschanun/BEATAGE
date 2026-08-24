@@ -878,13 +878,6 @@ export function QuizPlayPanels({
             </p>
           ) : null}
 
-          {isHost && activeRound.preview_url ? (
-            <SongPreviewPlayer
-              previewUrl={activeRound.preview_url}
-              label={`${activeRound.track_name ?? "Track"} preview`}
-            />
-          ) : null}
-
           <form action={submitGuess} className="flex flex-wrap items-end gap-3">
             <input type="hidden" name="roundId" value={activeRound.id} />
             <input type="hidden" name="joinCode" value={joinCode} />

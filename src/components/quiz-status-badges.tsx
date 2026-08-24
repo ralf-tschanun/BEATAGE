@@ -92,7 +92,7 @@ export function QuizStatusBadges({
   const display = useMemo(() => deriveQuizPhaseDisplay(phase), [phase]);
 
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+    <div className="flex flex-wrap items-center gap-2 text-xs">
       <Badge
         variant={quizPhaseBadgeVariant(display.tone)}
         className={cn(
@@ -103,7 +103,16 @@ export function QuizStatusBadges({
       >
         {display.label}
       </Badge>
-      <span className="text-muted-foreground">· {quizSourceLabel(quizSource)}</span>
+      <span className="text-muted-foreground" aria-hidden="true">
+        ·
+      </span>
+      <Badge
+        variant="outline"
+        className="w-fit max-w-full shrink truncate border-border bg-muted/30 font-medium text-muted-foreground"
+        title={quizSourceLabel(quizSource)}
+      >
+        {quizSourceLabel(quizSource)}
+      </Badge>
     </div>
   );
 }
