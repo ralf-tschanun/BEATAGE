@@ -4,7 +4,7 @@ import {
   playSpotifyTrackForUser,
   writeSpotifyUserTokens,
 } from "@/lib/spotify-connect";
-import { getSiteUrl, safeNextPath } from "@/lib/site-url";
+import { getRequestSiteUrl, safeNextPath } from "@/lib/site-url";
 
 type ConnectState = {
   next?: string;
@@ -26,7 +26,7 @@ function parseState(raw: string | null): ConnectState {
 }
 
 export async function GET(request: Request) {
-  const siteUrl = getSiteUrl();
+  const siteUrl = getRequestSiteUrl(request);
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
   const error = searchParams.get("error");
@@ -39,7 +39,7 @@ export async function GET(request: Request) {
     return NextResponse.redirect(url);
   }
 
-  const tokens = await exchangeSpotifyAuthCode(code);
+  const tokens = await exchangeSpotifyAuthCode(code, request);
   if (!tokens) {
     const url = new URL(nextPath, siteUrl);
     url.searchParams.set("spotify", "error");

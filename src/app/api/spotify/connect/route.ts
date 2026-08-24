@@ -25,7 +25,10 @@ export async function GET(request: Request) {
     "utf8",
   ).toString("base64url");
 
-  const authorizeUrl = buildSpotifyConnectUrl({ state: statePayload });
+  const authorizeUrl = buildSpotifyConnectUrl({
+    state: statePayload,
+    request,
+  });
   if (!authorizeUrl) {
     return NextResponse.json(
       { error: "Spotify is not configured on this server." },

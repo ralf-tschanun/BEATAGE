@@ -1,11 +1,15 @@
 import { cookies } from "next/headers";
-import { getSiteUrl } from "@/lib/site-url";
+import { getRequestSiteUrl, getSiteUrl } from "@/lib/site-url";
 
 const COOKIE_NAME = "beatage_spotify_user";
 const SCOPES = [
   "user-modify-playback-state",
   "user-read-playback-state",
 ].join(" ");
+
+type RequestLike = {
+  headers: Headers;
+};
 
 export type SpotifyUserTokens = {
   accessToken: string;
@@ -24,19 +28,22 @@ export function isSpotifyConnectConfigured(): boolean {
   return getSpotifyCredentials() != null;
 }
 
-export function getSpotifyConnectRedirectUri(): string {
-  return `${getSiteUrl()}/api/spotify/callback`;
+/** OAuth redirect_uri — gosmooth in prod / loopback locally; never *.vercel.app. */
+export function getSpotifyConnectRedirectUri(request?: RequestLike): string {
+  const base = request ? getRequestSiteUrl(request) : getSiteUrl();
+  return `${base}/api/spotify/callback`;
 }
 
 export function buildSpotifyConnectUrl(opts: {
   state: string;
+  request?: RequestLike;
 }): string | null {
   const credentials = getSpotifyCredentials();
   if (!credentials) return null;
   const url = new URL("https://accounts.spotify.com/authorize");
   url.searchParams.set("client_id", credentials.clientId);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("redirect_uri", getSpotifyConnectRedirectUri());
+  url.searchParams.set("redirect_uri", getSpotifyConnectRedirectUri(opts.request));
   url.searchParams.set("scope", SCOPES);
   url.searchParams.set("state", opts.state);
   url.searchParams.set("show_dialog", "true");
@@ -45,6 +52,7 @@ export function buildSpotifyConnectUrl(opts: {
 
 export async function exchangeSpotifyAuthCode(
   code: string,
+  request?: RequestLike,
 ): Promise<SpotifyUserTokens | null> {
   const credentials = getSpotifyCredentials();
   if (!credentials) return null;
@@ -56,7 +64,7 @@ export async function exchangeSpotifyAuthCode(
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
-    redirect_uri: getSpotifyConnectRedirectUri(),
+    redirect_uri: getSpotifyConnectRedirectUri(request),
   });
 
   const response = await fetch("https://accounts.spotify.com/api/token", {
