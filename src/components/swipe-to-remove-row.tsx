@@ -23,6 +23,8 @@ type SwipeToRemoveRowProps = {
   actionLabel?: string;
   /** Render inside a shared card/list without its own border chrome. */
   embedded?: boolean;
+  /** Padding / surface classes on the row content (default: px-3 py-2). */
+  contentClassName?: string;
 };
 
 /**
@@ -40,6 +42,7 @@ export function SwipeToRemoveRow({
   onRowClick,
   actionLabel = "Remove",
   embedded = false,
+  contentClassName = "px-3 py-2",
 }: SwipeToRemoveRowProps) {
   const [offset, setOffset] = useState(0);
   const offsetRef = useRef(0);
@@ -52,10 +55,11 @@ export function SwipeToRemoveRow({
   const suppressClick = useRef(false);
 
   const rowSurfaceClass = [
-    highlighted ? "bg-muted" : "bg-background",
+    highlighted ? "bg-muted" : embedded ? "bg-card" : "bg-background",
     interactive
       ? "cursor-pointer transition-colors hover:bg-muted"
       : "",
+    contentClassName,
   ]
     .filter(Boolean)
     .join(" ");
@@ -150,8 +154,8 @@ export function SwipeToRemoveRow({
       <Wrapper
         className={
           embedded
-            ? `px-3 py-2 ${rowSurfaceClass}`
-            : `rounded-lg border px-3 py-2 ${rowSurfaceClass} ${
+            ? rowSurfaceClass
+            : `rounded-lg border ${rowSurfaceClass} ${
                 highlighted ? "border-muted-foreground/20" : ""
               }`
         }
@@ -198,7 +202,7 @@ export function SwipeToRemoveRow({
         </button>
       </div>
       <div
-        className={`relative touch-pan-y px-3 py-2 transition-transform ${rowSurfaceClass}`}
+        className={`relative touch-pan-y transition-transform ${rowSurfaceClass}`}
         style={{ transform: `translateX(${offset}px)` }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  interruptAutoSpotifyQuizAction,
   resumeAutoSpotifyQuizAction,
   skipSpotifyNextAction,
   syncAutoSpotifyRoundAction,
@@ -17,7 +18,7 @@ type AutoSpotifyHostControlsProps = {
   quizId: string;
   joinCode: string;
   disabled?: boolean;
-  /** Server-side pause after consecutive empty rounds. */
+  /** Server-side pause (manual or after consecutive empty rounds). */
   autoInterrupted?: boolean;
   emptyStreakThreshold?: number;
 };
@@ -39,8 +40,6 @@ export function AutoSpotifyHostControls({
 }: AutoSpotifyHostControlsProps) {
   const router = useRouter();
   const [connected, setConnected] = useState<boolean | null>(null);
-  const [pausedByHost, setPausedByHost] = useState(false);
-  const [serverInterrupted, setServerInterrupted] = useState(autoInterrupted);
   const [status, setStatus] = useState("Connecting…");
   const [nowPlaying, setNowPlaying] = useState<NowPlayingTrack | null>(null);
   const [busy, setBusy] = useState(false);
@@ -48,24 +47,20 @@ export function AutoSpotifyHostControls({
 
   const pendingSpotifyIdRef = useRef<string | null>(null);
   const lastSpotifyIdRef = useRef<string | null>(null);
+  /** After "Close this round": keep listening but do not reopen until the song changes. */
+  const deferredTrackIdRef = useRef<string | null>(null);
   const debounceTimerRef = useRef<number | null>(null);
   const wasPlayingRef = useRef(false);
-
-  useEffect(() => {
-    setServerInterrupted(autoInterrupted);
-    if (autoInterrupted) {
-      setPausedByHost(true);
-      setStatus(
-        `Interrupted — ${emptyStreakThreshold} songs in a row had no guesses. Press Continue to resume.`,
-      );
-    }
-  }, [autoInterrupted, emptyStreakThreshold]);
 
   const clearDebounce = useCallback(() => {
     if (debounceTimerRef.current != null) {
       window.clearTimeout(debounceTimerRef.current);
     }
     debounceTimerRef.current = null;
+  }, []);
+
+  const trackLabel = useCallback((track: NowPlayingTrack) => {
+    return `${track.title} — ${track.artist}`;
   }, []);
 
   const runSync = useCallback(
@@ -79,12 +74,10 @@ export function AutoSpotifyHostControls({
           return result;
         }
         if (result.interrupted) {
-          setServerInterrupted(true);
-          setPausedByHost(true);
           clearDebounce();
           pendingSpotifyIdRef.current = null;
           setStatus(
-            `Interrupted — ${emptyStreakThreshold} songs in a row had no guesses. Press Continue to resume.`,
+            `Interrupted — ${emptyStreakThreshold} songs in a row had no guesses.`,
           );
         } else if (result.startedRound) {
           setStatus(
@@ -96,7 +89,7 @@ export function AutoSpotifyHostControls({
         } else if (result.nothingPlaying) {
           setStatus("Nothing playing on Spotify");
         } else if (result.closedRound) {
-          setStatus("Round closed & revealed");
+          setStatus("Round closed — results are on the board");
         }
         router.refresh();
         return result;
@@ -178,10 +171,15 @@ export function AutoSpotifyHostControls({
     };
   }, []);
 
-  const followPaused = pausedByHost || serverInterrupted;
+  useEffect(() => {
+    if (autoInterrupted) {
+      clearDebounce();
+      pendingSpotifyIdRef.current = null;
+    }
+  }, [autoInterrupted, clearDebounce]);
 
   useEffect(() => {
-    if (followPaused || disabled || connected !== true) {
+    if (autoInterrupted || disabled || connected !== true) {
       clearDebounce();
       return;
     }
@@ -214,6 +212,7 @@ export function AutoSpotifyHostControls({
           if (wasPlayingRef.current) {
             wasPlayingRef.current = false;
             lastSpotifyIdRef.current = null;
+            deferredTrackIdRef.current = null;
             clearDebounce();
             pendingSpotifyIdRef.current = null;
             setStatus("Track ended — closing round…");
@@ -226,7 +225,7 @@ export function AutoSpotifyHostControls({
 
         const track = data.track;
         setNowPlaying(track);
-        const label = `${track.title} — ${track.artist}`;
+        const label = trackLabel(track);
 
         if (!track.isPlaying) {
           setStatus(`Paused — ${label}`);
@@ -235,6 +234,7 @@ export function AutoSpotifyHostControls({
 
         const changed = lastSpotifyIdRef.current !== track.spotifyTrackId;
         if (changed) {
+          deferredTrackIdRef.current = null;
           const previous = lastSpotifyIdRef.current;
           lastSpotifyIdRef.current = track.spotifyTrackId;
           wasPlayingRef.current = true;
@@ -247,6 +247,10 @@ export function AutoSpotifyHostControls({
         }
 
         wasPlayingRef.current = true;
+        if (deferredTrackIdRef.current === track.spotifyTrackId) {
+          setStatus(`Listening — ${label} (round closed, next song continues automatically)`);
+          return;
+        }
         if (pendingSpotifyIdRef.current == null) {
           setStatus(`Listening — ${label}`);
         }
@@ -266,38 +270,70 @@ export function AutoSpotifyHostControls({
       clearDebounce();
     };
   }, [
-    followPaused,
+    autoInterrupted,
     disabled,
     connected,
     clearDebounce,
     runSync,
     scheduleOpen,
+    trackLabel,
   ]);
 
-  async function onInterrupt() {
-    setPausedByHost(true);
+  async function onCloseThisRound() {
     clearDebounce();
     pendingSpotifyIdRef.current = null;
-    setStatus("Interrupted — closing round…");
-    await runSync({ forceClose: true, openNewRound: false });
-    setStatus("Interrupted — press Continue to resume Auto Spotify");
+    setStatus("Closing round…");
+    const result = await runSync({ forceClose: true, openNewRound: false });
+    if (result?.error) return;
+    const trackId = nowPlaying?.spotifyTrackId ?? lastSpotifyIdRef.current;
+    if (trackId) {
+      deferredTrackIdRef.current = trackId;
+    }
+    if (nowPlaying) {
+      setStatus(
+        `Round closed — ${trackLabel(nowPlaying)} (next song continues automatically)`,
+      );
+    } else {
+      setStatus("Round closed — results are on the board");
+    }
   }
 
-  async function onContinue() {
-    setBusy(true);
-    setError(null);
-    try {
-      if (serverInterrupted) {
+  async function onInterruptOrContinue() {
+    if (autoInterrupted) {
+      setBusy(true);
+      setError(null);
+      try {
         const result = await resumeAutoSpotifyQuizAction(quizId, joinCode);
         if (result.error) {
           setError(result.error);
           return;
         }
-        setServerInterrupted(false);
+        deferredTrackIdRef.current = null;
+        setStatus("Continuing — waiting for Spotify…");
+        lastSpotifyIdRef.current = null;
+        router.refresh();
+      } finally {
+        setBusy(false);
       }
-      setPausedByHost(false);
-      setStatus("Continuing — waiting for Spotify…");
-      lastSpotifyIdRef.current = null;
+      return;
+    }
+
+    clearDebounce();
+    pendingSpotifyIdRef.current = null;
+    setBusy(true);
+    setError(null);
+    try {
+      setStatus("Interrupted — closing round…");
+      const result = await interruptAutoSpotifyQuizAction(quizId, joinCode);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      const trackId = nowPlaying?.spotifyTrackId ?? lastSpotifyIdRef.current;
+      if (trackId) {
+        deferredTrackIdRef.current = trackId;
+      }
+      setStatus("Interrupted — press Continue to resume Auto Spotify");
       router.refresh();
     } finally {
       setBusy(false);
@@ -308,6 +344,7 @@ export function AutoSpotifyHostControls({
     setBusy(true);
     setError(null);
     try {
+      deferredTrackIdRef.current = null;
       const skipped = await skipSpotifyNextAction(quizId, joinCode);
       if (skipped.error) {
         setError(skipped.error);
@@ -343,77 +380,42 @@ export function AutoSpotifyHostControls({
   }
 
   return (
-    <section className="space-y-3 rounded-2xl border border-border/60 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h2 className="text-lg font-semibold">Auto Spotify</h2>
-          <p className="text-sm text-muted-foreground">{status}</p>
-        </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={!followPaused}
-            disabled={disabled || busy || connected !== true}
-            onChange={(event) => {
-              if (event.target.checked) {
-                void onContinue();
-              } else {
-                setPausedByHost(true);
-                clearDebounce();
-                setStatus("Auto paused");
-              }
-            }}
-          />
-          Follow playback
-        </label>
+    <section className="space-y-3 rounded-2xl border border-border/60 bg-card p-4">
+      <div>
+        <h2 className="text-lg font-semibold">Auto Spotify</h2>
+        <p className="text-sm text-muted-foreground">{status}</p>
       </div>
-
-      {serverInterrupted ? (
-        <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-foreground">
-          Auto Spotify paused after {emptyStreakThreshold} songs without any
-          guesses. Continue when players are ready.
-        </p>
-      ) : null}
-
-      {nowPlaying ? (
-        <p className="text-sm">
-          <span className="font-medium">{nowPlaying.title}</span>
-          {" — "}
-          {nowPlaying.artist}
-          {nowPlaying.isPlaying ? "" : " (paused)"}
-        </p>
-      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
           variant="outline"
-          disabled={disabled || busy}
+          disabled={disabled || busy || autoInterrupted}
           onClick={() => {
-            void onInterrupt();
+            void onCloseThisRound();
           }}
         >
-          Interrupt
+          Close this round
         </Button>
         <Button
           type="button"
           variant="outline"
-          disabled={disabled || busy || !followPaused}
-          onClick={() => {
-            void onContinue();
-          }}
-        >
-          Continue
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={disabled || busy}
+          disabled={disabled || busy || autoInterrupted}
           onClick={() => {
             void onPlayNext();
           }}
         >
           Play next song
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled || busy}
+          onClick={() => {
+            void onInterruptOrContinue();
+          }}
+        >
+          {autoInterrupted ? "Continue" : "Interrupt"}
         </Button>
       </div>
 

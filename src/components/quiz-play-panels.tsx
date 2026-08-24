@@ -107,19 +107,26 @@ function RoundGuessesList({
   emptyLabel = "No guesses this round.",
   showChartGuess = false,
   wasNumberOne = null,
+  currentUserId = null,
 }: {
   guesses: GuessRow[];
   emptyLabel?: string;
   showChartGuess?: boolean;
   wasNumberOne?: boolean | null;
+  currentUserId?: string | null;
 }) {
   return (
-    <ul className="divide-y divide-border/60 rounded-xl border border-border/60 text-sm">
+    <ul className="divide-y divide-border/60 text-sm">
       {guesses.length > 0 ? (
         guesses.map((g) => (
-          <li key={g.user_id} className="flex justify-between gap-3 px-4 py-2">
-            <span>{g.display_name}</span>
-            <span className="inline-flex items-center gap-1 text-muted-foreground">
+          <li key={g.user_id} className="flex min-w-0 items-center justify-between gap-3 py-2">
+            <span className="min-w-0 truncate font-medium">
+              {g.display_name}
+              {currentUserId && g.user_id === currentUserId ? (
+                <span className="ml-2 text-xs text-muted-foreground">(You)</span>
+              ) : null}
+            </span>
+            <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
               {g.guessed_year ?? "—"}
               {showChartGuess ? (
                 <>
@@ -140,7 +147,7 @@ function RoundGuessesList({
           </li>
         ))
       ) : (
-        <li className="px-4 py-3 text-muted-foreground">{emptyLabel}</li>
+        <li className="py-2 text-muted-foreground">{emptyLabel}</li>
       )}
     </ul>
   );
@@ -579,7 +586,7 @@ export function QuizPlayPanels({
       ) : null}
 
       {isHost && !isAutoSpotify ? (
-        <section className="space-y-4 rounded-2xl border border-border/60 bg-card/40 p-6">
+        <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
           <div className="space-y-1">
             <h2 className="text-lg font-semibold">Host controls</h2>
             <p className="text-sm text-muted-foreground">
@@ -821,7 +828,7 @@ export function QuizPlayPanels({
       ) : null}
 
       {isFinished ? (
-        <section className="space-y-2 rounded-2xl border border-border/60 bg-card/40 p-6">
+        <section className="space-y-2 rounded-2xl border border-border/60 bg-card p-6">
           <h2 className="text-lg font-semibold">Quiz finished</h2>
           <p className="text-sm text-muted-foreground">
             {presentAtEnd
@@ -832,7 +839,7 @@ export function QuizPlayPanels({
           </p>
         </section>
       ) : allTracksPlayed ? (
-        <section className="space-y-2 rounded-2xl border border-border/60 bg-card/40 p-6">
+        <section className="space-y-2 rounded-2xl border border-border/60 bg-card p-6">
           <h2 className="text-lg font-semibold">All tracks played</h2>
           <p className="text-sm text-muted-foreground">
             {isHost
@@ -1019,7 +1026,14 @@ export function QuizPlayPanels({
                 <ul className="divide-y divide-border/60 rounded-xl border border-border/60 text-sm">
                   {liveGuesses.map((g) => (
                     <li key={g.user_id} className="flex justify-between px-4 py-2">
-                      <span>{g.display_name}</span>
+                      <span>
+                        {g.display_name}
+                        {g.user_id === currentUserId ? (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            (You)
+                          </span>
+                        ) : null}
+                      </span>
                       <span className="text-muted-foreground">Guessed</span>
                     </li>
                   ))}
@@ -1035,7 +1049,7 @@ export function QuizPlayPanels({
       ) : null}
 
       {showResultCard && displayResultRound ? (
-        <section className="space-y-4 rounded-2xl border border-border/60 bg-card/40 p-6">
+        <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
           <h2 className="text-lg font-semibold">
             Round {displayResultRound.round_number} results
             {activeRound ? (
@@ -1089,34 +1103,37 @@ export function QuizPlayPanels({
             wasNumberOne={
               chartComboEnabled ? displayResultRound.chart_was_number_one : null
             }
+            currentUserId={currentUserId}
           />
         </section>
       ) : null}
 
       {showRunningLeaderboard || showFinalLeaderboard ? (
-        <section className="space-y-3">
-          <div>
+        <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
+          <div className="space-y-1">
             <h2 className="text-lg font-semibold">Leaderboard</h2>
             {scoringLowWins(settings) ? (
               <p className="text-sm text-muted-foreground">Lowest score wins.</p>
             ) : null}
           </div>
-          <ul className="divide-y divide-border/60 rounded-2xl border border-border/60">
+          <ul className="divide-y divide-border/60 text-sm">
             {leaderboard.map((row, index) => (
               <li
                 key={row.user_id}
-                className="flex items-center justify-between px-4 py-3 text-sm"
+                className="flex min-w-0 items-center gap-2 py-2"
               >
-                <span>
-                  #{index + 1} {row.display_name}
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-medium">
+                    #{index + 1} {row.display_name}
+                  </span>
                   {row.user_id === currentUserId ? (
-                    <span className="text-muted-foreground"> (You)</span>
+                    <span className="ml-2 text-xs text-muted-foreground">(you)</span>
                   ) : null}
                   {hostUserId && row.user_id === hostUserId ? (
-                    <span className="text-muted-foreground"> (Host)</span>
+                    <span className="ml-2 text-xs text-muted-foreground">(host)</span>
                   ) : null}
                 </span>
-                <span className="font-medium">
+                <span className="shrink-0 font-medium tabular-nums">
                   {row.total_points} pt
                   <span className="ml-2 font-normal text-muted-foreground">
                     {scoringLowWins(settings)
@@ -1131,8 +1148,11 @@ export function QuizPlayPanels({
       ) : null}
 
       {showLeaderboardPresentation ? (
-        <section id="leaderboard-presentation" className="space-y-3">
-          <div>
+        <section
+          id="leaderboard-presentation"
+          className="space-y-4 rounded-2xl border border-border/60 bg-card p-6"
+        >
+          <div className="space-y-1">
             <h2 className="text-lg font-semibold">Leaderboard presentation</h2>
             {scoringLowWins(settings) ? (
               <p className="text-sm text-muted-foreground">Lowest score wins.</p>
@@ -1223,19 +1243,21 @@ export function QuizPlayPanels({
       ) : null}
 
       {historyRounds.length > 0 ? (
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Previous rounds</h2>
-          <ul className="divide-y divide-border/60 rounded-2xl border border-border/60">
+        <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold">Previous rounds</h2>
+          </div>
+          <ul className="divide-y divide-border/60 text-sm">
             {historyRounds.map((round) => {
               const expanded =
                 settings.showResultDetails && expandedPastRoundId === round.id;
               const canExpand = settings.showResultDetails;
               return (
-                <li key={round.id} className="space-y-2 px-3 py-2 text-sm">
+                <li key={round.id} className="space-y-2 py-2">
                   <button
                     type="button"
                     className={cn(
-                      "flex w-full items-start justify-between gap-3 text-left",
+                      "flex w-full min-w-0 items-center gap-2 text-left",
                       canExpand && "cursor-pointer",
                     )}
                     disabled={!canExpand}
@@ -1247,7 +1269,7 @@ export function QuizPlayPanels({
                       );
                     }}
                   >
-                    <p className="min-w-0 flex-1">
+                    <p className="min-w-0 flex-1 truncate">
                       <span className="text-muted-foreground tabular-nums">
                         {round.round_number}
                       </span>
@@ -1273,7 +1295,7 @@ export function QuizPlayPanels({
                     </p>
                   </button>
                   {expanded ? (
-                    <div className="space-y-3 rounded-xl border border-border/60 bg-card/40 p-4">
+                    <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
                       <RoundCorrectYear
                         round={round}
                         show={isHost || settings.showCorrectAnswer}
@@ -1286,6 +1308,7 @@ export function QuizPlayPanels({
                         wasNumberOne={
                           chartComboEnabled ? round.chart_was_number_one : null
                         }
+                        currentUserId={currentUserId}
                         emptyLabel={
                           !isHost && !settings.showOthersInPastResults
                             ? "Only your guess is shown for this round."

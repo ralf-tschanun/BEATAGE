@@ -41,8 +41,12 @@ function mapQuizError(message: string): string {
     return "You reached the active quiz limit for your plan. Unlock this quiz once, upgrade, or finish an existing quiz.";
   }
   if (message.includes("QUIZ_NOT_FOUND")) return "That quiz was not found.";
-  if (message.includes("NOT_HOST")) return "Only the host can delete this quiz.";
+  if (message.includes("NOT_HOST")) return "Only the host can do that.";
   if (message.includes("NOT_A_MEMBER")) return "You are not a member of this quiz.";
+  if (message.includes("MEMBER_NOT_FOUND")) return "That player was not found.";
+  if (message.includes("CANNOT_REMOVE_HOST")) {
+    return "The host cannot be removed from this quiz.";
+  }
   if (message.includes("HOST_CANNOT_LEAVE")) {
     return "Hosts cannot leave their own quiz. Delete it instead.";
   }
@@ -126,6 +130,66 @@ async function leaveQuizForParticipant(quizId: string, userId: string) {
   if (!data?.length) {
     throw new Error("NOT_A_MEMBER");
   }
+}
+
+/** Host removes a participant (and their guesses) from the quiz. */
+async function removeQuizMemberByHost(
+  quizId: string,
+  hostUserId: string,
+  targetUserId: string,
+) {
+  await assertQuizHost(quizId, hostUserId);
+
+  if (targetUserId === hostUserId) {
+    throw new Error("CANNOT_REMOVE_HOST");
+  }
+
+  const admin = createAdminClient();
+  const { data: member, error: memberError } = await admin
+    .from("beatage_quiz_members")
+    .select("id, role")
+    .eq("quiz_id", quizId)
+    .eq("user_id", targetUserId)
+    .maybeSingle();
+
+  if (memberError) {
+    throw new Error(memberError.message);
+  }
+  if (!member) {
+    throw new Error("MEMBER_NOT_FOUND");
+  }
+  if (member.role === "host") {
+    throw new Error("CANNOT_REMOVE_HOST");
+  }
+
+  const { error: guessesError } = await admin
+    .from("beatage_guesses")
+    .delete()
+    .eq("quiz_id", quizId)
+    .eq("user_id", targetUserId);
+
+  if (guessesError) {
+    throw new Error(guessesError.message);
+  }
+
+  const { data, error } = await admin
+    .from("beatage_quiz_members")
+    .delete()
+    .eq("id", member.id)
+    .eq("role", "participant")
+    .select("id");
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (!data?.length) {
+    throw new Error("MEMBER_NOT_FOUND");
+  }
+
+  await admin
+    .from("beatage_quizzes")
+    .update({ last_activity_at: new Date().toISOString() })
+    .eq("id", quizId);
 }
 
 export async function createQuizAction(
@@ -384,6 +448,31 @@ export async function leaveQuizAction(
     }
 
     return { redirectTo: "/?left=1" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Something went wrong.";
+    return { error: mapQuizError(message) };
+  }
+}
+
+export async function removeQuizMemberAction(
+  _prev: QuizActionState,
+  formData: FormData,
+): Promise<QuizActionState> {
+  const quizId = String(formData.get("quizId") ?? "").trim();
+  const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
+  const userId = String(formData.get("userId") ?? "").trim();
+
+  if (!quizId || !userId) {
+    return { error: "Missing player." };
+  }
+
+  try {
+    const { user } = await ensureAnonymousSession();
+    await removeQuizMemberByHost(quizId, user.id, userId);
+
+    revalidatePath("/");
+    if (joinCode) revalidatePath(`/q/${joinCode}`);
+    return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Something went wrong.";
     return { error: mapQuizError(message) };

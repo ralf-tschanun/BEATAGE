@@ -120,6 +120,24 @@ async function clearAutoInterrupt(
     .eq("id", quizId);
 }
 
+async function forceAutoInterrupted(
+  admin: SupabaseClient,
+  quizId: string,
+  rawSettings: unknown,
+) {
+  const settings = resolveQuizSettings(rawSettings);
+  const runtime = readQuizSettingsRuntime(rawSettings);
+  await admin
+    .from("beatage_quizzes")
+    .update({
+      settings: mergeQuizSettingsForStorage(settings, {
+        ...runtime,
+        autoInterrupted: true,
+      }),
+    })
+    .eq("id", quizId);
+}
+
 /** Client live-sync snapshot (same admin-backed loader as the quiz page). */
 export async function fetchQuizPlaySnapshotAction(quizId: string, joinCode: string) {
   const id = quizId.trim();
@@ -512,6 +530,59 @@ export async function syncAutoSpotifyRoundAction(
     interrupted: false,
     emptyStreak,
   };
+}
+
+/** Host closes the active round and pauses Auto Spotify (manual interrupt). */
+export async function interruptAutoSpotifyQuizAction(
+  quizId: string,
+  joinCode: string,
+): Promise<AutoSpotifySyncState> {
+  const id = quizId.trim();
+  const code = joinCode.trim().toUpperCase();
+  if (!id) return { error: "Missing quiz id." };
+
+  const { user } = await ensureAnonymousSession();
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const admin = createAdminClient();
+
+  const { data: quizRow } = await admin
+    .from("beatage_quizzes")
+    .select("host_user_id, status, settings")
+    .eq("id", id)
+    .maybeSingle();
+  if (!quizRow || quizRow.host_user_id !== user.id) {
+    return { error: mapError("NOT_HOST") };
+  }
+  if (quizRow.status === "finished" || quizRow.status === "expired") {
+    return { error: mapError("QUIZ_FINISHED") };
+  }
+
+  let rawSettings = (quizRow as { settings?: unknown }).settings;
+  let closedRound = false;
+
+  const { data: active } = await admin
+    .from("beatage_rounds")
+    .select("id")
+    .eq("quiz_id", id)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (active?.id) {
+    const closed = await closeRoundForHost(active.id, user.id);
+    if (closed.error) return { error: mapError(closed.error) };
+    closedRound = true;
+    await applyEmptyRoundStreak(admin, id, active.id, rawSettings);
+    const { data: refreshed } = await admin
+      .from("beatage_quizzes")
+      .select("settings")
+      .eq("id", id)
+      .maybeSingle();
+    rawSettings = refreshed?.settings ?? rawSettings;
+  }
+
+  await forceAutoInterrupted(admin, id, rawSettings);
+  revalidatePath(`/q/${code}`);
+  return { ok: true, closedRound, interrupted: true };
 }
 
 /** Host clears Auto Spotify empty-round interrupt and resumes ingest. */

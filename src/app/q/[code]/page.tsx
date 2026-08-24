@@ -1,14 +1,15 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { QuizPageHeader } from "@/components/quiz-page-header";
+import { QuizStatusBadges } from "@/components/quiz-status-badges";
 import { QuizPlayPanels } from "@/components/quiz-play-panels";
 import { QuizRulesContent } from "@/components/quiz-rules-content";
 import { QuizLiveRefresh } from "@/components/quiz-live-refresh";
+import { PlayersList } from "@/components/players-list";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
-import { Badge } from "@/components/ui/badge";
 import { BRAND_NAME } from "@/lib/brand";
-import { DEFAULT_QUIZ_SETTINGS, quizSourceLabel } from "@/lib/quiz-settings";
+import { DEFAULT_QUIZ_SETTINGS } from "@/lib/quiz-settings";
 import { resolveQuizSettings } from "@/lib/quiz-scoring";
 import { getQuizPlayState } from "@/lib/quizzes/play-state";
 import { getQuizDashboardData } from "@/lib/quizzes/dashboard";
@@ -99,27 +100,32 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
     redirect(`/j/${joinCode}`);
   }
 
-  const { data: members } = await supabase
-    .from("beatage_quiz_members")
-    .select("id, user_id, display_name, role, joined_at")
-    .eq("quiz_id", quiz.id)
-    .order("joined_at", { ascending: true });
-
-  const memberRows = (members ?? []) as QuizMember[];
   const isHost = myRole === "host";
   const playState = await getQuizPlayState(quiz.id, joinCode);
 
+  // Prefer service role for the roster: RLS on beatage_quiz_members is
+  // self-referential and often returns [] for the user-scoped client even when
+  // the host is clearly a member (member_count still comes from security definer).
+  let memberRows: QuizMember[] = [];
   let unlockedAt: string | null = null;
   let quizStatus = quiz.status;
   let createdAt: string | null = null;
   let settings = { ...DEFAULT_QUIZ_SETTINGS };
   try {
     const admin = createAdminClient();
-    const { data: quizRow } = await admin
-      .from("beatage_quizzes")
-      .select("unlocked_at, status, settings, created_at")
-      .eq("id", quiz.id)
-      .maybeSingle();
+    const [{ data: members }, { data: quizRow }] = await Promise.all([
+      admin
+        .from("beatage_quiz_members")
+        .select("id, user_id, display_name, role, joined_at")
+        .eq("quiz_id", quiz.id)
+        .order("joined_at", { ascending: true }),
+      admin
+        .from("beatage_quizzes")
+        .select("unlocked_at, status, settings, created_at")
+        .eq("id", quiz.id)
+        .maybeSingle(),
+    ]);
+    memberRows = (members ?? []) as QuizMember[];
     unlockedAt = (quizRow as { unlocked_at?: string | null } | null)?.unlocked_at ?? null;
     quizStatus = (quizRow as { status?: string } | null)?.status ?? quiz.status;
     createdAt = (quizRow as { created_at?: string | null } | null)?.created_at ?? null;
@@ -127,7 +133,13 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
       (quizRow as { settings?: unknown } | null)?.settings,
     );
   } catch {
-    // Service role optional in some local setups.
+    // Service role optional in some local setups — fall back to user client.
+    const { data: members } = await supabase
+      .from("beatage_quiz_members")
+      .select("id, user_id, display_name, role, joined_at")
+      .eq("quiz_id", quiz.id)
+      .order("joined_at", { ascending: true });
+    memberRows = (members ?? []) as QuizMember[];
   }
 
   return (
@@ -167,7 +179,7 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
       ) : null}
 
       <main className="mx-auto w-full max-w-3xl flex-1 space-y-8 px-6 py-10">
-        <div className="space-y-3">
+        <div className="space-y-1">
           <QuizPageHeader
             title={quiz.title}
             joinCode={quiz.join_code}
@@ -183,12 +195,19 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
               />
             }
           />
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">{quiz.status}</Badge>
-            <Badge variant="outline">{quizSourceLabel(quiz.source)}</Badge>
-          </div>
+          <QuizStatusBadges
+            quizId={quiz.id}
+            quizSource={quiz.source}
+            initialQuizStatus={playState?.quizStatus ?? quizStatus}
+            initialHasActiveRound={Boolean(playState?.activeRound)}
+            initialCurrentRoundNumber={playState?.currentRoundNumber ?? 0}
+            initialAutoInterrupted={playState?.autoInterrupted ?? false}
+            initialOverallReveal={settings.overallReveal}
+            initialLeaderboardRevealStep={playState?.leaderboardRevealStep ?? 0}
+            initialLeaderboardCount={playState?.leaderboard?.length ?? 0}
+          />
           {quiz.description ? (
-            <p className="text-muted-foreground">{quiz.description}</p>
+            <p className="pt-2 text-muted-foreground">{quiz.description}</p>
           ) : null}
         </div>
         <QuizLiveRefresh quizId={quiz.id} joinCode={joinCode} />
@@ -221,34 +240,20 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
           }
         />
 
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">
-            Players ({memberRows.length || quiz.member_count}
-            {quiz.max_members != null ? ` / ${quiz.max_members}` : ""})
-          </h2>
-          {memberRows.length > 0 ? (
-            <ul className="divide-y divide-border/60 rounded-2xl border border-border/60">
-              {memberRows.map((member) => (
-                <li
-                  key={member.id}
-                  className="flex items-center justify-between px-4 py-3 text-sm"
-                >
-                  <span>
-                    {member.display_name}
-                    {member.user_id === user.id ? (
-                      <span className="text-muted-foreground"> (You)</span>
-                    ) : null}
-                  </span>
-                  <span className="text-muted-foreground capitalize">{member.role}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              {isHost ? "You are the host — share the invite code to add players." : null}
-            </p>
-          )}
-        </section>
+        <PlayersList
+          quizId={quiz.id}
+          joinCode={joinCode}
+          currentUserId={user.id}
+          isHost={isHost}
+          maxMembers={quiz.max_members}
+          members={memberRows.map((member) => ({
+            id: member.id,
+            userId: member.user_id,
+            displayName: member.display_name,
+            role: member.role,
+            joinedAt: member.joined_at,
+          }))}
+        />
 
         <p className="text-sm text-muted-foreground">
           <Link href="/" className="underline-offset-2 hover:underline">
