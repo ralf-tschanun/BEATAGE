@@ -333,7 +333,7 @@ export function AutoSpotifyHostControls({
       if (trackId) {
         deferredTrackIdRef.current = trackId;
       }
-      setStatus("Interrupted — press Continue to resume Auto Spotify");
+      setStatus("Paused — press Resume to continue Auto Spotify");
       router.refresh();
     } finally {
       setBusy(false);
@@ -395,7 +395,7 @@ export function AutoSpotifyHostControls({
             void onCloseThisRound();
           }}
         >
-          Close this round
+          End this round
         </Button>
         <Button
           type="button"
@@ -405,7 +405,7 @@ export function AutoSpotifyHostControls({
             void onPlayNext();
           }}
         >
-          Play next song
+          Play next
         </Button>
         <Button
           type="button"
@@ -415,7 +415,7 @@ export function AutoSpotifyHostControls({
             void onInterruptOrContinue();
           }}
         >
-          {autoInterrupted ? "Continue" : "Interrupt"}
+          {autoInterrupted ? "Resume" : "Pause"}
         </Button>
       </div>
 

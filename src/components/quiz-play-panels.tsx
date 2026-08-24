@@ -813,17 +813,19 @@ export function QuizPlayPanels({
       ) : null}
 
       {waitingForHost ? (
-        <section className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-muted/20 p-6">
-          <h2 className="text-lg font-semibold">Waiting for the host</h2>
-          <p className="text-sm text-muted-foreground">
-            {isAutoSpotify
-              ? currentRoundNumber > 0
-                ? "Round results are on the board. The next song in Spotify will open a new round."
-                : "Auto Spotify is on — this page updates when the host starts playing a song."
-              : currentRoundNumber > 0
-                ? `Round ${currentRoundNumber} is done. Hang tight — the host will start the next round.`
-                : "The quiz is live. This page updates automatically when the host starts a round."}
-          </p>
+        <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold">Waiting for the host</h2>
+            <p className="text-sm text-muted-foreground">
+              {isAutoSpotify
+                ? currentRoundNumber > 0
+                  ? "Round results are on the board. The next song in Spotify will open a new round."
+                  : "Auto Spotify is on — this page updates when the host starts playing a song."
+                : currentRoundNumber > 0
+                  ? `Round ${currentRoundNumber} is done. Hang tight — the host will start the next round.`
+                  : "The quiz is live. This page updates automatically when the host starts a round."}
+            </p>
+          </div>
         </section>
       ) : null}
 
@@ -856,58 +858,25 @@ export function QuizPlayPanels({
               Live round
             </p>
             <h2 className="text-lg font-semibold">
-              Round {activeRound.round_number} — guess the release year
+              Round {activeRound.round_number} · guess the release year
             </h2>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {isHost ? (
-              <>
-                <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-2">
+          {!isHost ? (
+            <p className="text-sm text-muted-foreground">
+              {settings.showTitleArtist ? (
+                <>
                   <span className="font-medium text-foreground">
                     {activeRound.track_name}
                   </span>
                   {activeRound.artist_name ? ` — ${activeRound.artist_name}` : ""}
-                  {(() => {
-                    const spotify = spotifyOpenForHostTrack({
-                      spotifyTrackId: activeRound.spotify_track_id,
-                      trackName: activeRound.track_name,
-                      artistName: activeRound.artist_name,
-                    });
-                    return spotify ? (
-                      <SpotifyTrackLink
-                        href={spotify.href}
-                        uri={spotify.uri}
-                        openedKey={`${quizId}:round:${activeRound.id}`}
-                        preferApiPlay
-                      />
-                    ) : null;
-                  })()}
-                </span>
-                {activeRound.has_correct_year ? (
-                  <span className="mt-1 block text-sm text-muted-foreground">
-                    Release year on file — it will be revealed when you close the
-                    round (so you can guess too).
-                  </span>
-                ) : (
-                  <span className="mt-1 block text-sm text-amber-800">
-                    No release year stored for this track — close will score 0
-                    until the year is resolved.
-                  </span>
-                )}
-              </>
-            ) : settings.showTitleArtist ? (
-              <>
-                <span className="font-medium text-foreground">
-                  {activeRound.track_name}
-                </span>
-                {activeRound.artist_name ? ` — ${activeRound.artist_name}` : ""}
-                {" · "}
-                Listen, then enter the release year. Updates appear live for everyone.
-              </>
-            ) : (
-              "Listen to the track the host is playing, then enter the release year. Updates appear live for everyone."
-            )}
-          </p>
+                  {" · "}
+                  Listen, then enter the release year. Updates appear live for everyone.
+                </>
+              ) : (
+                "Listen to the track the host is playing, then enter the release year. Updates appear live for everyone."
+              )}
+            </p>
+          ) : null}
 
           {isHost && activeRound.preview_url ? (
             <SongPreviewPlayer
