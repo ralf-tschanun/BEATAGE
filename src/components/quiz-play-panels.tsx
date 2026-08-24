@@ -19,6 +19,7 @@ import {
   type QuizPlaySnapshot,
 } from "@/components/quiz-live-refresh";
 import { AutoSpotifyHostControls } from "@/components/auto-spotify-host-controls";
+import { CollapsibleCard } from "@/components/collapsible-card";
 import { SongPickFields } from "@/components/song-pick-fields";
 import { SongPreviewPlayer } from "@/components/song-preview-player";
 import { SpotifyTrackLink } from "@/components/spotify-track-link";
@@ -858,23 +859,15 @@ export function QuizPlayPanels({
               Live round
             </p>
             <h2 className="text-lg font-semibold">
-              Round {activeRound.round_number} · guess the release year
+              Round {activeRound.round_number} · Guess the…
             </h2>
           </div>
-          {!isHost ? (
-            <p className="text-sm text-muted-foreground">
-              {settings.showTitleArtist ? (
-                <>
-                  <span className="font-medium text-foreground">
-                    {activeRound.track_name}
-                  </span>
-                  {activeRound.artist_name ? ` — ${activeRound.artist_name}` : ""}
-                  {" · "}
-                  Listen, then enter the release year. Updates appear live for everyone.
-                </>
-              ) : (
-                "Listen to the track the host is playing, then enter the release year. Updates appear live for everyone."
-              )}
+          {!isHost && settings.showTitleArtist ? (
+            <p className="text-sm">
+              <span className="font-medium text-foreground">
+                {activeRound.track_name}
+              </span>
+              {activeRound.artist_name ? ` — ${activeRound.artist_name}` : ""}
             </p>
           ) : null}
 
@@ -940,6 +933,13 @@ export function QuizPlayPanels({
                   Optional — leave blank if unsure.
                 </p>
               </div>
+            ) : null}
+            {!isHost ? (
+              <p className="w-full text-sm text-muted-foreground">
+                {settings.showTitleArtist
+                  ? "Listen, then enter the release year. Updates appear live for everyone."
+                  : "Listen to the track the host is playing, then enter the release year. Updates appear live for everyone."}
+              </p>
             ) : null}
             <Button type="submit" disabled={guessBusy}>
               {guessBusy
@@ -1071,13 +1071,15 @@ export function QuizPlayPanels({
       ) : null}
 
       {showRunningLeaderboard || showFinalLeaderboard ? (
-        <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
-          <div className="space-y-1">
-            <h2 className="text-lg font-semibold">Leaderboard</h2>
-            {scoringLowWins(settings) ? (
-              <p className="text-sm text-muted-foreground">Lowest score wins.</p>
-            ) : null}
-          </div>
+        <CollapsibleCard
+          sectionId={`quiz-${quizId}-leaderboard`}
+          defaultOpen
+          title="Leaderboard"
+          description={
+            scoringLowWins(settings) ? "Lowest score wins." : undefined
+          }
+          contentClassName="pt-0"
+        >
           <ul className="divide-y divide-border/60 text-sm">
             {leaderboard.map((row, index) => (
               <li
@@ -1106,7 +1108,7 @@ export function QuizPlayPanels({
               </li>
             ))}
           </ul>
-        </section>
+        </CollapsibleCard>
       ) : null}
 
       {showLeaderboardPresentation ? (
@@ -1205,10 +1207,19 @@ export function QuizPlayPanels({
       ) : null}
 
       {historyRounds.length > 0 ? (
-        <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
-          <div className="space-y-1">
-            <h2 className="text-lg font-semibold">Previous rounds</h2>
-          </div>
+        <CollapsibleCard
+          sectionId={`quiz-${quizId}-previous-rounds`}
+          defaultOpen={false}
+          title={
+            <>
+              Previous rounds{" "}
+              <span className="text-sm font-normal text-muted-foreground">
+                ({historyRounds.length})
+              </span>
+            </>
+          }
+          contentClassName="pt-0"
+        >
           <ul className="divide-y divide-border/60 text-sm">
             {historyRounds.map((round) => {
               const expanded =
@@ -1283,7 +1294,7 @@ export function QuizPlayPanels({
               );
             })}
           </ul>
-        </section>
+        </CollapsibleCard>
       ) : null}
     </div>
   );

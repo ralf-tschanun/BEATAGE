@@ -7,6 +7,7 @@ import {
   type QuizActionState,
 } from "@/app/actions/quiz";
 import { SwipeToRemoveRow } from "@/components/swipe-to-remove-row";
+import { CollapsibleCard } from "@/components/collapsible-card";
 import { broadcastQuizResync } from "@/components/quiz-live-refresh";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -124,17 +125,20 @@ export function PlayersList({
 
   return (
     <>
-      <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
-        <div className="space-y-1">
-          <h2 className="text-lg font-semibold">
+      <CollapsibleCard
+        sectionId={`quiz-${quizId}-players`}
+        defaultOpen={false}
+        title={
+          <>
             Players{" "}
             <span className="text-sm font-normal text-muted-foreground">
               ({members.length}
               {maxMembers != null ? ` / ${maxMembers}` : ""})
             </span>
-          </h2>
-        </div>
-
+          </>
+        }
+        contentClassName="pt-0"
+      >
         {orderedMembers.length > 0 ? (
           <ul className="divide-y divide-border/60 text-sm">
             {orderedMembers.map((member) => {
@@ -179,11 +183,11 @@ export function PlayersList({
         )}
 
         {isHost ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="mt-2 text-xs text-muted-foreground">
             Tap a player for details, or swipe left to remove them from this quiz.
           </p>
         ) : null}
-      </section>
+      </CollapsibleCard>
 
       <Dialog
         open={Boolean(detailTarget)}
