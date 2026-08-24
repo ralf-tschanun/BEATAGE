@@ -44,6 +44,7 @@ export type QuizPlaySnapshot = {
   maxCuratedTracks: number | null;
   settings: BeatageQuizSettings;
   autoInterrupted: boolean;
+  leaderboardRevealStep: number;
 };
 
 export type QuizPlayLivePatch =
@@ -138,6 +139,7 @@ async function fetchQuizPlaySnapshot(
         : state.maxCuratedTracks,
     settings: state.settings ?? { ...DEFAULT_QUIZ_SETTINGS },
     autoInterrupted: Boolean(state.autoInterrupted),
+    leaderboardRevealStep: state.leaderboardRevealStep ?? 0,
   };
 }
 
@@ -169,11 +171,13 @@ function snapshotFingerprint(snapshot: QuizPlaySnapshot): string {
       .join(","),
     snapshot.tracks.map((t) => t.id).join(","),
     snapshot.autoInterrupted ? "1" : "0",
+    String(snapshot.leaderboardRevealStep ?? 0),
     snapshot.settings.showTitleArtist ? "1" : "0",
     snapshot.settings.showCorrectAnswer ? "1" : "0",
     snapshot.settings.showOverallResults ? "1" : "0",
     snapshot.settings.showResultDetails ? "1" : "0",
     snapshot.settings.showOthersInPastResults ? "1" : "0",
+    snapshot.settings.overallReveal,
   ].join("|");
 }
 

@@ -91,6 +91,7 @@ function emptyPlayState(joinCode: string) {
     maxCuratedTracks: DEFAULT_MAX_CURATED_TRACKS as number | null,
     settings: { ...DEFAULT_QUIZ_SETTINGS } as BeatageQuizSettings,
     autoInterrupted: false,
+    leaderboardRevealStep: 0,
   };
 }
 
@@ -455,5 +456,6 @@ export async function getQuizPlayState(
     maxCuratedTracks,
     settings,
     autoInterrupted: Boolean(runtime.autoInterrupted),
+    leaderboardRevealStep: runtime.leaderboardRevealStep ?? 0,
   };
 }

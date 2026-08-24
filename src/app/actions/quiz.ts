@@ -6,6 +6,8 @@ import {
   clampYearRangeTolerance,
   DEFAULT_QUIZ_SETTINGS,
   normalizeScoringModes,
+  parseOverallReveal,
+  presentsLeaderboardAtEnd,
   type BeatageQuizSettings,
   type ChartCountryCode,
   type ScoringModeId,
@@ -191,11 +193,17 @@ export async function createQuizAction(
           parsed.showOthersInPastResults ??
             DEFAULT_QUIZ_SETTINGS.showOthersInPastResults,
         ),
+        overallReveal: parseOverallReveal(parsed.overallReveal),
         autoInterruptAfterEmptyRounds: clampAutoInterruptAfterEmptyRounds(
           parsed.autoInterruptAfterEmptyRounds ??
             DEFAULT_QUIZ_SETTINGS.autoInterruptAfterEmptyRounds,
         ),
       };
+      // Presentation mode forces the mid-quiz board / others hidden.
+      if (presentsLeaderboardAtEnd(settings)) {
+        settings.showOverallResults = false;
+        settings.showOthersInPastResults = false;
+      }
       settings.combinedScoring = settings.scoringModes.length > 1;
       settings.secondaryScoringMode =
         settings.scoringModes.length > 1

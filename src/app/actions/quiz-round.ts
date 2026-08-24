@@ -5,6 +5,7 @@ import { addCuratedTrackToQuiz } from "@/lib/quiz-tracks";
 import {
   closeRoundForHost,
   finishQuizForHost,
+  advanceLeaderboardRevealForHost,
   startRoundForHost,
   submitGuessForMember,
 } from "@/lib/quiz-play";
@@ -50,6 +51,12 @@ function mapError(message: string): string {
     return `Enter a valid year between 1900 and ${new Date().getFullYear()}.`;
   }
   if (message.includes("QUIZ_FINISHED")) return "This quiz is already finished.";
+  if (message.includes("QUIZ_NOT_FINISHED")) {
+    return "Finish the quiz before presenting the leaderboard.";
+  }
+  if (message.includes("NO_LEADERBOARD_PRESENTATION")) {
+    return "This quiz does not use a leaderboard presentation.";
+  }
   if (message.includes("QUIZ_EXPIRED")) return "This quiz has expired.";
   if (message.includes("QUIZ_NOT_JOINABLE")) return "This quiz cannot be changed right now.";
   return message || "Something went wrong.";
@@ -84,6 +91,7 @@ async function applyEmptyRoundStreak(
     .from("beatage_quizzes")
     .update({
       settings: mergeQuizSettingsForStorage(settings, {
+        ...runtime,
         autoEmptyStreak: emptyStreak,
         autoInterrupted: interrupted,
       }),
@@ -99,10 +107,12 @@ async function clearAutoInterrupt(
   rawSettings: unknown,
 ) {
   const settings = resolveQuizSettings(rawSettings);
+  const runtime = readQuizSettingsRuntime(rawSettings);
   await admin
     .from("beatage_quizzes")
     .update({
       settings: mergeQuizSettingsForStorage(settings, {
+        ...runtime,
         autoEmptyStreak: 0,
         autoInterrupted: false,
       }),
@@ -271,6 +281,27 @@ export async function finishQuizAction(
 
   revalidatePath(`/q/${joinCode}`);
   revalidatePath("/");
+  return okResult();
+}
+
+export async function advanceLeaderboardRevealAction(
+  _prev: QuizRoundActionState,
+  formData: FormData,
+): Promise<QuizRoundActionState> {
+  const quizId = String(formData.get("quizId") ?? "").trim();
+  const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
+
+  if (!quizId) {
+    return { error: "Missing quiz id." };
+  }
+
+  const { user } = await ensureAnonymousSession();
+  const result = await advanceLeaderboardRevealForHost(quizId, user.id);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
+
+  revalidatePath(`/q/${joinCode}`);
   return okResult();
 }
 

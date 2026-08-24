@@ -3,6 +3,8 @@ import {
   clampYearRangeTolerance,
   DEFAULT_QUIZ_SETTINGS,
   normalizeScoringModes,
+  parseOverallReveal,
+  presentsLeaderboardAtEnd,
   type BeatageQuizSettings,
   type QuizSettingsRuntime,
 } from "@/lib/quiz-settings";
@@ -79,7 +81,7 @@ export function resolveQuizSettings(raw: unknown): BeatageQuizSettings {
   }
   const partial = raw as Partial<BeatageQuizSettings>;
   const scoringModes = normalizeScoringModes(partial.scoringModes);
-  return {
+  const resolved: BeatageQuizSettings = {
     ...DEFAULT_QUIZ_SETTINGS,
     ...partial,
     scoringModes,
@@ -112,14 +114,23 @@ export function resolveQuizSettings(raw: unknown): BeatageQuizSettings {
       partial.showOthersInPastResults ??
         DEFAULT_QUIZ_SETTINGS.showOthersInPastResults,
     ),
+    overallReveal: parseOverallReveal(partial.overallReveal),
     autoInterruptAfterEmptyRounds: clampAutoInterruptAfterEmptyRounds(
       partial.autoInterruptAfterEmptyRounds ??
         DEFAULT_QUIZ_SETTINGS.autoInterruptAfterEmptyRounds,
     ),
   };
+
+  // Presentation mode keeps the running board and others' past guesses hidden.
+  if (presentsLeaderboardAtEnd(resolved)) {
+    resolved.showOverallResults = false;
+    resolved.showOthersInPastResults = false;
+  }
+
+  return resolved;
 }
 
-/** Read Auto Spotify runtime pause flags from the raw settings JSON. */
+/** Read Auto Spotify / presentation runtime flags from the raw settings JSON. */
 export function readQuizSettingsRuntime(raw: unknown): QuizSettingsRuntime {
   if (!raw || typeof raw !== "object") return {};
   const row = raw as QuizSettingsRuntime;
@@ -129,6 +140,11 @@ export function readQuizSettingsRuntime(raw: unknown): QuizSettingsRuntime {
         ? Math.max(0, Math.round(row.autoEmptyStreak))
         : 0,
     autoInterrupted: Boolean(row.autoInterrupted),
+    leaderboardRevealStep:
+      typeof row.leaderboardRevealStep === "number" &&
+      Number.isFinite(row.leaderboardRevealStep)
+        ? Math.max(0, Math.round(row.leaderboardRevealStep))
+        : 0,
   };
 }
 
@@ -141,6 +157,7 @@ export function mergeQuizSettingsForStorage(
     ...settings,
     autoEmptyStreak: runtime.autoEmptyStreak ?? 0,
     autoInterrupted: Boolean(runtime.autoInterrupted),
+    leaderboardRevealStep: runtime.leaderboardRevealStep ?? 0,
   };
 }
 

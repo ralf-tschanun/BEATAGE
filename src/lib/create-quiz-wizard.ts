@@ -1,6 +1,7 @@
 import type {
   AnswerYearMode,
   ChartCountryCode,
+  OverallReveal,
   ScoringModeId,
 } from "@/lib/quiz-settings";
 import {
@@ -8,6 +9,8 @@ import {
   clampYearRangeTolerance,
   DEFAULT_QUIZ_SETTINGS,
   normalizeScoringModes,
+  parseOverallReveal,
+  presentsLeaderboardAtEnd,
   scoringModeLabel,
   YEAR_RANGE_TOLERANCE_MAX,
   YEAR_RANGE_TOLERANCE_MIN,
@@ -45,6 +48,13 @@ export type CreateQuizWizardState = {
   showResultDetails: boolean;
   /** Participants see other players in expanded previous-round results. */
   showOthersInPastResults: boolean;
+  /**
+   * When true, host presents the final leaderboard after the quiz
+   * (forces overall results / others in past results off).
+   */
+  presentLeaderboardAtEnd: boolean;
+  /** Used when presentLeaderboardAtEnd is on (immediate | last_to_first). */
+  overallReveal: Exclude<OverallReveal, "after_quiz">;
   /** Auto Spotify: pause after this many consecutive empty rounds (1–10). */
   autoInterruptAfterEmptyRounds: number;
 };
@@ -74,6 +84,8 @@ export function defaultQuizWizardState(hostName = ""): CreateQuizWizardState {
     showOverallResults: DEFAULT_QUIZ_SETTINGS.showOverallResults,
     showResultDetails: DEFAULT_QUIZ_SETTINGS.showResultDetails,
     showOthersInPastResults: DEFAULT_QUIZ_SETTINGS.showOthersInPastResults,
+    presentLeaderboardAtEnd: false,
+    overallReveal: "last_to_first",
     autoInterruptAfterEmptyRounds:
       DEFAULT_QUIZ_SETTINGS.autoInterruptAfterEmptyRounds,
   };
@@ -160,9 +172,15 @@ export function quizWizardSettingsSummary(state: CreateQuizWizardState): string 
   const visibility = [
     state.showTitleArtist ? "title shown" : "title hidden",
     state.showCorrectAnswer ? "answer shown" : "answer hidden",
-    state.showOverallResults ? "leaderboard on" : "leaderboard off",
+    state.presentLeaderboardAtEnd
+      ? state.overallReveal === "last_to_first"
+        ? "present leaderboard last-to-first"
+        : "present leaderboard all at once"
+      : state.showOverallResults
+        ? "leaderboard on"
+        : "leaderboard off",
     state.showResultDetails ? "result details on" : "result details off",
-    state.showResultDetails
+    state.showResultDetails && !state.presentLeaderboardAtEnd
       ? state.showOthersInPastResults
         ? "others in past results on"
         : "others in past results off"
@@ -202,7 +220,7 @@ export function loadQuizWizardState(hostName: string): CreateQuizWizardState | n
     const parsed = JSON.parse(raw) as Partial<CreateQuizWizardState>;
     if (typeof parsed !== "object" || parsed === null) return null;
     const base = defaultQuizWizardState(hostName);
-    return {
+    const loaded: CreateQuizWizardState = {
       ...base,
       ...parsed,
       playMode:
@@ -253,11 +271,29 @@ export function loadQuizWizardState(hostName: string): CreateQuizWizardState | n
       showOthersInPastResults: Boolean(
         parsed.showOthersInPastResults ?? base.showOthersInPastResults,
       ),
+      presentLeaderboardAtEnd: Boolean(
+        parsed.presentLeaderboardAtEnd ??
+          (parsed.overallReveal != null &&
+            presentsLeaderboardAtEnd({
+              overallReveal: parseOverallReveal(parsed.overallReveal),
+            })),
+      ),
+      overallReveal: (() => {
+        const mode = parseOverallReveal(parsed.overallReveal);
+        return mode === "immediate" || mode === "last_to_first"
+          ? mode
+          : base.overallReveal;
+      })(),
       autoInterruptAfterEmptyRounds: clampAutoInterruptAfterEmptyRounds(
         parsed.autoInterruptAfterEmptyRounds ??
           base.autoInterruptAfterEmptyRounds,
       ),
     };
+    if (loaded.presentLeaderboardAtEnd) {
+      loaded.showOverallResults = false;
+      loaded.showOthersInPastResults = false;
+    }
+    return loaded;
   } catch {
     return null;
   }

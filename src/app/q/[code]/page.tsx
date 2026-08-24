@@ -211,6 +211,7 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
           maxCuratedTracks={playState?.maxCuratedTracks ?? 10}
           settings={settings}
           autoInterrupted={playState?.autoInterrupted ?? false}
+          leaderboardRevealStep={playState?.leaderboardRevealStep ?? 0}
           isAnonymous={Boolean(identity?.isAnonymous)}
           currentUserId={user.id}
           hostUserId={

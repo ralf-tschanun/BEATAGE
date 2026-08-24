@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   addCuratedTrackAction,
+  advanceLeaderboardRevealAction,
   closeRoundAction,
   finishQuizAction,
   startRoundAction,
@@ -21,13 +22,23 @@ import { AutoSpotifyHostControls } from "@/components/auto-spotify-host-controls
 import { SongPickFields } from "@/components/song-pick-fields";
 import { SongPreviewPlayer } from "@/components/song-preview-player";
 import { SpotifyTrackLink } from "@/components/spotify-track-link";
+import { useFlipList } from "@/components/use-flip-list";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CaretDownIcon, CheckIcon, XIcon } from "@phosphor-icons/react";
 import { BILLING_SKU_LABELS } from "@/lib/billing-copy";
 import { chartCountriesShortLabel, chartWasOneLabel } from "@/lib/charts";
-import { DEFAULT_QUIZ_SETTINGS, scoringCombinesChart, scoringLowWins, type BeatageQuizSettings } from "@/lib/quiz-settings";
+import { podiumRankClass, podiumRowClass } from "@/lib/result-podium-styles";
+import {
+  applyQuizLeaderboardReveal,
+  DEFAULT_QUIZ_SETTINGS,
+  isQuizLeaderboardRevealComplete,
+  presentsLeaderboardAtEnd,
+  scoringCombinesChart,
+  scoringLowWins,
+  type BeatageQuizSettings,
+} from "@/lib/quiz-settings";
 import { cn } from "@/lib/utils";
 import type {
   CuratedTrackRow,
@@ -39,6 +50,9 @@ import type {
 import { useWizardInputFocus } from "@/lib/wizard-input-focus";
 
 const initial: QuizRoundActionState = null;
+
+/** How long the correct-answer card stays up after a round is revealed (incl. overlap with the next guess). */
+const RESULT_HOLD_MS = 10_000;
 
 /** Host open-in-Spotify: prefer track id, else search by title + artist. */
 function spotifyOpenForHostTrack(opts: {
@@ -188,6 +202,8 @@ type QuizPlayPanelsProps = {
   maxCuratedTracks: number | null;
   settings?: BeatageQuizSettings;
   autoInterrupted?: boolean;
+  /** Host-controlled end presentation progress (0 = not started). */
+  leaderboardRevealStep?: number;
   /** Guest sessions need an email account before Polar unlock checkout. */
   isAnonymous?: boolean;
   currentUserId?: string | null;
@@ -213,6 +229,7 @@ export function QuizPlayPanels({
   maxCuratedTracks: maxCuratedTracksProp,
   settings: settingsProp = DEFAULT_QUIZ_SETTINGS,
   autoInterrupted: autoInterruptedProp = false,
+  leaderboardRevealStep: leaderboardRevealStepProp = 0,
   isAnonymous = false,
   currentUserId = null,
   hostUserId = null,
@@ -225,6 +242,10 @@ export function QuizPlayPanels({
   const [guessBusy, setGuessBusy] = useState(false);
   const [closeState, closeAction, closePending] = useActionState(closeRoundAction, initial);
   const [finishState, finishAction, finishPending] = useActionState(finishQuizAction, initial);
+  const [revealState, revealAction, revealPending] = useActionState(
+    advanceLeaderboardRevealAction,
+    initial,
+  );
   const [showAddTrack, setShowAddTrack] = useState(false);
   const [draftTrack, setDraftTrack] = useState({
     title: "",
@@ -261,6 +282,7 @@ export function QuizPlayPanels({
     maxCuratedTracks: maxCuratedTracksProp,
     settings: settingsProp,
     autoInterrupted: autoInterruptedProp,
+    leaderboardRevealStep: leaderboardRevealStepProp,
   }));
 
   const tracks = live.tracks;
@@ -278,14 +300,39 @@ export function QuizPlayPanels({
   const maxCuratedTracks = live.maxCuratedTracks;
   const settings = live.settings ?? settingsProp;
   const autoInterrupted = live.autoInterrupted ?? autoInterruptedProp;
-  const showLeaderboard =
-    leaderboard.length > 0 &&
-    (isHost || settings.showOverallResults || isFinished);
-  // Hide the latest result from Previous rounds only while it is shown
-  // in the results card. Once the next song starts, include it again.
-  const historyRounds = pastRounds.filter(
-    (round) => Boolean(activeRound) || round.id !== resultRound?.id,
+  const leaderboardRevealStep =
+    live.leaderboardRevealStep ?? leaderboardRevealStepProp;
+  const presentAtEnd = presentsLeaderboardAtEnd(settings);
+  const presentationComplete = isQuizLeaderboardRevealComplete(
+    settings.overallReveal,
+    leaderboardRevealStep,
+    leaderboard.length,
   );
+  const rankedLeaderboard = leaderboard.map((row, index) => ({
+    ...row,
+    rank: index + 1,
+  }));
+  const visibleLeaderboard =
+    isFinished && presentAtEnd
+      ? applyQuizLeaderboardReveal(
+          settings.overallReveal,
+          leaderboardRevealStep,
+          rankedLeaderboard,
+        )
+      : rankedLeaderboard;
+  // Running board during play (host always; participants if enabled).
+  const showRunningLeaderboard =
+    !isFinished &&
+    leaderboard.length > 0 &&
+    (isHost || settings.showOverallResults);
+  // Full board when finished without staged presentation.
+  const showFinalLeaderboard =
+    isFinished && leaderboard.length > 0 && !presentAtEnd;
+  const showLeaderboardPresentation =
+    isFinished && presentAtEnd && leaderboard.length > 0;
+  const flipOrderKey = visibleLeaderboard.map((row) => row.user_id).join("|");
+  const leaderboardListRef = useFlipList(flipOrderKey);
+
   const atTrackLimit =
     !isAutoSpotify &&
     maxCuratedTracks != null &&
@@ -311,6 +358,52 @@ export function QuizPlayPanels({
   );
   // Host list: patch from broadcast/postgres immediately (don't wait on snapshot alone).
   const [liveGuesses, setLiveGuesses] = useState(roundGuessesProp);
+  /**
+   * Keep the last revealed round on screen for RESULT_HOLD_MS so players can
+   * read the answer — including briefly in parallel with the next live round.
+   */
+  const [pinnedResult, setPinnedResult] = useState<{
+    round: RoundRow;
+    guesses: GuessRow[];
+  } | null>(
+    resultRoundProp && !activeRoundProp
+      ? { round: resultRoundProp, guesses: roundGuessesProp }
+      : null,
+  );
+  const pinStartedAtRef = useRef<number | null>(
+    resultRoundProp && !activeRoundProp ? Date.now() : null,
+  );
+
+  // Pin latest between-round results; hold through the start of the next round.
+  useEffect(() => {
+    if (!resultRound || activeRound) return;
+    setPinnedResult((prev) => {
+      if (prev?.round.id !== resultRound.id) {
+        pinStartedAtRef.current = Date.now();
+      }
+      return { round: resultRound, guesses: roundGuesses };
+    });
+  }, [resultRound?.id, activeRound?.id, resultRound, activeRound, roundGuesses]);
+
+  useEffect(() => {
+    if (!activeRound || !pinnedResult) return;
+    const started = pinStartedAtRef.current ?? Date.now();
+    const remaining = Math.max(0, RESULT_HOLD_MS - (Date.now() - started));
+    const timer = window.setTimeout(() => {
+      setPinnedResult(null);
+      pinStartedAtRef.current = null;
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [activeRound?.id, pinnedResult?.round.id]);
+
+  const displayResultRound = pinnedResult?.round ?? null;
+  const displayResultGuesses = pinnedResult?.guesses ?? [];
+  const showResultCard = Boolean(displayResultRound) && Boolean(pinnedResult);
+
+  // Hide the pinned result from Previous rounds while its card is still up.
+  const historyRounds = pastRounds.filter(
+    (round) => !showResultCard || round.id !== displayResultRound?.id,
+  );
 
   useEffect(() => {
     return subscribeQuizPlay(quizId, (patch) => {
@@ -426,6 +519,7 @@ export function QuizPlayPanels({
       guessState?.syncId ??
       closeState?.syncId ??
       finishState?.syncId ??
+      revealState?.syncId ??
       null;
     if (!syncId || syncId === lastSyncIdRef.current) return;
     lastSyncIdRef.current = syncId;
@@ -439,7 +533,17 @@ export function QuizPlayPanels({
     if (!guessOnly) {
       router.refresh();
     }
-  }, [addState, startState, guessState, closeState, finishState, quizId, joinCode, router]);
+  }, [
+    addState,
+    startState,
+    guessState,
+    closeState,
+    finishState,
+    revealState,
+    quizId,
+    joinCode,
+    router,
+  ]);
 
   const remainingCount = Math.max(0, tracks.length - currentRoundNumber);
   const allTracksPlayed =
@@ -720,7 +824,11 @@ export function QuizPlayPanels({
         <section className="space-y-2 rounded-2xl border border-border/60 bg-card/40 p-6">
           <h2 className="text-lg font-semibold">Quiz finished</h2>
           <p className="text-sm text-muted-foreground">
-            This quiz is closed. Final standings are on the leaderboard below.
+            {presentAtEnd
+              ? presentationComplete
+                ? "This quiz is closed. Final standings are on the leaderboard below."
+                : "This quiz is closed. The host will present the final leaderboard."
+              : "This quiz is closed. Final standings are on the leaderboard below."}
           </p>
         </section>
       ) : allTracksPlayed ? (
@@ -926,29 +1034,36 @@ export function QuizPlayPanels({
         </section>
       ) : null}
 
-      {resultRound && !activeRound ? (
+      {showResultCard && displayResultRound ? (
         <section className="space-y-4 rounded-2xl border border-border/60 bg-card/40 p-6">
           <h2 className="text-lg font-semibold">
-            Round {resultRound.round_number} results
+            Round {displayResultRound.round_number} results
+            {activeRound ? (
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                (previous)
+              </span>
+            ) : null}
           </h2>
           <p className="text-sm">
             <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-2">
               <span>
-                <span className="font-medium">{resultRound.track_name}</span>
-                {resultRound.artist_name ? ` — ${resultRound.artist_name}` : ""}
+                <span className="font-medium">{displayResultRound.track_name}</span>
+                {displayResultRound.artist_name
+                  ? ` — ${displayResultRound.artist_name}`
+                  : ""}
               </span>
               {isHost
                 ? (() => {
                     const spotify = spotifyOpenForHostTrack({
-                      spotifyTrackId: resultRound.spotify_track_id,
-                      trackName: resultRound.track_name,
-                      artistName: resultRound.artist_name,
+                      spotifyTrackId: displayResultRound.spotify_track_id,
+                      trackName: displayResultRound.track_name,
+                      artistName: displayResultRound.artist_name,
                     });
                     return spotify ? (
                       <SpotifyTrackLink
                         href={spotify.href}
                         uri={spotify.uri}
-                        openedKey={`${quizId}:result:${resultRound.id}`}
+                        openedKey={`${quizId}:result:${displayResultRound.id}`}
                         preferApiPlay
                       />
                     ) : null;
@@ -956,29 +1071,29 @@ export function QuizPlayPanels({
                 : null}
             </span>
           </p>
-          {resultRound.preview_url ? (
+          {displayResultRound.preview_url ? (
             <SongPreviewPlayer
-              previewUrl={resultRound.preview_url}
-              label={`${resultRound.track_name ?? "Track"} preview`}
+              previewUrl={displayResultRound.preview_url}
+              label={`${displayResultRound.track_name ?? "Track"} preview`}
             />
           ) : null}
           <RoundCorrectYear
-            round={resultRound}
+            round={displayResultRound}
             show={isHost || settings.showCorrectAnswer}
             showChartOne={chartComboEnabled}
             chartCountries={settings.chartCountries}
           />
           <RoundGuessesList
-            guesses={roundGuesses}
+            guesses={displayResultGuesses}
             showChartGuess={chartComboEnabled}
             wasNumberOne={
-              chartComboEnabled ? resultRound.chart_was_number_one : null
+              chartComboEnabled ? displayResultRound.chart_was_number_one : null
             }
           />
         </section>
       ) : null}
 
-      {showLeaderboard ? (
+      {showRunningLeaderboard || showFinalLeaderboard ? (
         <section className="space-y-3">
           <div>
             <h2 className="text-lg font-semibold">Leaderboard</h2>
@@ -1012,6 +1127,98 @@ export function QuizPlayPanels({
               </li>
             ))}
           </ul>
+        </section>
+      ) : null}
+
+      {showLeaderboardPresentation ? (
+        <section id="leaderboard-presentation" className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold">Leaderboard presentation</h2>
+            {scoringLowWins(settings) ? (
+              <p className="text-sm text-muted-foreground">Lowest score wins.</p>
+            ) : null}
+            <p className="text-sm text-muted-foreground">
+              {presentationComplete ? (
+                <span className="font-medium text-destructive">complete</span>
+              ) : leaderboardRevealStep > 0 ? (
+                <span className="font-medium text-amber-700 dark:text-amber-400">
+                  revealing…
+                </span>
+              ) : (
+                <span className="text-muted-foreground">waiting to start</span>
+              )}
+              {settings.overallReveal === "last_to_first" &&
+              leaderboard.length > 0 ? (
+                <span>
+                  {" "}
+                  · place reveal {Math.min(leaderboardRevealStep, leaderboard.length)}{" "}
+                  of {leaderboard.length}
+                </span>
+              ) : null}
+            </p>
+          </div>
+
+          {isHost && !presentationComplete ? (
+            <form action={revealAction} className="flex flex-wrap items-center gap-2">
+              <input type="hidden" name="quizId" value={quizId} />
+              <input type="hidden" name="joinCode" value={joinCode} />
+              <Button type="submit" disabled={revealPending}>
+                {revealPending
+                  ? "Updating…"
+                  : settings.overallReveal === "immediate"
+                    ? "Present full leaderboard"
+                    : leaderboardRevealStep === 0
+                      ? "Reveal last place"
+                      : "Reveal next place"}
+              </Button>
+              {revealState?.error ? (
+                <p className="w-full text-sm text-destructive">{revealState.error}</p>
+              ) : null}
+            </form>
+          ) : null}
+
+          {visibleLeaderboard.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {isHost
+                ? "Press the button above to start presenting the leaderboard."
+                : "Waiting for the host to reveal the next results step…"}
+            </p>
+          ) : (
+            <ol ref={leaderboardListRef} className="space-y-2">
+              {visibleLeaderboard.map((row) => (
+                <li
+                  key={row.user_id}
+                  data-flip-id={row.user_id}
+                  className={cn(
+                    "flex items-center justify-between rounded-lg border px-4 py-3 text-sm",
+                    "transition-[background-color,border-color,box-shadow] duration-700 ease-out",
+                    podiumRowClass(row.rank),
+                  )}
+                >
+                  <span className="min-w-0">
+                    <span
+                      className={cn(
+                        podiumRankClass(row.rank),
+                        "transition-[color,font-size] duration-700 ease-out",
+                      )}
+                    >
+                      #{row.rank}
+                    </span>{" "}
+                    {row.display_name}
+                    {row.user_id === currentUserId ? (
+                      <span className="text-muted-foreground"> (You)</span>
+                    ) : null}
+                    {hostUserId && row.user_id === hostUserId ? (
+                      <span className="text-muted-foreground"> (Host)</span>
+                    ) : null}
+                  </span>
+                  <span className="font-medium tabular-nums">
+                    {row.total_points} pt
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
         </section>
       ) : null}
 

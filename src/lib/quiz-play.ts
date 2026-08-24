@@ -2,9 +2,16 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { songWasSinglesNumberOne } from "@/lib/charts/was-number-one";
 import {
   correctYearForScoring,
+  mergeQuizSettingsForStorage,
+  readQuizSettingsRuntime,
   resolveQuizSettings,
   scoreYearGuess,
 } from "@/lib/quiz-scoring";
+import {
+  nextQuizLeaderboardRevealStep,
+  isQuizLeaderboardRevealComplete,
+  presentsLeaderboardAtEnd,
+} from "@/lib/quiz-settings";
 
 async function assertQuizHost(quizId: string, userId: string) {
   const admin = createAdminClient();
@@ -396,11 +403,31 @@ export async function finishQuizForHost(
     }
 
     const now = new Date().toISOString();
+    const { data: quizSettingsRow } = await admin
+      .from("beatage_quizzes")
+      .select("settings")
+      .eq("id", quizId)
+      .maybeSingle();
+    const settings = resolveQuizSettings(
+      (quizSettingsRow as { settings?: unknown } | null)?.settings,
+    );
+    const runtime = readQuizSettingsRuntime(
+      (quizSettingsRow as { settings?: unknown } | null)?.settings,
+    );
+    // Reset presentation progress so finish always starts from the top.
+    const nextSettings = presentsLeaderboardAtEnd(settings)
+      ? mergeQuizSettingsForStorage(settings, {
+          ...runtime,
+          leaderboardRevealStep: 0,
+        })
+      : undefined;
+
     const { error: updateError } = await admin
       .from("beatage_quizzes")
       .update({
         status: "finished",
         last_activity_at: now,
+        ...(nextSettings ? { settings: nextSettings } : {}),
       })
       .eq("id", quizId);
 
@@ -411,6 +438,103 @@ export async function finishQuizForHost(
     return {};
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to finish quiz.";
+    return { error: message };
+  }
+}
+
+/**
+ * Advance the end-of-quiz leaderboard presentation by one step (host only).
+ * immediate: first click shows the full board; last_to_first: one place per click.
+ */
+export async function advanceLeaderboardRevealForHost(
+  quizId: string,
+  userId: string,
+): Promise<{ error?: string; step?: number; complete?: boolean }> {
+  try {
+    await assertQuizHost(quizId, userId);
+    const admin = createAdminClient();
+
+    const { data: quiz, error: quizError } = await admin
+      .from("beatage_quizzes")
+      .select("id, status, settings")
+      .eq("id", quizId)
+      .maybeSingle();
+
+    if (quizError || !quiz) {
+      return { error: "QUIZ_NOT_FOUND" };
+    }
+    if (quiz.status !== "finished") {
+      return { error: "QUIZ_NOT_FINISHED" };
+    }
+
+    const settings = resolveQuizSettings(
+      (quiz as { settings?: unknown }).settings,
+    );
+    if (!presentsLeaderboardAtEnd(settings)) {
+      return { error: "NO_LEADERBOARD_PRESENTATION" };
+    }
+
+    const runtime = readQuizSettingsRuntime(
+      (quiz as { settings?: unknown }).settings,
+    );
+    const currentStep = runtime.leaderboardRevealStep ?? 0;
+
+    // Same population as getQuizPlayState leaderboard (guesses on revealed rounds).
+    const { data: revealedRounds } = await admin
+      .from("beatage_rounds")
+      .select("id")
+      .eq("quiz_id", quizId)
+      .eq("status", "revealed");
+    const revealedIds = (revealedRounds ?? []).map(
+      (row) => (row as { id: string }).id,
+    );
+    let playerCount = 0;
+    if (revealedIds.length > 0) {
+      const { data: allGuesses } = await admin
+        .from("beatage_guesses")
+        .select("user_id")
+        .in("round_id", revealedIds);
+      playerCount = new Set(
+        (allGuesses ?? []).map((g) => (g as { user_id: string }).user_id),
+      ).size;
+    }
+
+    const nextStep = nextQuizLeaderboardRevealStep(
+      settings.overallReveal,
+      currentStep,
+      playerCount,
+    );
+    if (nextStep == null) {
+      return { step: currentStep, complete: true };
+    }
+
+    const { error: updateError } = await admin
+      .from("beatage_quizzes")
+      .update({
+        settings: mergeQuizSettingsForStorage(settings, {
+          ...runtime,
+          leaderboardRevealStep: nextStep,
+        }),
+        last_activity_at: new Date().toISOString(),
+      })
+      .eq("id", quizId);
+
+    if (updateError) {
+      return { error: updateError.message };
+    }
+
+    const complete = isQuizLeaderboardRevealComplete(
+      settings.overallReveal,
+      nextStep,
+      playerCount,
+    );
+
+    return { step: nextStep, complete };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to advance leaderboard reveal.";
     return { error: message };
   }
 }

@@ -15,6 +15,13 @@ export type ScoringModeId =
  */
 export type AnswerYearMode = "this_release" | "original_recording";
 
+/**
+ * How the final leaderboard is shown after the quiz ends.
+ * When immediate / last_to_first, showOverallResults and showOthersInPastResults
+ * are forced off so the board stays hidden until the host presents.
+ */
+export type OverallReveal = "immediate" | "last_to_first" | "after_quiz";
+
 export type BeatageQuizSettings = {
   source: QuizSource;
   chartCountries: ChartCountryCode[];
@@ -47,7 +54,13 @@ export type BeatageQuizSettings = {
   /** Year basis for scoring answers. */
   answerYearMode: AnswerYearMode;
   roundReveal: "live" | "after_round";
-  overallReveal: "immediate" | "last_to_first" | "after_quiz";
+  /**
+   * End-of-quiz leaderboard presentation (MyContest-style).
+   * - after_quiz: no staged presentation; full board when finished
+   * - immediate: host presents the full ranking at once
+   * - last_to_first: host reveals one place at a time from last to first
+   */
+  overallReveal: OverallReveal;
   hostParticipates: boolean;
   scoringModes: ScoringModeId[];
   combinedScoring: boolean;
@@ -57,11 +70,82 @@ export type BeatageQuizSettings = {
   hitsterCrowdScaling: boolean;
 };
 
-/** Runtime Auto Spotify pause flags stored alongside settings JSON (not wizard fields). */
+/** Runtime flags stored alongside settings JSON (not wizard create fields). */
 export type QuizSettingsRuntime = {
   autoEmptyStreak?: number;
   autoInterrupted?: boolean;
+  /** Host-controlled end presentation progress (0 = not started). */
+  leaderboardRevealStep?: number;
 };
+
+/** Wizard / rules labels for end-of-quiz leaderboard presentation modes. */
+export const QUIZ_LEADERBOARD_REVEAL_OPTIONS: Record<
+  Exclude<OverallReveal, "after_quiz">,
+  { label: string; description: string }
+> = {
+  immediate: {
+    label: "All at once (host)",
+    description:
+      "After the quiz ends, the host presents the full leaderboard with ranks and scores right away.",
+  },
+  last_to_first: {
+    label: "Last to first (host)",
+    description:
+      "Host reveals one place at a time from last to first — the winner is presented last. EXCITING!",
+  },
+};
+
+export function parseOverallReveal(raw: unknown): OverallReveal {
+  if (raw === "immediate" || raw === "last_to_first" || raw === "after_quiz") {
+    return raw;
+  }
+  return "after_quiz";
+}
+
+/** True when the host will stage a leaderboard presentation after finish. */
+export function presentsLeaderboardAtEnd(
+  settings: Pick<BeatageQuizSettings, "overallReveal">,
+): boolean {
+  return (
+    settings.overallReveal === "immediate" ||
+    settings.overallReveal === "last_to_first"
+  );
+}
+
+/** Visible leaderboard rows for the current presentation step. */
+export function applyQuizLeaderboardReveal<T>(
+  mode: OverallReveal,
+  step: number,
+  fullResults: T[],
+): T[] {
+  if (mode === "after_quiz") return fullResults;
+  if (mode === "immediate") return step > 0 ? fullResults : [];
+  if (step <= 0) return [];
+  return fullResults.slice(Math.max(0, fullResults.length - step));
+}
+
+export function isQuizLeaderboardRevealComplete(
+  mode: OverallReveal,
+  step: number,
+  playerCount: number,
+): boolean {
+  if (mode === "after_quiz") return true;
+  if (mode === "immediate") return step > 0;
+  if (playerCount < 1) return true;
+  return step >= playerCount;
+}
+
+/** Next step after a host reveal click, or null when already complete. */
+export function nextQuizLeaderboardRevealStep(
+  mode: OverallReveal,
+  step: number,
+  playerCount: number,
+): number | null {
+  if (mode === "after_quiz") return null;
+  if (isQuizLeaderboardRevealComplete(mode, step, playerCount)) return null;
+  if (mode === "immediate") return 1;
+  return Math.min(step + 1, Math.max(1, playerCount));
+}
 
 export const DEFAULT_QUIZ_SETTINGS: BeatageQuizSettings = {
   source: "curated",

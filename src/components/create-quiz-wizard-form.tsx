@@ -56,15 +56,18 @@ import { DEFAULT_MAX_CURATED_TRACKS, getQuizPlanLimits } from "@/lib/quiz-plans"
 import type {
   AnswerYearMode,
   ChartCountryCode,
+  OverallReveal,
   ScoringModeId,
 } from "@/lib/quiz-settings";
 import {
   answerYearModeLabel,
   clampYearRangeTolerance,
+  QUIZ_LEADERBOARD_REVEAL_OPTIONS,
   toggleScoringModeSelection,
   YEAR_RANGE_TOLERANCE_MAX,
   YEAR_RANGE_TOLERANCE_MIN,
 } from "@/lib/quiz-settings";
+import { ADMIN_SELECT_CLASS } from "@/lib/admin-ui";
 import { useWizardInputFocus } from "@/lib/wizard-input-focus";
 import { cn } from "@/lib/utils";
 
@@ -250,9 +253,16 @@ export function CreateQuizWizardForm({
         answerYearMode: current.answerYearMode,
         showTitleArtist: current.showTitleArtist,
         showCorrectAnswer: current.showCorrectAnswer,
-        showOverallResults: current.showOverallResults,
+        showOverallResults: current.presentLeaderboardAtEnd
+          ? false
+          : current.showOverallResults,
         showResultDetails: current.showResultDetails,
-        showOthersInPastResults: current.showOthersInPastResults,
+        showOthersInPastResults: current.presentLeaderboardAtEnd
+          ? false
+          : current.showOthersInPastResults,
+        overallReveal: current.presentLeaderboardAtEnd
+          ? current.overallReveal
+          : "after_quiz",
         autoInterruptAfterEmptyRounds: current.autoInterruptAfterEmptyRounds,
         roundReveal: "after_round",
       }),
@@ -822,14 +832,75 @@ export function CreateQuizWizardForm({
                           }
                         />
                         <AdminSwitchField
-                          id="showOverallResults"
-                          label="Show overall results"
-                          description="Show the running leaderboard with scores during the quiz."
-                          checked={wizard.showOverallResults}
+                          id="presentLeaderboardAtEnd"
+                          label="Present leaderboard results at the end"
+                          description="Hide the running board during play. After the quiz ends, the host presents the final leaderboard (MyContest-style)."
+                          checked={wizard.presentLeaderboardAtEnd}
                           onCheckedChange={(checked) =>
-                            patchWizard({ showOverallResults: checked })
+                            patchWizard(
+                              checked
+                                ? {
+                                    presentLeaderboardAtEnd: true,
+                                    showOverallResults: false,
+                                    showOthersInPastResults: false,
+                                  }
+                                : {
+                                    presentLeaderboardAtEnd: false,
+                                    showOverallResults: true,
+                                  },
+                            )
                           }
                         />
+                        {wizard.presentLeaderboardAtEnd ? (
+                          <div className="space-y-2 pl-1">
+                            <Label htmlFor="overallReveal">
+                              How to present the leaderboard?
+                            </Label>
+                            <select
+                              id="overallReveal"
+                              className={ADMIN_SELECT_CLASS}
+                              value={wizard.overallReveal}
+                              onChange={(event) =>
+                                patchWizard({
+                                  overallReveal: event.target
+                                    .value as Exclude<
+                                    OverallReveal,
+                                    "after_quiz"
+                                  >,
+                                })
+                              }
+                            >
+                              {(
+                                Object.keys(
+                                  QUIZ_LEADERBOARD_REVEAL_OPTIONS,
+                                ) as Array<
+                                  Exclude<OverallReveal, "after_quiz">
+                                >
+                              ).map((key) => (
+                                <option key={key} value={key}>
+                                  {QUIZ_LEADERBOARD_REVEAL_OPTIONS[key].label}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="text-xs text-muted-foreground">
+                              {
+                                QUIZ_LEADERBOARD_REVEAL_OPTIONS[
+                                  wizard.overallReveal
+                                ].description
+                              }
+                            </p>
+                          </div>
+                        ) : (
+                          <AdminSwitchField
+                            id="showOverallResults"
+                            label="Show overall results"
+                            description="Show the running leaderboard with scores during the quiz."
+                            checked={wizard.showOverallResults}
+                            onCheckedChange={(checked) =>
+                              patchWizard({ showOverallResults: checked })
+                            }
+                          />
+                        )}
                         <AdminSwitchField
                           id="showResultDetails"
                           label="Show details in results list"
@@ -839,7 +910,8 @@ export function CreateQuizWizardForm({
                             patchWizard({ showResultDetails: checked })
                           }
                         />
-                        {wizard.showResultDetails ? (
+                        {wizard.showResultDetails &&
+                        !wizard.presentLeaderboardAtEnd ? (
                           <AdminSwitchField
                             id="showOthersInPastResults"
                             label="Show others in past results"
@@ -929,14 +1001,29 @@ export function CreateQuizWizardForm({
                         {wizard.showCorrectAnswer ? "yes" : "no"}
                       </p>
                       <p>
-                        <span className="font-medium">Show overall results:</span>{" "}
-                        {wizard.showOverallResults ? "yes" : "no"}
+                        <span className="font-medium">
+                          Present leaderboard at end:
+                        </span>{" "}
+                        {wizard.presentLeaderboardAtEnd
+                          ? wizard.overallReveal === "last_to_first"
+                            ? "yes · last to first"
+                            : "yes · all at once"
+                          : "no"}
                       </p>
+                      {!wizard.presentLeaderboardAtEnd ? (
+                        <p>
+                          <span className="font-medium">
+                            Show overall results:
+                          </span>{" "}
+                          {wizard.showOverallResults ? "yes" : "no"}
+                        </p>
+                      ) : null}
                       <p>
                         <span className="font-medium">Result details:</span>{" "}
                         {wizard.showResultDetails ? "yes" : "no"}
                       </p>
-                      {wizard.showResultDetails ? (
+                      {wizard.showResultDetails &&
+                      !wizard.presentLeaderboardAtEnd ? (
                         <p>
                           <span className="font-medium">
                             Others in past results:

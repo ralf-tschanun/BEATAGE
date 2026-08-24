@@ -3,6 +3,8 @@ import {
   answerYearModeLabel,
   quizSourceLabel,
   scoringModeLabel,
+  presentsLeaderboardAtEnd,
+  QUIZ_LEADERBOARD_REVEAL_OPTIONS,
   type BeatageQuizSettings,
   type ChartCountryCode,
 } from "@/lib/quiz-settings";
@@ -35,9 +37,13 @@ function roundRevealLabel(settings: BeatageQuizSettings): string {
 }
 
 function overallRevealLabel(settings: BeatageQuizSettings): string {
-  if (settings.overallReveal === "immediate") return "Immediate";
-  if (settings.overallReveal === "last_to_first") return "Last to first";
-  return "After the quiz";
+  if (settings.overallReveal === "immediate") {
+    return QUIZ_LEADERBOARD_REVEAL_OPTIONS.immediate.label;
+  }
+  if (settings.overallReveal === "last_to_first") {
+    return QUIZ_LEADERBOARD_REVEAL_OPTIONS.last_to_first.label;
+  }
+  return "After the quiz (no staged presentation)";
 }
 
 function chartCountryLabel(code: ChartCountryCode): string {
@@ -122,14 +128,18 @@ export function QuizRulesContent({
       </p>
       <p>
         <span className="text-muted-foreground">Overall results:</span>{" "}
-        {settings.showOverallResults ? "leaderboard shown during play" : "hidden during play"}
+        {presentsLeaderboardAtEnd(settings)
+          ? "hidden during play (presented at the end)"
+          : settings.showOverallResults
+            ? "leaderboard shown during play"
+            : "hidden during play"}
       </p>
       <p>
         <span className="text-muted-foreground">Result details:</span>{" "}
         {settings.showResultDetails
-          ? settings.showOthersInPastResults
-            ? "previous rounds expand to full results for everyone"
-            : "previous rounds expand; participants only see their own guess"
+          ? presentsLeaderboardAtEnd(settings) || !settings.showOthersInPastResults
+            ? "previous rounds expand; participants only see their own guess"
+            : "previous rounds expand to full results for everyone"
           : "previous rounds show your points only"}
       </p>
       {isAutoSpotify ? (
