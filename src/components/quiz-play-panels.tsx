@@ -250,10 +250,8 @@ export function QuizPlayPanels({
   const [guessBusy, setGuessBusy] = useState(false);
   const [closeState, closeAction, closePending] = useActionState(closeRoundAction, initial);
   const [finishState, finishAction, finishPending] = useActionState(finishQuizAction, initial);
-  const [revealState, revealAction, revealPending] = useActionState(
-    advanceLeaderboardRevealAction,
-    initial,
-  );
+  const [revealState, setRevealState] = useState<QuizRoundActionState>(initial);
+  const [revealBusy, setRevealBusy] = useState(false);
   const [showAddTrack, setShowAddTrack] = useState(false);
   const [draftTrack, setDraftTrack] = useState({
     title: "",
@@ -517,6 +515,32 @@ export function QuizPlayPanels({
     });
   }, [quizId, activeRound]);
 
+  async function submitReveal(formData: FormData) {
+    setRevealBusy(true);
+    let settled = false;
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      setRevealBusy(false);
+    }, 8000);
+    try {
+      const next = await advanceLeaderboardRevealAction(null, formData);
+      if (!settled) {
+        setRevealState(next);
+      }
+    } catch (error) {
+      if (!settled) {
+        setRevealState({
+          error: error instanceof Error ? error.message : "Could not reveal.",
+        });
+      }
+    } finally {
+      settled = true;
+      window.clearTimeout(timeout);
+      setRevealBusy(false);
+    }
+  }
+
   const chartComboEnabled = scoringCombinesChart(settings);
   const chartCountriesShort = chartCountriesShortLabel(settings.chartCountries);
   // After any successful play action: notify peers + soft refresh (MyContest pattern).
@@ -532,13 +556,15 @@ export function QuizPlayPanels({
     if (!syncId || syncId === lastSyncIdRef.current) return;
     lastSyncIdRef.current = syncId;
     const guessOnly = guessState?.syncId === syncId && Boolean(guessState.guess);
+    const revealOnly = revealState?.syncId === syncId;
     void broadcastQuizResync(
       quizId,
       joinCode,
       guessOnly && guessState.guess ? { guess: guessState.guess } : undefined,
     );
-    // Guess patches already update the host list — skip a full RSC/PostgREST reload.
-    if (!guessOnly) {
+    // Guess/reveal patches update live state locally — skip RSC refresh so the
+    // in-flight server action is not aborted (Vercel leaves the button stuck).
+    if (!guessOnly && !revealOnly) {
       router.refresh();
     }
   }, [
@@ -885,7 +911,7 @@ export function QuizPlayPanels({
                     : "false"
               }
             />
-            <div className="space-y-2">
+            <div className="flex flex-col items-center gap-2">
               <Label htmlFor="guessedYear">Release year</Label>
               <Input
                 id="guessedYear"
@@ -1143,11 +1169,17 @@ export function QuizPlayPanels({
           </div>
 
           {isHost && !presentationComplete ? (
-            <form action={revealAction} className="flex flex-wrap items-center gap-2">
+            <form
+              className="flex flex-wrap items-center gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitReveal(new FormData(event.currentTarget));
+              }}
+            >
               <input type="hidden" name="quizId" value={quizId} />
               <input type="hidden" name="joinCode" value={joinCode} />
-              <Button type="submit" disabled={revealPending}>
-                {revealPending
+              <Button type="submit" disabled={revealBusy}>
+                {revealBusy
                   ? "Updating…"
                   : settings.overallReveal === "immediate"
                     ? "Present full leaderboard"

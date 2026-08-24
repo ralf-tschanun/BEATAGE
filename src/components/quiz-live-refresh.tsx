@@ -145,6 +145,14 @@ async function fetchQuizPlaySnapshot(
 
 function snapshotFingerprint(snapshot: QuizPlaySnapshot): string {
   return [
+    snapshotStructuralFingerprint(snapshot),
+    String(snapshot.leaderboardRevealStep ?? 0),
+  ].join("|");
+}
+
+/** Fingerprint without presentation-only fields (leaderboard reveal step). */
+function snapshotStructuralFingerprint(snapshot: QuizPlaySnapshot): string {
+  return [
     snapshot.quizStatus,
     snapshot.maxCuratedTracks ?? "inf",
     snapshot.currentRoundNumber,
@@ -171,7 +179,6 @@ function snapshotFingerprint(snapshot: QuizPlaySnapshot): string {
       .join(","),
     snapshot.tracks.map((t) => t.id).join(","),
     snapshot.autoInterrupted ? "1" : "0",
-    String(snapshot.leaderboardRevealStep ?? 0),
     snapshot.settings.showTitleArtist ? "1" : "0",
     snapshot.settings.showCorrectAnswer ? "1" : "0",
     snapshot.settings.showOverallResults ? "1" : "0",
@@ -286,6 +293,7 @@ export function QuizLiveRefresh({
   const timerRef = useRef<number | null>(null);
   const reconcileTimerRef = useRef<number | null>(null);
   const lastFpRef = useRef<string | null>(null);
+  const lastStructuralFpRef = useRef<string | null>(null);
   const syncInFlightRef = useRef(false);
   const syncAgainRef = useRef(false);
 
@@ -335,11 +343,18 @@ export function QuizLiveRefresh({
           if (cancelled || !snapshot) continue;
 
           const fingerprint = snapshotFingerprint(snapshot);
+          const structuralFp = snapshotStructuralFingerprint(snapshot);
           const changed = fingerprint !== lastFpRef.current;
+          const structuralChanged =
+            structuralFp !== lastStructuralFpRef.current;
           if (changed) {
             lastFpRef.current = fingerprint;
+            lastStructuralFpRef.current = structuralFp;
             emitPlayPatch(quizId, { type: "replace", snapshot });
-            if (refreshOnChange) {
+            // Presentation-only ticks (leaderboard reveal step) must not
+            // router.refresh() — on Vercel that aborts the in-flight reveal action
+            // and leaves the host button stuck on "Updating…".
+            if (refreshOnChange && structuralChanged) {
               scheduleRefresh(true);
             }
           }
