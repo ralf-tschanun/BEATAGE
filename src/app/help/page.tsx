@@ -63,10 +63,11 @@ export default function HelpPage() {
             </p>
           </HelpSection>
 
-          <HelpSection title="One-time: Spotify → Last.fm">
+          <HelpSection title="One-time: Connect Spotify → Last.fm">
             <p>
-              Live mode follows Spotify through Last.fm (no Spotify Developer
-              allowlist). Do this once on the account that will play music:
+              Live mode follows what you play on Spotify through Last.fm — no Spotify
+              Developer allowlist required. Set this up once for the Spotify account
+              you&apos;ll use to play music:
             </p>
             <ol className="list-decimal space-y-2 pl-5">
               <li>
@@ -79,21 +80,30 @@ export default function HelpPage() {
                 >
                   Last.fm
                 </a>{" "}
-                account if you need one.
+                account if you don&apos;t have one.
               </li>
               <li>
-                In the <strong className="font-medium text-foreground">Spotify app</strong>:
-                Settings → Social / Connections → connect Last.fm.
+                On the <strong className="font-medium text-foreground">Last.fm website</strong>,
+                scroll <strong className="font-medium text-foreground">all the way to the bottom of the page</strong>{" "}
+                and select <strong className="font-medium text-foreground">ACCOUNT → Settings → Applications</strong>.
+                Under <strong className="font-medium text-foreground">Spotify Scrobbling</strong>, click{" "}
+                <strong className="font-medium text-foreground">Connect</strong>, then sign in to Spotify and
+                authorize the connection.
               </li>
               <li>
-                In {BRAND_NAME}, enter that{" "}
-                <strong className="font-medium text-foreground">Last.fm username</strong>{" "}
-                when you create a Live quiz (or on the host panel later).
+                In {BRAND_NAME}, enter your{" "}
+                <strong className="font-medium text-foreground">Last.fm username</strong> when creating a Live
+                Quiz (you can also add or change it later in the Host Panel).
               </li>
             </ol>
+            <p className="rounded-xl border border-border/60 bg-muted/30 px-4 py-3 text-foreground">
+              <strong className="font-semibold">Tip:</strong> The ACCOUNT link is easy to miss — it&apos;s located
+              at the very bottom of the Last.fm page.
+            </p>
             <p>
-              Scrobbles can lag a few seconds. If nothing appears, check that Spotify
-              is actually playing and still linked to Last.fm.
+              Scrobbles may lag by a few seconds. If nothing appears, make sure Spotify is
+              playing and <strong className="font-medium text-foreground">Spotify Scrobbling</strong> is still
+              connected in your Last.fm settings.
             </p>
           </HelpSection>
 

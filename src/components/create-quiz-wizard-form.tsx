@@ -445,7 +445,7 @@ export function CreateQuizWizardForm({
   function confirmQuickLiveWithLastfm() {
     const lastfm = quickLastfmDraft.trim().replace(/^@/, "");
     if (!lastfm) {
-      setStepError("Enter your Last.fm username (link Spotify → Last.fm in the Spotify app first).");
+      setStepError("Enter your Last.fm username (connect Spotify Scrobbling in Last.fm settings first).");
       return;
     }
     setQuickLastfmOpen(false);
@@ -583,9 +583,8 @@ export function CreateQuizWizardForm({
           <DialogHeader>
             <DialogTitle>Last.fm username</DialogTitle>
             <DialogDescription>
-              Quick Live Quiz follows Spotify via Last.fm. Connect Last.fm once in
-              the Spotify app (Settings → Social / Connections), then enter your
-              Last.fm username.
+              Connect Spotify to Last.fm on the Last.fm website (ACCOUNT → Settings →
+              Applications → Spotify Scrobbling), then enter your Last.fm username.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -647,12 +646,16 @@ export function CreateQuizWizardForm({
               if you do not have one yet.
             </li>
             <li>
-              In the Spotify app: Settings → Social / Connections → connect Last.fm.
+              On the Last.fm website, scroll to the bottom and open{" "}
+              <strong className="font-medium text-foreground">ACCOUNT → Settings → Applications</strong>.
+              Under <strong className="font-medium text-foreground">Spotify Scrobbling</strong>, click{" "}
+              <strong className="font-medium text-foreground">Connect</strong> and authorize Spotify.
             </li>
-            <li>
-              Enter that Last.fm username here.
-            </li>
+            <li>Enter your Last.fm username here.</li>
           </ol>
+          <p className="text-sm text-muted-foreground">
+            The ACCOUNT link is at the very bottom of the Last.fm page — easy to miss.
+          </p>
           <DialogFooter>
             <Button type="button" onClick={() => setLastfmHelpOpen(false)}>
               Got it

@@ -143,7 +143,7 @@ export function validateQuizWizardStep(state: CreateQuizWizardState, step: numbe
   if (step === 1) {
     if (state.playMode === "auto_lastfm") {
       if (!state.lastfmUsername.trim()) {
-        return "Enter your Last.fm username (link Spotify → Last.fm in the Spotify app first).";
+        return "Enter your Last.fm username (connect Spotify Scrobbling in Last.fm settings first).";
       }
       return null;
     }

@@ -64,7 +64,7 @@ function pickAlbumArt(
 
 /**
  * Read the user's currently playing (or most recent) track from Last.fm.
- * Spotify must be linked to Last.fm in the Spotify app for live updates.
+ * Spotify must be linked via Spotify Scrobbling in Last.fm settings for live updates.
  */
 type LastfmNowPlayingResult =
   | { ok: true; playing: false }
