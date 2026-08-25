@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-import { brandHtmlTitle, BRAND_NAME } from "@/lib/brand";
+import { brandHtmlTitle } from "@/lib/brand";
 
 export const metadata: Metadata = {
   title: brandHtmlTitle(),

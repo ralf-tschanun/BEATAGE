@@ -44,7 +44,8 @@ export const QUIZ_UNLOCK_LIMITS = {
 } as const;
 
 /** Default song cap when a quiz row has no max_rounds and is not unlocked. */
-export const DEFAULT_MAX_CURATED_TRACKS = QUIZ_PLANS.free.maxCuratedTracks;
+export const DEFAULT_MAX_CURATED_TRACKS: number =
+  QUIZ_PLANS.free.maxCuratedTracks ?? 10;
 
 export const ACTIVE_QUIZ_STATUSES = ["draft", "open", "playing"] as const;
 
