@@ -1120,9 +1120,9 @@ export function QuizPlayPanels({
                     : "false"
               }
             />
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="guessedYear">Release year</Label>
-              <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col items-center gap-2">
+                <Label htmlFor="guessedYear">Release year</Label>
                 <Input
                   id="guessedYear"
                   name="guessedYear"
@@ -1134,14 +1134,14 @@ export function QuizPlayPanels({
                   onChange={(event) => setGuessYear(event.target.value)}
                   className="w-32"
                 />
-                <Button type="submit" disabled={guessBusy}>
-                  {guessBusy
-                    ? "Saving…"
-                    : (myGuessYear ?? optimisticGuessYear) != null
-                      ? "Update guess"
-                      : "Submit guess"}
-                </Button>
               </div>
+              <Button type="submit" disabled={guessBusy}>
+                {guessBusy
+                  ? "Saving…"
+                  : (myGuessYear ?? optimisticGuessYear) != null
+                    ? "Update guess"
+                    : "Submit guess"}
+              </Button>
             </div>
             {chartComboEnabled ? (
               <div className="space-y-2">

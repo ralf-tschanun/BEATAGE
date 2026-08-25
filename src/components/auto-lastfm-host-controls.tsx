@@ -9,6 +9,7 @@ import {
   updateLastfmUsernameAction,
 } from "@/app/actions/quiz-round";
 import { QuizPlanLimitPrompt } from "@/components/quiz-plan-limit-prompt";
+import { LiveHostScreenLockField } from "@/components/live-host-screen-lock-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -605,6 +606,7 @@ export function AutoLastfmHostControls({
             {error}
           </p>
         ) : null}
+        <LiveHostScreenLockField id="lastfm-screen-lock-setup" disabled={disabled} />
       </section>
     );
   }
@@ -632,7 +634,7 @@ export function AutoLastfmHostControls({
         />
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
           variant="outline"
@@ -657,6 +659,11 @@ export function AutoLastfmHostControls({
         >
           {autoInterrupted ? "Resume" : "Pause"}
         </Button>
+        <LiveHostScreenLockField
+          id="lastfm-screen-lock"
+          disabled={disabled}
+          className="ml-auto"
+        />
       </div>
 
       {error ? (

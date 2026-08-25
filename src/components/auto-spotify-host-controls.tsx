@@ -9,6 +9,7 @@ import {
   syncAutoSpotifyRoundAction,
 } from "@/app/actions/quiz-round";
 import { QuizPlanLimitPrompt } from "@/components/quiz-plan-limit-prompt";
+import { LiveHostScreenLockField } from "@/components/live-host-screen-lock-field";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { isQuizPlanLimitError } from "@/lib/quiz-plan-limits";
 import type { PlanId } from "@/lib/quiz-plans";
@@ -433,6 +434,7 @@ export function AutoSpotifyHostControls({
         >
           Connect Spotify
         </a>
+        <LiveHostScreenLockField id="spotify-screen-lock-setup" disabled={disabled} />
       </section>
     );
   }
@@ -457,7 +459,7 @@ export function AutoSpotifyHostControls({
         />
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
           variant="outline"
@@ -492,6 +494,11 @@ export function AutoSpotifyHostControls({
         >
           {autoInterrupted ? "Resume" : "Pause"}
         </Button>
+        <LiveHostScreenLockField
+          id="spotify-screen-lock"
+          disabled={disabled}
+          className="ml-auto"
+        />
       </div>
 
       {error ? (
