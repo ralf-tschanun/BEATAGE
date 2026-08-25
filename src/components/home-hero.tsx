@@ -35,9 +35,13 @@ export function HomeHero({
       : Math.max(0, maxActiveQuizzes - activeHostedCount);
   const atLimit = maxActiveQuizzes !== null && remaining === 0;
   const planBadge = (
-    <span className="inline-flex items-center rounded-md bg-primary/10 px-1.5 py-0.5 font-semibold text-foreground ring-1 ring-inset ring-primary/25">
+    <button
+      type="button"
+      className="inline-flex cursor-pointer items-center rounded-md bg-primary/10 px-1.5 py-0.5 font-semibold text-foreground underline decoration-transparent underline-offset-2 ring-1 ring-inset ring-primary/25 transition-colors hover:bg-primary/20 hover:underline hover:decoration-primary/60 hover:ring-primary/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      onClick={() => setPlanOpen(true)}
+    >
       {planLabel} plan
-    </span>
+    </button>
   );
 
   return (
@@ -85,7 +89,7 @@ export function HomeHero({
 
           {atLimit ? (
             <p className="text-sm text-muted-foreground">
-              Active quiz limit reached on your {planBadge} plan.{" "}
+              Active quiz limit reached on your {planBadge}.{" "}
               <Link href="/create" className="font-medium text-foreground underline-offset-2 hover:underline">
                 Unlock once to create another
               </Link>
@@ -119,6 +123,7 @@ export function HomeHero({
         currentPlan={planId}
         hasSession={hasSession}
         isAnonymous={isAnonymous}
+        showTrigger={false}
       />
     </section>
   );
