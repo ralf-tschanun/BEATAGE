@@ -96,7 +96,7 @@ export function QuizRulesContent({
         <span className="text-muted-foreground">Scoring:</span> {scoring}
         {settings.scoringModes.includes("year_range")
           ? settings.yearRangeTolerance === 0
-            ? " · exact year = 1 pt"
+            ? " · exact year = 1 yr"
             : ` · ±${settings.yearRangeTolerance} years`
           : ""}
         {settings.scoringModes.includes("year_distance")
@@ -148,7 +148,7 @@ export function QuizRulesContent({
           ? settings.showOthersInPastResults
             ? "previous rounds expand to full results for everyone"
             : "previous rounds expand; participants only see their own guess"
-          : "previous rounds show your points only"}
+          : "previous rounds show your years only"}
       </p>
       {isLive ? (
         <p>

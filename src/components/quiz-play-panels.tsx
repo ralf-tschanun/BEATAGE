@@ -44,6 +44,7 @@ import {
   scoringLowWins,
   type BeatageQuizSettings,
 } from "@/lib/quiz-settings";
+import { scrollToSection } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
 import type {
   CuratedTrackRow,
@@ -147,7 +148,7 @@ function RoundGuessesList({
                 </>
               ) : null}
               {" · "}
-              {g.points_total} pt
+              {g.points_total} yr
             </span>
           </li>
         ))
@@ -572,6 +573,13 @@ export function QuizPlayPanels({
 
   const chartComboEnabled = scoringCombinesChart(settings);
   const chartCountriesShort = chartCountriesShortLabel(settings.chartCountries);
+
+  // Keep the staged reveal near the top while the host presents.
+  useEffect(() => {
+    if (!showLeaderboardPresentation) return;
+    scrollToSection("leaderboard-presentation");
+  }, [showLeaderboardPresentation, leaderboardRevealStep]);
+
   // After any successful play action: notify peers + soft refresh (MyContest pattern).
   useEffect(() => {
     const syncId =
@@ -946,17 +954,128 @@ export function QuizPlayPanels({
         </section>
       ) : null}
 
-      {isFinished ? (
-        <section className="space-y-2 rounded-2xl border border-border/60 bg-card p-6">
-          <h2 className="text-lg font-semibold">Quiz finished</h2>
-          <p className="text-sm text-muted-foreground">
-            {presentAtEnd
-              ? presentationComplete
-                ? "This quiz is closed. Final standings are on the leaderboard below."
-                : "This quiz is closed. The host will present the final leaderboard."
-              : "This quiz is closed. Final standings are on the leaderboard below."}
-          </p>
-        </section>
+      {isFinished || showLeaderboardPresentation ? (
+        <div
+          id={showLeaderboardPresentation ? "leaderboard-presentation" : undefined}
+          className={cn(
+            "space-y-8",
+            showLeaderboardPresentation && "scroll-mt-20",
+          )}
+        >
+          {isFinished ? (
+            <section className="space-y-2 rounded-2xl border border-border/60 bg-card p-6">
+              <h2 className="text-lg font-semibold">Quiz finished</h2>
+              <p className="text-sm text-muted-foreground">
+                {presentAtEnd
+                  ? presentationComplete
+                    ? "This quiz is closed. Final standings are on the leaderboard below."
+                    : "This quiz is closed. The host will present the final leaderboard."
+                  : "This quiz is closed. Final standings are on the leaderboard below."}
+              </p>
+            </section>
+          ) : null}
+
+          {showLeaderboardPresentation ? (
+            <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold">Leaderboard presentation</h2>
+                {scoringLowWins(settings) ? (
+                  <p className="text-sm text-muted-foreground">Lowest score wins.</p>
+                ) : null}
+                <p className="text-sm text-muted-foreground">
+                  {presentationComplete ? (
+                    <span className="font-medium text-destructive">complete</span>
+                  ) : leaderboardRevealStep > 0 ? (
+                    <span className="font-medium text-amber-700 dark:text-amber-400">
+                      revealing…
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">waiting to start</span>
+                  )}
+                  {settings.overallReveal === "last_to_first" &&
+                  leaderboard.length > 0 ? (
+                    <span>
+                      {" "}
+                      · place reveal{" "}
+                      {Math.min(leaderboardRevealStep, leaderboard.length)} of{" "}
+                      {leaderboard.length}
+                    </span>
+                  ) : null}
+                </p>
+              </div>
+
+              {isHost && !presentationComplete ? (
+                <form
+                  className="flex flex-wrap items-center gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void submitReveal(new FormData(event.currentTarget));
+                  }}
+                >
+                  <input type="hidden" name="quizId" value={quizId} />
+                  <input type="hidden" name="joinCode" value={joinCode} />
+                  <Button type="submit" disabled={revealBusy}>
+                    {revealBusy
+                      ? "Updating…"
+                      : settings.overallReveal === "immediate"
+                        ? "Present full leaderboard"
+                        : leaderboardRevealStep === 0
+                          ? "Reveal last place"
+                          : "Reveal next place"}
+                  </Button>
+                  {revealState?.error ? (
+                    <p className="w-full text-sm text-destructive">
+                      {revealState.error}
+                    </p>
+                  ) : null}
+                </form>
+              ) : null}
+
+              {visibleLeaderboard.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  {isHost
+                    ? "Press the button above to start presenting the leaderboard."
+                    : "Waiting for the host to reveal the next results step…"}
+                </p>
+              ) : (
+                <ol ref={leaderboardListRef} className="space-y-2">
+                  {visibleLeaderboard.map((row) => (
+                    <li
+                      key={row.user_id}
+                      data-flip-id={row.user_id}
+                      className={cn(
+                        "flex items-center justify-between rounded-lg border px-4 py-3 text-sm",
+                        "transition-[background-color,border-color,box-shadow] duration-700 ease-out",
+                        podiumRowClass(row.rank),
+                      )}
+                    >
+                      <span className="min-w-0">
+                        <span
+                          className={cn(
+                            podiumRankClass(row.rank),
+                            "transition-[color,font-size] duration-700 ease-out",
+                          )}
+                        >
+                          #{row.rank}
+                        </span>{" "}
+                        {row.display_name}
+                        {row.user_id === currentUserId ? (
+                          <span className="text-muted-foreground"> (You)</span>
+                        ) : null}
+                        {hostUserId && row.user_id === hostUserId ? (
+                          <span className="text-muted-foreground"> (Host)</span>
+                        ) : null}
+                      </span>
+                      <span className="font-medium tabular-nums">
+                        {row.total_points} yr
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+          ) : null}
+        </div>
       ) : allTracksPlayed ? (
         <section className="space-y-2 rounded-2xl border border-border/60 bg-card p-6">
           <h2 className="text-lg font-semibold">All tracks played</h2>
@@ -1216,7 +1335,7 @@ export function QuizPlayPanels({
                   ) : null}
                 </span>
                 <span className="shrink-0 font-medium tabular-nums">
-                  {row.total_points} pt
+                  {row.total_points} yr
                   <span className="ml-2 font-normal text-muted-foreground">
                     {scoringLowWins(settings)
                       ? `(${row.last_round_points ?? 0})`
@@ -1227,107 +1346,6 @@ export function QuizPlayPanels({
             ))}
           </ul>
         </CollapsibleCard>
-      ) : null}
-
-      {showLeaderboardPresentation ? (
-        <section
-          id="leaderboard-presentation"
-          className="space-y-4 rounded-2xl border border-border/60 bg-card p-6"
-        >
-          <div className="space-y-1">
-            <h2 className="text-lg font-semibold">Leaderboard presentation</h2>
-            {scoringLowWins(settings) ? (
-              <p className="text-sm text-muted-foreground">Lowest score wins.</p>
-            ) : null}
-            <p className="text-sm text-muted-foreground">
-              {presentationComplete ? (
-                <span className="font-medium text-destructive">complete</span>
-              ) : leaderboardRevealStep > 0 ? (
-                <span className="font-medium text-amber-700 dark:text-amber-400">
-                  revealing…
-                </span>
-              ) : (
-                <span className="text-muted-foreground">waiting to start</span>
-              )}
-              {settings.overallReveal === "last_to_first" &&
-              leaderboard.length > 0 ? (
-                <span>
-                  {" "}
-                  · place reveal {Math.min(leaderboardRevealStep, leaderboard.length)}{" "}
-                  of {leaderboard.length}
-                </span>
-              ) : null}
-            </p>
-          </div>
-
-          {isHost && !presentationComplete ? (
-            <form
-              className="flex flex-wrap items-center gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submitReveal(new FormData(event.currentTarget));
-              }}
-            >
-              <input type="hidden" name="quizId" value={quizId} />
-              <input type="hidden" name="joinCode" value={joinCode} />
-              <Button type="submit" disabled={revealBusy}>
-                {revealBusy
-                  ? "Updating…"
-                  : settings.overallReveal === "immediate"
-                    ? "Present full leaderboard"
-                    : leaderboardRevealStep === 0
-                      ? "Reveal last place"
-                      : "Reveal next place"}
-              </Button>
-              {revealState?.error ? (
-                <p className="w-full text-sm text-destructive">{revealState.error}</p>
-              ) : null}
-            </form>
-          ) : null}
-
-          {visibleLeaderboard.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {isHost
-                ? "Press the button above to start presenting the leaderboard."
-                : "Waiting for the host to reveal the next results step…"}
-            </p>
-          ) : (
-            <ol ref={leaderboardListRef} className="space-y-2">
-              {visibleLeaderboard.map((row) => (
-                <li
-                  key={row.user_id}
-                  data-flip-id={row.user_id}
-                  className={cn(
-                    "flex items-center justify-between rounded-lg border px-4 py-3 text-sm",
-                    "transition-[background-color,border-color,box-shadow] duration-700 ease-out",
-                    podiumRowClass(row.rank),
-                  )}
-                >
-                  <span className="min-w-0">
-                    <span
-                      className={cn(
-                        podiumRankClass(row.rank),
-                        "transition-[color,font-size] duration-700 ease-out",
-                      )}
-                    >
-                      #{row.rank}
-                    </span>{" "}
-                    {row.display_name}
-                    {row.user_id === currentUserId ? (
-                      <span className="text-muted-foreground"> (You)</span>
-                    ) : null}
-                    {hostUserId && row.user_id === hostUserId ? (
-                      <span className="text-muted-foreground"> (Host)</span>
-                    ) : null}
-                  </span>
-                  <span className="font-medium tabular-nums">
-                    {row.total_points} pt
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
       ) : null}
 
       {historyRounds.length > 0 ? (
@@ -1379,7 +1397,7 @@ export function QuizPlayPanels({
                         ? isHost || settings.showCorrectAnswer
                           ? (round.correct_release_year ?? "—")
                           : "—"
-                        : `${round.my_points ?? 0} pt`}
+                        : `${round.my_points ?? 0} yr`}
                       {canExpand ? (
                         <CaretDownIcon
                           className={cn(

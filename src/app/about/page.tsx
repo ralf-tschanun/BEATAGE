@@ -12,7 +12,7 @@ export default function AboutPage() {
         <p className="mt-4 text-muted-foreground">
           {BRAND_NAME} is a music quiz where the host plays a track and participants
           guess the release year. Same guest-first flow as our other apps — create
-          a quiz, invite friends, score points, and present the winner.
+          a quiz, invite friends, score years off, and present the winner.
         </p>
         <Link href="/" className="mt-8 inline-block text-sm underline-offset-2 hover:underline">
           ← Back to home

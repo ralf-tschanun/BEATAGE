@@ -213,6 +213,10 @@ export function SiteNavDrawer({
             <NavSection title="Settings">
               <NavRow item={settingsItem} onNavigate={closeDrawer} />
             </NavSection>
+
+            <NavSection title="Support">
+              <NavRow item={{ kind: "link", id: "help" }} onNavigate={closeDrawer} />
+            </NavSection>
           </nav>
 
           <div className="mt-auto border-t bg-muted/20 px-6 py-5">

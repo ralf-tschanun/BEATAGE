@@ -189,7 +189,7 @@ export function quizWizardSettingsSummary(state: CreateQuizWizardState): string 
   const scoring = modes.map(scoringModeLabel).join(" + ");
   const rangeBit = modes.includes("year_range")
     ? state.yearRangeTolerance === 0
-      ? " · exact year = 1 pt"
+      ? " · exact year = 1 yr"
       : ` · ±${state.yearRangeTolerance} years`
     : "";
   const chartsBit = modes.includes("chart_was_one")

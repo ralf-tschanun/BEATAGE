@@ -18,7 +18,7 @@ import { brandHtmlTitle, BRAND_NAME } from "@/lib/brand";
 
 export const metadata: Metadata = {
   title: brandHtmlTitle(),
-  description: "Guess the release year — host plays a track, participants score points.",
+  description: "Guess the release year — host plays a track, participants score years off.",
 };
 
 export default function RootLayout({

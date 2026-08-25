@@ -90,7 +90,7 @@ const YEAR_SCORING_OPTIONS: {
   {
     id: "year_distance",
     label: "Closer wins",
-    body: "Penalty points = years off the answer. Lowest score wins. No guess: worst submitted miss + 2, capped at 20.",
+    body: "Score = years off the answer. Lowest total wins. No guess: worst submitted miss + 2, capped at 20.",
   },
   {
     id: "year_range",
@@ -888,8 +888,8 @@ export function CreateQuizWizardForm({
                               Range (± years)
                             </Label>
                             <p className="text-sm text-muted-foreground">
-                              Exact hit scores the tolerance (or 1 at ±0). Each
-                              year off loses 1 point, down to 0.
+                              Exact hit scores the tolerance (or 1 yr at ±0). Each
+                              year off loses 1 yr, down to 0.
                             </p>
                             <div className="flex flex-wrap items-center gap-2">
                               {RANGE_TOLERANCE_PRESETS.map((preset) => (
@@ -1050,7 +1050,7 @@ export function CreateQuizWizardForm({
                           <AdminSwitchField
                             id="showResultDetails"
                             label="Show details in results list"
-                            description="Previous rounds show release years and expand to full round results. When off, players only see their points for each past round."
+                            description="Previous rounds show release years and expand to full round results. When off, players only see their years for each past round."
                             checked={wizard.showResultDetails}
                             onCheckedChange={(checked) =>
                               patchWizard({ showResultDetails: checked })

@@ -1,13 +1,14 @@
 import {
   CrownSimpleIcon,
   PlusCircleIcon,
+  QuestionIcon,
   StackIcon,
   TicketIcon,
   UsersThreeIcon,
 } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react/dist/lib/types";
 
-export type SiteNavItemId = "create" | "join" | "hosted" | "joined" | "plan";
+export type SiteNavItemId = "create" | "join" | "hosted" | "joined" | "plan" | "help";
 
 export type SiteNavItemConfig = {
   label: string;
@@ -45,5 +46,11 @@ export const SITE_NAV_ITEMS: Record<SiteNavItemId, SiteNavItemConfig> = {
     label: "Manage plan",
     icon: StackIcon,
     iconClassName: "bg-muted text-muted-foreground",
+  },
+  help: {
+    label: "Help",
+    href: "/help",
+    icon: QuestionIcon,
+    iconClassName: "bg-emerald-500/12 text-emerald-800 dark:text-emerald-300",
   },
 };
