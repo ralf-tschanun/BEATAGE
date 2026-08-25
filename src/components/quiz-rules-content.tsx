@@ -84,7 +84,7 @@ export function QuizRulesContent({
           : null}
       </p>
       <p>
-        <span className="text-muted-foreground">Answer year:</span>{" "}
+        <span className="text-muted-foreground">Release year:</span>{" "}
         {answerYearModeLabel(settings.answerYearMode)}
       </p>
       {settings.scoringModes.includes("chart_was_one") ? (

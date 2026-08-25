@@ -104,6 +104,28 @@ export function defaultQuizWizardState(hostName = ""): CreateQuizWizardState {
   };
 }
 
+/**
+ * Quick Live Quiz always starts from wizard defaults — never from a draft’s
+ * tweaked options. Only title / host / description / Last.fm are carried over.
+ */
+export function quickLiveQuizWizardState(opts: {
+  hostName: string;
+  title?: string;
+  description?: string;
+  lastfmUsername: string;
+}): CreateQuizWizardState {
+  const host = opts.hostName.trim();
+  return {
+    ...defaultQuizWizardState(host),
+    title: opts.title?.trim() ?? "",
+    description: opts.description?.trim() ?? "",
+    hostName: host,
+    playMode: "auto_lastfm",
+    lastfmUsername: opts.lastfmUsername.trim().replace(/^@/, ""),
+    step: 0,
+  };
+}
+
 export function quizWizardStepTitle(step: number): string {
   return QUIZ_WIZARD_STEP_TITLES[step] ?? "Quiz options";
 }
@@ -197,8 +219,8 @@ export function quizWizardSettingsSummary(state: CreateQuizWizardState): string 
     : "";
   const yearBasis =
     state.answerYearMode === "original_recording"
-      ? "Original recording"
-      : "This release / cover";
+      ? "Original release year"
+      : "Played Cover";
   const visibility = [
     state.showTitleArtist ? "title shown" : "title hidden",
     state.showCorrectAnswer ? "answer shown" : "answer hidden",

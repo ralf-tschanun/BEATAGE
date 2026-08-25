@@ -272,7 +272,7 @@ export function QuizList({
         </ul>
       )}
 
-      {rowAction ? (
+      {rowAction && visibleQuizzes.length > 0 ? (
         <p className="text-xs text-muted-foreground">
           {rowActionCopy(rowAction, "").swipeHint}{" "}
           <span className="max-[511px]:hidden">

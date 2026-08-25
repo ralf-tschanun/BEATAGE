@@ -133,6 +133,25 @@ export default function HelpPage() {
             </p>
           </HelpSection>
 
+          <HelpSection title="Scoring">
+            <ul className="list-disc space-y-2 pl-5">
+              <li>
+                <strong className="font-medium text-foreground">Closer wins</strong> —
+                each year off the answer counts against you. Lowest total wins.
+              </li>
+              <li>
+                <strong className="font-medium text-foreground">No guess</strong> —
+                in Closer wins, missing a round scores the worst submitted miss + 2
+                (capped at 20).
+              </li>
+              <li>
+                <strong className="font-medium text-foreground">Range</strong> —
+                you only score within ± years of the answer. Hit the year for max
+                points; outside the range you get nothing. Highest total wins.
+              </li>
+            </ul>
+          </HelpSection>
+
           <HelpSection title="Other options">
             <ul className="list-disc space-y-2 pl-5">
               <li>

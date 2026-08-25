@@ -275,8 +275,8 @@ export function clampAutoInterruptAfterEmptyRounds(value: unknown): number {
 }
 
 export function answerYearModeLabel(mode: AnswerYearMode | string): string {
-  if (mode === "original_recording") return "Original recording";
-  return "This release / cover";
+  if (mode === "original_recording") return "Original release year";
+  return "Played Cover";
 }
 
 export function quizSourceLabel(source: QuizSource | string): string {
