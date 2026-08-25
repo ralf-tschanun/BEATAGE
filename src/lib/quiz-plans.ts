@@ -5,7 +5,7 @@ export type QuizPlanLimits = {
   label: string;
   maxActiveQuizzes: number | null;
   maxMembers: number | null;
-  /** Curated songs per quiz; null = unlimited (Pro / unlocked). */
+  /** Curated songs per quiz; null = unlimited. */
   maxCuratedTracks: number | null;
   inactivityExpiryDays: number | null;
 };
@@ -23,22 +23,28 @@ export const QUIZ_PLANS: Record<PlanId, QuizPlanLimits> = {
     id: "plus",
     label: "Plus",
     maxActiveQuizzes: 5,
-    maxMembers: 20,
-    maxCuratedTracks: 10,
+    maxMembers: 30,
+    maxCuratedTracks: 30,
     inactivityExpiryDays: 183,
   },
   pro: {
     id: "pro",
     label: "Pro",
-    maxActiveQuizzes: null,
-    maxMembers: null,
-    maxCuratedTracks: null,
+    maxActiveQuizzes: 10,
+    maxMembers: 100,
+    maxCuratedTracks: 100,
     inactivityExpiryDays: null,
   },
 };
 
+/** One-time quiz unlock caps (does not count toward active quiz limit). */
+export const QUIZ_UNLOCK_LIMITS = {
+  maxMembers: 100,
+  maxCuratedTracks: 100,
+} as const;
+
 /** Default song cap when a quiz row has no max_rounds and is not unlocked. */
-export const DEFAULT_MAX_CURATED_TRACKS = 10;
+export const DEFAULT_MAX_CURATED_TRACKS = QUIZ_PLANS.free.maxCuratedTracks;
 
 export const ACTIVE_QUIZ_STATUSES = ["draft", "open", "playing"] as const;
 

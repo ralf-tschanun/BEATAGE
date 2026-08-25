@@ -1,7 +1,9 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { songWasSinglesNumberOne } from "@/lib/charts/was-number-one";
 import {
+  closerWinsNoGuessYearPenalty,
   correctYearForScoring,
+  submittedCloserWinsDistances,
   mergeQuizSettingsForStorage,
   readQuizSettingsRuntime,
   resolveQuizSettings,
@@ -12,6 +14,7 @@ import {
   isQuizLeaderboardRevealComplete,
   presentsLeaderboardAtEnd,
 } from "@/lib/quiz-settings";
+import { getQuizCuratedTrackLimit } from "@/lib/quiz-tracks";
 
 async function assertQuizHost(quizId: string, userId: string) {
   const admin = createAdminClient();
@@ -92,6 +95,12 @@ export async function startRoundForHost(
 
     const currentRoundNumber =
       typeof quiz.current_round_number === "number" ? quiz.current_round_number : 0;
+
+    // Plan / unlock round cap (also applies to live Spotify / Last.fm quizzes).
+    const roundLimit = await getQuizCuratedTrackLimit(quizId);
+    if (roundLimit != null && currentRoundNumber >= roundLimit) {
+      return { error: `ROUND_LIMIT:${roundLimit}` };
+    }
 
     let track: {
       spotify_track_id: string | null;
@@ -302,10 +311,75 @@ export async function closeRoundForHost(
 
     const { data: guesses } = await admin
       .from("beatage_guesses")
+      .select("id, user_id, guessed_year, guessed_was_number_one")
+      .eq("round_id", roundId);
+
+    const guessRows = (guesses ?? []) as Array<{
+      id: string;
+      user_id: string;
+      guessed_year: number | null;
+      guessed_was_number_one: boolean | null;
+    }>;
+
+    // Freeze skip penalty from submitted years only, before skip rows exist.
+    // All skippers share this one value — do not recompute after inserts.
+    const submittedYearGuesses = guessRows.filter(
+      (g) => g.guessed_year != null,
+    );
+    const noGuessYearPenalty = settings.scoringModes.includes("year_distance")
+      ? closerWinsNoGuessYearPenalty(
+          correct != null
+            ? submittedCloserWinsDistances(
+                submittedYearGuesses.map((g) => g.guessed_year),
+                correct,
+              )
+            : [],
+        )
+      : 0;
+
+    const { data: members } = await admin
+      .from("beatage_quiz_members")
+      .select("user_id, role")
+      .eq("quiz_id", round.quiz_id);
+
+    const submittedYearUserIds = new Set(
+      submittedYearGuesses.map((g) => g.user_id),
+    );
+    const skipUserIds = (
+      (members ?? []) as Array<{ user_id: string; role: string | null }>
+    )
+      .filter((m) => {
+        if (submittedYearUserIds.has(m.user_id)) return false;
+        if (m.role === "host" && !settings.hostParticipates) return false;
+        return true;
+      })
+      .map((m) => m.user_id);
+
+    const now = new Date().toISOString();
+
+    if (skipUserIds.length > 0) {
+      const skipRows = skipUserIds.map((userId) => ({
+        quiz_id: round.quiz_id,
+        round_id: roundId,
+        user_id: userId,
+        guessed_year: null,
+        guessed_was_number_one: null,
+        submitted_at: now,
+      }));
+      const { error: skipInsertError } = await admin
+        .from("beatage_guesses")
+        .upsert(skipRows, { onConflict: "round_id,user_id" });
+      if (skipInsertError) {
+        return { error: skipInsertError.message };
+      }
+    }
+
+    const { data: allGuesses } = await admin
+      .from("beatage_guesses")
       .select("id, guessed_year, guessed_was_number_one")
       .eq("round_id", roundId);
 
-    for (const guess of (guesses ?? []) as Array<{
+    for (const guess of (allGuesses ?? []) as Array<{
       id: string;
       guessed_year: number | null;
       guessed_was_number_one: boolean | null;
@@ -316,6 +390,7 @@ export async function closeRoundForHost(
         settings,
         wasNumberOne,
         guessedWasNumberOne: guess.guessed_was_number_one,
+        noGuessYearPenalty,
       });
       const { error: scoreError } = await admin
         .from("beatage_guesses")
@@ -330,7 +405,6 @@ export async function closeRoundForHost(
       }
     }
 
-    const now = new Date().toISOString();
     const { error: closeError } = await admin
       .from("beatage_rounds")
       .update({
@@ -398,8 +472,12 @@ export async function finishQuizForHost(
       .eq("status", "active")
       .maybeSingle();
 
+    // Finish must work at plan limits when a round is still open — close it first.
     if (active) {
-      return { error: "CLOSE_ROUND_FIRST" };
+      const closed = await closeRoundForHost(active.id, userId);
+      if (closed.error) {
+        return { error: closed.error };
+      }
     }
 
     const now = new Date().toISOString();

@@ -43,7 +43,13 @@ function mapError(message: string): string {
     const raw = message.split(":")[1];
     const n = Number(raw);
     const cap = Number.isFinite(n) && n > 0 ? n : 10;
-    return `This quiz already has the maximum of ${cap} songs.`;
+    return `TRACK_LIMIT:${cap}`;
+  }
+  if (message.includes("ROUND_LIMIT")) {
+    const raw = message.split(":")[1];
+    const n = Number(raw);
+    const cap = Number.isFinite(n) && n > 0 ? n : 10;
+    return `ROUND_LIMIT:${cap}`;
   }
   if (message.includes("NO_TRACK_AVAILABLE")) return "Add curated tracks before starting.";
   if (message.includes("ROUND_NOT_ACTIVE")) return "This round is not open for guesses.";
@@ -78,7 +84,8 @@ async function applyEmptyRoundStreak(
   const { count } = await admin
     .from("beatage_guesses")
     .select("id", { count: "exact", head: true })
-    .eq("round_id", closedRoundId);
+    .eq("round_id", closedRoundId)
+    .not("guessed_year", "is", null);
 
   const guessCount = count ?? 0;
   const emptyStreak =
@@ -338,11 +345,97 @@ export type AutoSpotifySyncState = {
   emptyStreak?: number;
 };
 
+/** Host-polled now-playing — avoids a second Last.fm fetch in the sync action. */
+export type LastfmNowPlayingHint =
+  | { playing: false }
+  | { playing: true; title: string; artist: string; albumArtUrl?: string | null };
+
+/** Host-polled now-playing — avoids a second Spotify fetch in the sync action. */
+export type SpotifyNowPlayingHint =
+  | { playing: false }
+  | {
+      playing: true;
+      spotifyTrackId: string;
+      title: string;
+      artist: string;
+      albumArtUrl?: string | null;
+      releaseYear?: number | null;
+      isPlaying?: boolean;
+    };
+
+function parseLastfmNowPlayingHint(
+  hint: LastfmNowPlayingHint | undefined,
+):
+  | { playing: false }
+  | {
+      playing: true;
+      title: string;
+      artist: string;
+      albumArtUrl: string | null;
+    }
+  | null {
+  if (!hint) return null;
+  if (hint.playing === false) return { playing: false };
+  const title = hint.title.trim().slice(0, 200);
+  const artist = hint.artist.trim().slice(0, 200);
+  if (!title || !artist) return null;
+  const albumArtUrl =
+    typeof hint.albumArtUrl === "string" && hint.albumArtUrl.trim()
+      ? hint.albumArtUrl.trim().slice(0, 500)
+      : null;
+  return { playing: true, title, artist, albumArtUrl };
+}
+
+function parseSpotifyNowPlayingHint(
+  hint: SpotifyNowPlayingHint | undefined,
+):
+  | { playing: false }
+  | {
+      playing: true;
+      spotifyTrackId: string;
+      title: string;
+      artist: string;
+      albumArtUrl: string | null;
+      releaseYear: number | null;
+      isPlaying: boolean;
+    }
+  | null {
+  if (!hint) return null;
+  if (hint.playing === false) return { playing: false };
+  const spotifyTrackId = hint.spotifyTrackId.trim();
+  if (!/^[A-Za-z0-9]{10,32}$/.test(spotifyTrackId)) return null;
+  const title = hint.title.trim().slice(0, 200);
+  const artist = hint.artist.trim().slice(0, 200);
+  if (!title || !artist) return null;
+  const albumArtUrl =
+    typeof hint.albumArtUrl === "string" && hint.albumArtUrl.trim()
+      ? hint.albumArtUrl.trim().slice(0, 500)
+      : null;
+  const year = hint.releaseYear;
+  const releaseYear =
+    typeof year === "number" && Number.isFinite(year) && year >= 1900 && year <= 2100
+      ? Math.trunc(year)
+      : null;
+  return {
+    playing: true,
+    spotifyTrackId,
+    title,
+    artist,
+    albumArtUrl,
+    releaseYear,
+    isPlaying: hint.isPlaying !== false,
+  };
+}
+
 /** Close active round if needed, ensure curated track exists, start round for now-playing. */
 export async function syncAutoSpotifyRoundAction(
   quizId: string,
   joinCode: string,
-  opts?: { forceClose?: boolean; openNewRound?: boolean },
+  opts?: {
+    forceClose?: boolean;
+    openNewRound?: boolean;
+    nowPlaying?: SpotifyNowPlayingHint;
+  },
 ): Promise<AutoSpotifySyncState> {
   const id = quizId.trim();
   const code = joinCode.trim().toUpperCase();
@@ -379,7 +472,57 @@ export async function syncAutoSpotifyRoundAction(
   }
 
   const { getCurrentlyPlayingForUser } = await import("@/lib/spotify-connect");
-  const nowPlaying = await getCurrentlyPlayingForUser();
+  const hinted = parseSpotifyNowPlayingHint(opts?.nowPlaying);
+  // Close-only: no Spotify round-trip — host already decided from the poll.
+  if (opts?.forceClose && !openNewRound && hinted?.playing !== true) {
+    const { data: active } = await admin
+      .from("beatage_rounds")
+      .select("id")
+      .eq("quiz_id", id)
+      .eq("status", "active")
+      .maybeSingle();
+    if (active?.id) {
+      const closed = await closeRoundForHost(active.id, user.id);
+      if (closed.error) return { error: mapError(closed.error) };
+      const streak = await applyEmptyRoundStreak(
+        admin,
+        id,
+        active.id,
+        rawSettings,
+      );
+      revalidatePath(`/q/${code}`);
+      return {
+        ok: true,
+        closedRound: true,
+        nothingPlaying: hinted?.playing === false,
+        interrupted: streak.interrupted,
+        emptyStreak: streak.emptyStreak,
+      };
+    }
+    return { ok: true, nothingPlaying: true };
+  }
+
+  let nowPlaying: Awaited<ReturnType<typeof getCurrentlyPlayingForUser>>;
+  if (hinted) {
+    nowPlaying = hinted.playing
+      ? {
+          ok: true,
+          playing: true,
+          track: {
+            isPlaying: hinted.isPlaying,
+            spotifyTrackId: hinted.spotifyTrackId,
+            title: hinted.title,
+            artist: hinted.artist,
+            albumArtUrl: hinted.albumArtUrl,
+            releaseYear: hinted.releaseYear,
+            progressMs: 0,
+            durationMs: 0,
+          },
+        }
+      : { ok: true, playing: false };
+  } else {
+    nowPlaying = await getCurrentlyPlayingForUser();
+  }
   if (!nowPlaying.ok) {
     return { error: nowPlaying.message, code: nowPlaying.code };
   }
@@ -632,6 +775,295 @@ export async function skipSpotifyNextAction(
   if (!skipped.ok) {
     return { error: skipped.message, code: skipped.code };
   }
+  return { ok: true };
+}
+
+/** Close active round if needed, add track from Last.fm now-playing, start round. */
+export async function syncLastfmLiveRoundAction(
+  quizId: string,
+  joinCode: string,
+  opts?: {
+    forceClose?: boolean;
+    openNewRound?: boolean;
+    nowPlaying?: LastfmNowPlayingHint;
+  },
+): Promise<AutoSpotifySyncState> {
+  const id = quizId.trim();
+  const code = joinCode.trim().toUpperCase();
+  if (!id) return { error: "Missing quiz id." };
+
+  const openNewRound = opts?.openNewRound !== false;
+
+  const { user } = await ensureAnonymousSession();
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const admin = createAdminClient();
+
+  const { data: quizRow } = await admin
+    .from("beatage_quizzes")
+    .select("host_user_id, status, settings, source")
+    .eq("id", id)
+    .maybeSingle();
+  if (!quizRow || quizRow.host_user_id !== user.id) {
+    return { error: mapError("NOT_HOST") };
+  }
+  if (quizRow.status === "finished" || quizRow.status === "expired") {
+    return { error: mapError("QUIZ_FINISHED") };
+  }
+  if (quizRow.source !== "lastfm_live") {
+    return { error: "This quiz is not in Last.fm live mode." };
+  }
+
+  let rawSettings = (quizRow as { settings?: unknown }).settings;
+  const runtime = readQuizSettingsRuntime(rawSettings);
+  const settings = resolveQuizSettings(rawSettings);
+  if (runtime.autoInterrupted && openNewRound) {
+    return {
+      ok: true,
+      interrupted: true,
+      emptyStreak: runtime.autoEmptyStreak ?? 0,
+      startedRound: false,
+      closedRound: false,
+    };
+  }
+
+  const { getLastfmCurrentlyPlaying, lastfmTrackKey } = await import("@/lib/lastfm");
+  const hinted = parseLastfmNowPlayingHint(opts?.nowPlaying);
+  // Close-only: no Last.fm round-trip — host already decided from the poll.
+  if (opts?.forceClose && !openNewRound && hinted?.playing !== true) {
+    const { data: active } = await admin
+      .from("beatage_rounds")
+      .select("id")
+      .eq("quiz_id", id)
+      .eq("status", "active")
+      .maybeSingle();
+    if (active?.id) {
+      const closed = await closeRoundForHost(active.id, user.id);
+      if (closed.error) return { error: mapError(closed.error) };
+      const streak = await applyEmptyRoundStreak(
+        admin,
+        id,
+        active.id,
+        rawSettings,
+      );
+      revalidatePath(`/q/${code}`);
+      return {
+        ok: true,
+        closedRound: true,
+        nothingPlaying: hinted?.playing === false,
+        interrupted: streak.interrupted,
+        emptyStreak: streak.emptyStreak,
+      };
+    }
+    return { ok: true, nothingPlaying: true };
+  }
+
+  let nowPlaying: Awaited<ReturnType<typeof getLastfmCurrentlyPlaying>>;
+  if (hinted) {
+    nowPlaying = hinted.playing
+      ? {
+          ok: true,
+          playing: true,
+          track: {
+            trackKey: lastfmTrackKey(hinted.title, hinted.artist),
+            title: hinted.title,
+            artist: hinted.artist,
+            albumArtUrl: hinted.albumArtUrl,
+            isPlaying: true,
+          },
+        }
+      : { ok: true, playing: false };
+  } else {
+    nowPlaying = await getLastfmCurrentlyPlaying(settings.lastfmUsername);
+  }
+  if (!nowPlaying.ok) {
+    return { error: nowPlaying.message, code: nowPlaying.code };
+  }
+  if (!nowPlaying.playing) {
+    if (opts?.forceClose) {
+      const { data: active } = await admin
+        .from("beatage_rounds")
+        .select("id")
+        .eq("quiz_id", id)
+        .eq("status", "active")
+        .maybeSingle();
+      if (active?.id) {
+        const closed = await closeRoundForHost(active.id, user.id);
+        if (closed.error) return { error: mapError(closed.error) };
+        const streak = await applyEmptyRoundStreak(
+          admin,
+          id,
+          active.id,
+          rawSettings,
+        );
+        const { data: refreshed } = await admin
+          .from("beatage_quizzes")
+          .select("settings")
+          .eq("id", id)
+          .maybeSingle();
+        rawSettings = refreshed?.settings ?? rawSettings;
+        revalidatePath(`/q/${code}`);
+        return {
+          ok: true,
+          closedRound: true,
+          nothingPlaying: true,
+          interrupted: streak.interrupted,
+          emptyStreak: streak.emptyStreak,
+        };
+      }
+    }
+    return { ok: true, nothingPlaying: true };
+  }
+
+  const track = nowPlaying.track;
+
+  const { data: active } = await admin
+    .from("beatage_rounds")
+    .select("id, track_name, artist_name")
+    .eq("quiz_id", id)
+    .eq("status", "active")
+    .maybeSingle();
+
+  let closedRound = false;
+  let interrupted = Boolean(runtime.autoInterrupted);
+  let emptyStreak = runtime.autoEmptyStreak ?? 0;
+  if (active?.id) {
+    const activeKey = lastfmTrackKey(
+      String(active.track_name ?? ""),
+      String(active.artist_name ?? ""),
+    );
+    const sameTrack = activeKey === track.trackKey;
+    if (!sameTrack || opts?.forceClose) {
+      const closed = await closeRoundForHost(active.id, user.id);
+      if (closed.error) return { error: mapError(closed.error) };
+      closedRound = true;
+      const streak = await applyEmptyRoundStreak(
+        admin,
+        id,
+        active.id,
+        rawSettings,
+      );
+      interrupted = streak.interrupted;
+      emptyStreak = streak.emptyStreak;
+      const { data: refreshed } = await admin
+        .from("beatage_quizzes")
+        .select("settings")
+        .eq("id", id)
+        .maybeSingle();
+      rawSettings = refreshed?.settings ?? rawSettings;
+    } else {
+      return {
+        ok: true,
+        trackTitle: track.title,
+        trackArtist: track.artist,
+        startedRound: false,
+        closedRound: false,
+      };
+    }
+  }
+
+  if (!openNewRound) {
+    revalidatePath(`/q/${code}`);
+    return {
+      ok: true,
+      trackTitle: track.title,
+      trackArtist: track.artist,
+      closedRound,
+      startedRound: false,
+      interrupted,
+      emptyStreak,
+    };
+  }
+
+  if (interrupted) {
+    revalidatePath(`/q/${code}`);
+    return {
+      ok: true,
+      trackTitle: track.title,
+      trackArtist: track.artist,
+      closedRound,
+      startedRound: false,
+      interrupted: true,
+      emptyStreak,
+    };
+  }
+
+  const { createClient } = await import("@/lib/supabase/server");
+  const supabase = await createClient();
+  const addResult = await addCuratedTrackToQuiz(supabase, id, {
+    title: track.title,
+    artist: track.artist,
+    albumArtUrl: track.albumArtUrl ?? undefined,
+  });
+  if (addResult.error) {
+    return { error: mapError(addResult.error) };
+  }
+  const curatedTrackId = addResult.trackId;
+  if (!curatedTrackId) {
+    return { error: "Could not save the track to this quiz." };
+  }
+
+  const started = await startRoundForHost(id, user.id, curatedTrackId);
+  if (started.error) {
+    return { error: mapError(started.error) };
+  }
+
+  revalidatePath(`/q/${code}`);
+  return {
+    ok: true,
+    trackId: curatedTrackId,
+    trackTitle: track.title,
+    trackArtist: track.artist,
+    closedRound,
+    startedRound: true,
+    interrupted: false,
+    emptyStreak,
+  };
+}
+
+/** Host updates the Last.fm username stored on a lastfm_live quiz. */
+export async function updateLastfmUsernameAction(
+  quizId: string,
+  joinCode: string,
+  username: string,
+): Promise<AutoSpotifySyncState> {
+  const id = quizId.trim();
+  const code = joinCode.trim().toUpperCase();
+  if (!id) return { error: "Missing quiz id." };
+
+  const { normalizeLastfmUsername } = await import("@/lib/lastfm");
+  const lastfmUsername = normalizeLastfmUsername(username);
+  if (!lastfmUsername) {
+    return { error: "Enter your Last.fm username." };
+  }
+
+  const { user } = await ensureAnonymousSession();
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const admin = createAdminClient();
+  const { data: quizRow } = await admin
+    .from("beatage_quizzes")
+    .select("host_user_id, settings, source")
+    .eq("id", id)
+    .maybeSingle();
+  if (!quizRow || quizRow.host_user_id !== user.id) {
+    return { error: mapError("NOT_HOST") };
+  }
+  if (quizRow.source !== "lastfm_live") {
+    return { error: "This quiz is not in Last.fm live mode." };
+  }
+
+  const settings = resolveQuizSettings(quizRow.settings);
+  const runtime = readQuizSettingsRuntime(quizRow.settings);
+  await admin
+    .from("beatage_quizzes")
+    .update({
+      settings: mergeQuizSettingsForStorage(
+        { ...settings, lastfmUsername },
+        runtime,
+      ),
+    })
+    .eq("id", id);
+
+  revalidatePath(`/q/${code}`);
   return { ok: true };
 }
 

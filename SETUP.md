@@ -121,6 +121,8 @@ Start with `POLAR_SERVER=sandbox`, test checkout, then switch to `production`.
 5. **Settings → Domains** → add `beatage.gosmooth.eu`
 6. Complete Porkbun CNAME (Phase 1)
 7. Set `NEXT_PUBLIC_SITE_URL=https://beatage.gosmooth.eu` → redeploy
+8. Set `CRON_SECRET` (random string) — hourly job deletes expired quizzes via
+   `/api/cron/purge-expired-quizzes` (see `vercel.json`)
 
 ### Spotify Connect (host click-to-play)
 
@@ -137,6 +139,18 @@ playback uses Spotify Connect and needs Redirect URIs in the Spotify Dashboard:
 4. Vercel: set `NEXT_PUBLIC_SITE_URL=https://beatage.gosmooth.eu` (required).
    The app never falls back to `VERCEL_URL` / `*.vercel.app` for OAuth redirects.
 5. Host needs Spotify Premium + the Spotify app open (active device).
+
+### Live Spotify via Last.fm (recommended — unlimited hosts)
+
+Spotify Connect OAuth is limited to ~5 allowlisted users in Development Mode.
+Last.fm live mode avoids that: Spotify scrobbles to Last.fm, BEATAGE polls Now Playing.
+
+1. Create a Last.fm API account: https://www.last.fm/api/account/create
+2. Set `LASTFM_API_KEY` in `.env.local` and Vercel
+3. Host: Spotify app → Settings → Social / Connections → connect Last.fm
+4. Create quiz → **Live Spotify (Last.fm)** → enter Last.fm username
+5. Run migration `010_beatage_lastfm_live_source.sql` on Supabase
+6. Start any Spotify playlist — rounds open after a 5s debounce
 
 ---
 

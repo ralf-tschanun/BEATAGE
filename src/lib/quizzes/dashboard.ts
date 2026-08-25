@@ -19,6 +19,8 @@ export type DashboardQuiz = {
   current_round_number?: number;
   my_display_name?: string | null;
   member_count?: number | null;
+  /** Final placement when the quiz is finished/expired; null if unknown or not placed. */
+  my_rank?: number | null;
 };
 
 export type DashboardIdentity = {
@@ -35,8 +37,61 @@ type DashboardRpcResult = {
   active_hosted_count: number;
 };
 
+function parsePlanId(value: unknown): PlanId {
+  return value === "plus" || value === "pro" ? value : "free";
+}
+
+/**
+ * Lightweight identity + plan for quiz room pages.
+ * Avoids get_beatage_dashboard (full hosted/joined lists) on every /q refresh.
+ */
+export async function getQuizPageShellData() {
+  const { supabase, user, supabaseReachable } = await getOptionalUser();
+
+  if (!user) {
+    return {
+      identity: null as DashboardIdentity | null,
+      plan: getQuizPlanLimits("free"),
+      supabaseReachable,
+    };
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("display_name, plan")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const plan = getQuizPlanLimits(parsePlanId(profile?.plan));
+  const displayName = resolveAccountDisplayName(user, profile?.display_name);
+  const repairedName = shouldRepairHostPollutedProfile(
+    profile?.display_name,
+    user,
+  );
+  if (repairedName) {
+    await supabase
+      .from("profiles")
+      .update({
+        display_name: repairedName,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id);
+  }
+
+  return {
+    identity: {
+      userId: user.id,
+      displayName: repairedName ?? displayName,
+      email: user.email ?? null,
+      isAnonymous: Boolean(user.is_anonymous),
+    } satisfies DashboardIdentity,
+    plan,
+    supabaseReachable,
+  };
+}
+
 export async function getQuizDashboardData() {
-  const { supabase, user } = await getOptionalUser();
+  const { supabase, user, supabaseReachable } = await getOptionalUser();
 
   if (!user) {
     const limits = getQuizPlanLimits("free");
@@ -48,6 +103,7 @@ export async function getQuizDashboardData() {
       plan: limits,
       activeHostedCount: 0,
       canCreate: true,
+      supabaseReachable,
     };
   }
 
@@ -57,6 +113,21 @@ export async function getQuizDashboardData() {
   ]);
 
   if (error) {
+    if (
+      /fetch failed|network|enotfound|econnrefused|etimedout/i.test(error.message)
+    ) {
+      const limits = getQuizPlanLimits("free");
+      return {
+        user: null,
+        identity: null as DashboardIdentity | null,
+        hosted: [] as DashboardQuiz[],
+        joined: [] as DashboardQuiz[],
+        plan: limits,
+        activeHostedCount: 0,
+        canCreate: true,
+        supabaseReachable: false,
+      };
+    }
     throw new Error(error.message);
   }
 
@@ -94,5 +165,6 @@ export async function getQuizDashboardData() {
     plan,
     activeHostedCount,
     canCreate,
+    supabaseReachable: true,
   };
 }

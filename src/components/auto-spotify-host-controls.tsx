@@ -8,10 +8,13 @@ import {
   skipSpotifyNextAction,
   syncAutoSpotifyRoundAction,
 } from "@/app/actions/quiz-round";
+import { QuizPlanLimitPrompt } from "@/components/quiz-plan-limit-prompt";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { isQuizPlanLimitError } from "@/lib/quiz-plan-limits";
+import type { PlanId } from "@/lib/quiz-plans";
 import { cn } from "@/lib/utils";
 
-const POLL_MS = 2500;
+const POLL_MS = 5000;
 const DEBOUNCE_MS = 5000;
 
 type AutoSpotifyHostControlsProps = {
@@ -21,6 +24,11 @@ type AutoSpotifyHostControlsProps = {
   /** Server-side pause (manual or after consecutive empty rounds). */
   autoInterrupted?: boolean;
   emptyStreakThreshold?: number;
+  planId?: PlanId;
+  isAnonymous?: boolean;
+  unlocked?: boolean;
+  roundLimit?: number | null;
+  currentRoundNumber?: number;
 };
 
 type NowPlayingTrack = {
@@ -28,6 +36,8 @@ type NowPlayingTrack = {
   spotifyTrackId: string;
   title: string;
   artist: string;
+  albumArtUrl?: string | null;
+  releaseYear?: number | null;
 };
 
 /** Host Auto Spotify: poll now-playing and open/close rounds with a 5s debounce. */
@@ -37,6 +47,11 @@ export function AutoSpotifyHostControls({
   disabled = false,
   autoInterrupted = false,
   emptyStreakThreshold = 3,
+  planId = "free",
+  isAnonymous = false,
+  unlocked = false,
+  roundLimit = null,
+  currentRoundNumber = 0,
 }: AutoSpotifyHostControlsProps) {
   const router = useRouter();
   const [connected, setConnected] = useState<boolean | null>(null);
@@ -44,6 +59,7 @@ export function AutoSpotifyHostControls({
   const [nowPlaying, setNowPlaying] = useState<NowPlayingTrack | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [planLimitError, setPlanLimitError] = useState<string | null>(null);
 
   const pendingSpotifyIdRef = useRef<string | null>(null);
   const lastSpotifyIdRef = useRef<string | null>(null);
@@ -64,13 +80,35 @@ export function AutoSpotifyHostControls({
   }, []);
 
   const runSync = useCallback(
-    async (opts?: { forceClose?: boolean; openNewRound?: boolean }) => {
+    async (opts?: {
+      forceClose?: boolean;
+      openNewRound?: boolean;
+      nowPlaying?:
+        | { playing: false }
+        | {
+            playing: true;
+            spotifyTrackId: string;
+            title: string;
+            artist: string;
+            albumArtUrl?: string | null;
+            releaseYear?: number | null;
+            isPlaying?: boolean;
+          };
+    }) => {
       setBusy(true);
       setError(null);
       try {
         const result = await syncAutoSpotifyRoundAction(quizId, joinCode, opts);
         if (result.error) {
-          setError(result.error);
+          if (isQuizPlanLimitError(result.error)) {
+            setPlanLimitError(result.error);
+            setError(null);
+            setStatus(
+              "Round limit reached — unlock, change plan, or finish the quiz.",
+            );
+          } else {
+            setError(result.error);
+          }
           return result;
         }
         if (result.interrupted) {
@@ -139,7 +177,18 @@ export function AutoSpotifyHostControls({
               return;
             }
             pendingSpotifyIdRef.current = null;
-            await runSync();
+            await runSync({
+              openNewRound: true,
+              nowPlaying: {
+                playing: true,
+                spotifyTrackId: data.track.spotifyTrackId,
+                title: data.track.title,
+                artist: data.track.artist,
+                albumArtUrl: data.track.albumArtUrl ?? null,
+                releaseYear: data.track.releaseYear ?? null,
+                isPlaying: data.track.isPlaying,
+              },
+            });
           } catch {
             setError("Could not start the round from Spotify.");
           }
@@ -171,6 +220,10 @@ export function AutoSpotifyHostControls({
     };
   }, []);
 
+  const atRoundLimit =
+    Boolean(planLimitError) ||
+    (roundLimit != null && currentRoundNumber >= roundLimit);
+
   useEffect(() => {
     if (autoInterrupted) {
       clearDebounce();
@@ -179,7 +232,7 @@ export function AutoSpotifyHostControls({
   }, [autoInterrupted, clearDebounce]);
 
   useEffect(() => {
-    if (autoInterrupted || disabled || connected !== true) {
+    if (autoInterrupted || disabled || atRoundLimit || connected !== true) {
       clearDebounce();
       return;
     }
@@ -216,7 +269,11 @@ export function AutoSpotifyHostControls({
             clearDebounce();
             pendingSpotifyIdRef.current = null;
             setStatus("Track ended — closing round…");
-            await runSync({ forceClose: true, openNewRound: false });
+            await runSync({
+              forceClose: true,
+              openNewRound: false,
+              nowPlaying: { playing: false },
+            });
           } else {
             setStatus("Nothing playing — start a song in Spotify");
           }
@@ -270,6 +327,7 @@ export function AutoSpotifyHostControls({
       clearDebounce();
     };
   }, [
+    atRoundLimit,
     autoInterrupted,
     disabled,
     connected,
@@ -386,6 +444,19 @@ export function AutoSpotifyHostControls({
         <p className="text-sm text-muted-foreground">{status}</p>
       </div>
 
+      {atRoundLimit ? (
+        <QuizPlanLimitPrompt
+          quizId={quizId}
+          joinCode={joinCode}
+          message={planLimitError}
+          kind="rounds"
+          cap={roundLimit}
+          planId={planId}
+          isAnonymous={isAnonymous}
+          unlocked={unlocked}
+        />
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
@@ -400,7 +471,7 @@ export function AutoSpotifyHostControls({
         <Button
           type="button"
           variant="outline"
-          disabled={disabled || busy || autoInterrupted}
+          disabled={disabled || busy || autoInterrupted || atRoundLimit}
           onClick={() => {
             void onPlayNext();
           }}
@@ -410,7 +481,11 @@ export function AutoSpotifyHostControls({
         <Button
           type="button"
           variant="outline"
-          disabled={disabled || busy}
+          disabled={
+            disabled ||
+            busy ||
+            (autoInterrupted ? atRoundLimit : false)
+          }
           onClick={() => {
             void onInterruptOrContinue();
           }}

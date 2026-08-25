@@ -1,3 +1,4 @@
+import { BRAND_NAME } from "@/lib/brand";
 import type {
   AnswerYearMode,
   ChartCountryCode,
@@ -18,6 +19,16 @@ import {
 
 export const CREATE_QUIZ_WIZARD_STORAGE_KEY = "beatage.create-quiz-wizard.v1";
 
+/** Survives draft clear — Last.fm username is reused across quizzes. */
+export const LASTFM_USERNAME_STORAGE_KEY = "beatage.lastfm-username.v1";
+
+/** Empty title → brand default so hosts can leave the field blank. */
+export const DEFAULT_QUIZ_TITLE = `${BRAND_NAME} Quiz`;
+
+export function effectiveQuizTitle(title: string): string {
+  return title.trim() || DEFAULT_QUIZ_TITLE;
+}
+
 export type DraftQuizSong = {
   title: string;
   artist: string;
@@ -25,15 +36,17 @@ export type DraftQuizSong = {
   releaseYear?: number | null;
 };
 
-export type QuizPlayMode = "curate" | "auto_spotify";
+export type QuizPlayMode = "curate" | "auto_lastfm" | "auto_spotify";
 
 export type CreateQuizWizardState = {
   step: number;
   hostName: string;
   title: string;
   description: string;
-  /** Step 2: curated playlist vs Auto Spotify live rounds. */
+  /** Step 2: curated playlist vs live auto rounds. */
   playMode: QuizPlayMode;
+  /** Last.fm username when playMode is auto_lastfm. */
+  lastfmUsername: string;
   draftSongs: DraftQuizSong[];
   chartCountries: ChartCountryCode[];
   scoringModes: ScoringModeId[];
@@ -55,7 +68,7 @@ export type CreateQuizWizardState = {
   presentLeaderboardAtEnd: boolean;
   /** Used when presentLeaderboardAtEnd is on (immediate | last_to_first). */
   overallReveal: Exclude<OverallReveal, "after_quiz">;
-  /** Auto Spotify: pause after this many consecutive empty rounds (1–10). */
+  /** Live auto: pause after this many consecutive empty rounds (1–10). */
   autoInterruptAfterEmptyRounds: number;
 };
 
@@ -63,7 +76,6 @@ export const QUIZ_WIZARD_STEP_TITLES = [
   "Setup",
   "Playlist mode",
   "Quiz options",
-  "Review",
 ] as const;
 
 export function defaultQuizWizardState(hostName = ""): CreateQuizWizardState {
@@ -72,7 +84,8 @@ export function defaultQuizWizardState(hostName = ""): CreateQuizWizardState {
     hostName: hostName.trim(),
     title: "",
     description: "",
-    playMode: "curate",
+    playMode: "auto_lastfm",
+    lastfmUsername: "",
     draftSongs: [{ title: "", artist: "", previewUrl: "", releaseYear: null }],
     chartCountries: [...DEFAULT_QUIZ_SETTINGS.chartCountries],
     scoringModes: [...DEFAULT_QUIZ_SETTINGS.scoringModes],
@@ -81,10 +94,10 @@ export function defaultQuizWizardState(hostName = ""): CreateQuizWizardState {
     answerYearMode: DEFAULT_QUIZ_SETTINGS.answerYearMode,
     showTitleArtist: DEFAULT_QUIZ_SETTINGS.showTitleArtist,
     showCorrectAnswer: DEFAULT_QUIZ_SETTINGS.showCorrectAnswer,
-    showOverallResults: DEFAULT_QUIZ_SETTINGS.showOverallResults,
-    showResultDetails: DEFAULT_QUIZ_SETTINGS.showResultDetails,
-    showOthersInPastResults: DEFAULT_QUIZ_SETTINGS.showOthersInPastResults,
-    presentLeaderboardAtEnd: false,
+    showOverallResults: false,
+    showResultDetails: true,
+    showOthersInPastResults: false,
+    presentLeaderboardAtEnd: true,
     overallReveal: "last_to_first",
     autoInterruptAfterEmptyRounds:
       DEFAULT_QUIZ_SETTINGS.autoInterruptAfterEmptyRounds,
@@ -92,7 +105,7 @@ export function defaultQuizWizardState(hostName = ""): CreateQuizWizardState {
 }
 
 export function quizWizardStepTitle(step: number): string {
-  return QUIZ_WIZARD_STEP_TITLES[step] ?? "Review";
+  return QUIZ_WIZARD_STEP_TITLES[step] ?? "Quiz options";
 }
 
 export function filledQuizSongs(state: CreateQuizWizardState): DraftQuizSong[] {
@@ -101,12 +114,17 @@ export function filledQuizSongs(state: CreateQuizWizardState): DraftQuizSong[] {
 
 export function validateQuizWizardStep(state: CreateQuizWizardState, step: number): string | null {
   if (step === 0) {
-    if (!state.title.trim()) return "Please enter a quiz title.";
     if (!state.hostName.trim()) return "Please enter your name.";
     return null;
   }
 
   if (step === 1) {
+    if (state.playMode === "auto_lastfm") {
+      if (!state.lastfmUsername.trim()) {
+        return "Enter your Last.fm username (link Spotify → Last.fm in the Spotify app first).";
+      }
+      return null;
+    }
     if (state.playMode === "auto_spotify") {
       return null;
     }
@@ -125,8 +143,13 @@ export function validateQuizWizardStep(state: CreateQuizWizardState, step: numbe
   }
 
   if (step === 2) {
-    if (state.chartCountries.length < 1) return "Select at least one chart country.";
     const modes = normalizeScoringModes(state.scoringModes);
+    if (
+      modes.includes("chart_was_one") &&
+      state.chartCountries.length < 1
+    ) {
+      return "Select at least one chart country.";
+    }
     if (modes.length < 1) return "Select at least one scoring mode.";
     if (modes.includes("year_distance") && modes.includes("year_range")) {
       return "Closer wins and Range cannot be combined.";
@@ -141,7 +164,7 @@ export function validateQuizWizardStep(state: CreateQuizWizardState, step: numbe
         return `Range must be between ±${YEAR_RANGE_TOLERANCE_MIN} and ±${YEAR_RANGE_TOLERANCE_MAX} years.`;
       }
     }
-    if (state.playMode === "auto_spotify") {
+    if (state.playMode === "auto_lastfm" || state.playMode === "auto_spotify") {
       const n = state.autoInterruptAfterEmptyRounds;
       if (!Number.isFinite(n) || n < 1 || n > 10) {
         return "Interrupt after empty songs must be between 1 and 10.";
@@ -153,17 +176,24 @@ export function validateQuizWizardStep(state: CreateQuizWizardState, step: numbe
   return null;
 }
 
+function playModeLabel(mode: QuizPlayMode): string {
+  if (mode === "auto_lastfm") return "Live Spotify (Last.fm)";
+  if (mode === "auto_spotify") return "Auto Spotify Connect";
+  return "Curated playlist";
+}
+
 export function quizWizardSettingsSummary(state: CreateQuizWizardState): string {
-  const mode =
-    state.playMode === "auto_spotify" ? "Auto Spotify" : "Curated playlist";
+  const mode = playModeLabel(state.playMode);
   const songs = filledQuizSongs(state).length;
-  const countries = state.chartCountries.join(", ");
   const modes = normalizeScoringModes(state.scoringModes);
   const scoring = modes.map(scoringModeLabel).join(" + ");
   const rangeBit = modes.includes("year_range")
     ? state.yearRangeTolerance === 0
       ? " · exact year = 1 pt"
       : ` · ±${state.yearRangeTolerance} years`
+    : "";
+  const chartsBit = modes.includes("chart_was_one")
+    ? ` · Charts: ${state.chartCountries.join(", ") || "—"}`
     : "";
   const yearBasis =
     state.answerYearMode === "original_recording"
@@ -177,10 +207,10 @@ export function quizWizardSettingsSummary(state: CreateQuizWizardState): string 
         ? "present leaderboard last-to-first"
         : "present leaderboard all at once"
       : state.showOverallResults
-        ? "leaderboard on"
-        : "leaderboard off",
+        ? "live leaderboard on"
+        : "live leaderboard off",
     state.showResultDetails ? "result details on" : "result details off",
-    state.showResultDetails && !state.presentLeaderboardAtEnd
+    state.showResultDetails
       ? state.showOthersInPastResults
         ? "others in past results on"
         : "others in past results off"
@@ -188,17 +218,46 @@ export function quizWizardSettingsSummary(state: CreateQuizWizardState): string 
   ]
     .filter(Boolean)
     .join(", ");
-  const autoBit =
-    state.playMode === "auto_spotify"
-      ? ` · Auto-interrupt after ${state.autoInterruptAfterEmptyRounds} empty`
+  const isLive =
+    state.playMode === "auto_lastfm" || state.playMode === "auto_spotify";
+  const autoBit = isLive
+    ? ` · Auto-interrupt after ${state.autoInterruptAfterEmptyRounds} empty`
+    : "";
+  const lastfmBit =
+    state.playMode === "auto_lastfm" && state.lastfmUsername.trim()
+      ? ` · Last.fm @${state.lastfmUsername.trim().replace(/^@/, "")}`
       : "";
-  if (state.playMode === "auto_spotify") {
-    return `${mode} · ${yearBasis} · Charts: ${countries} · Scoring: ${scoring}${rangeBit} · ${visibility}${autoBit}`;
+  if (isLive) {
+    return `${mode}${lastfmBit} · ${yearBasis}${chartsBit} · Scoring: ${scoring}${rangeBit} · ${visibility}${autoBit}`;
   }
-  return `${mode} · ${songs} song${songs === 1 ? "" : "s"} · ${yearBasis} · Charts: ${countries} · Scoring: ${scoring}${rangeBit} · ${visibility}`;
+  return `${mode} · ${songs} song${songs === 1 ? "" : "s"} · ${yearBasis}${chartsBit} · Scoring: ${scoring}${rangeBit} · ${visibility}`;
 }
 
 type PersistedQuizWizardState = CreateQuizWizardState;
+
+export function loadRememberedLastfmUsername(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const raw = window.localStorage.getItem(LASTFM_USERNAME_STORAGE_KEY);
+    if (!raw) return "";
+    const trimmed = raw.trim().replace(/^@/, "");
+    return trimmed;
+  } catch {
+    return "";
+  }
+}
+
+/** Persists non-empty Last.fm usernames so they survive draft clear / quiz create. */
+export function saveRememberedLastfmUsername(username: string): void {
+  if (typeof window === "undefined") return;
+  const normalized = username.trim().replace(/^@/, "");
+  if (!normalized) return;
+  try {
+    window.localStorage.setItem(LASTFM_USERNAME_STORAGE_KEY, normalized);
+  } catch {
+    // ignore quota errors
+  }
+}
 
 export function saveQuizWizardState(state: CreateQuizWizardState): void {
   if (typeof window === "undefined") return;
@@ -207,6 +266,9 @@ export function saveQuizWizardState(state: CreateQuizWizardState): void {
       CREATE_QUIZ_WIZARD_STORAGE_KEY,
       JSON.stringify(state satisfies PersistedQuizWizardState),
     );
+    if (state.lastfmUsername.trim()) {
+      saveRememberedLastfmUsername(state.lastfmUsername);
+    }
   } catch {
     // ignore quota errors
   }
@@ -224,9 +286,15 @@ export function loadQuizWizardState(hostName: string): CreateQuizWizardState | n
       ...base,
       ...parsed,
       playMode:
-        parsed.playMode === "auto_spotify" || parsed.playMode === "curate"
+        parsed.playMode === "auto_lastfm" ||
+        parsed.playMode === "auto_spotify" ||
+        parsed.playMode === "curate"
           ? parsed.playMode
           : base.playMode,
+      lastfmUsername:
+        typeof parsed.lastfmUsername === "string"
+          ? parsed.lastfmUsername
+          : base.lastfmUsername,
       draftSongs:
         Array.isArray(parsed.draftSongs) && parsed.draftSongs.length > 0
           ? parsed.draftSongs.map((song) => ({
@@ -291,7 +359,6 @@ export function loadQuizWizardState(hostName: string): CreateQuizWizardState | n
     };
     if (loaded.presentLeaderboardAtEnd) {
       loaded.showOverallResults = false;
-      loaded.showOthersInPastResults = false;
     }
     return loaded;
   } catch {

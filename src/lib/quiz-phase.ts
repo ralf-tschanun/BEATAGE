@@ -76,7 +76,7 @@ export function deriveQuizPhaseDisplay(input: QuizPhaseInput): QuizPhaseDisplay 
     return { label: "Finished", tone: "finished" };
   }
 
-  if (input.autoInterrupted && input.quizSource === "spotify_live") {
+  if (input.autoInterrupted && (input.quizSource === "spotify_live" || input.quizSource === "lastfm_live")) {
     return { label: "Interrupted", tone: "interrupted" };
   }
 

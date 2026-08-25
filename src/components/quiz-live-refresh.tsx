@@ -32,6 +32,8 @@ export type QuizGuessLivePatch = {
 export type QuizPlaySnapshot = {
   currentRoundNumber: number;
   tracks: CuratedTrackRow[];
+  /** Total curated tracks (use when tracks[] is omitted for live / non-host). */
+  trackCount: number;
   activeRound: RoundRow | null;
   resultRound: RoundRow | null;
   pastRounds: PastRoundRow[];
@@ -124,6 +126,7 @@ async function fetchQuizPlaySnapshot(
   return {
     currentRoundNumber: state.currentRoundNumber,
     tracks: state.tracks,
+    trackCount: state.trackCount ?? state.tracks?.length ?? 0,
     activeRound: state.activeRound,
     resultRound: state.resultRound,
     pastRounds: state.pastRounds ?? [],
@@ -177,6 +180,7 @@ function snapshotStructuralFingerprint(snapshot: QuizPlaySnapshot): string {
     snapshot.leaderboard
       .map((r) => `${r.user_id}:${r.total_points}:${r.last_round_points}`)
       .join(","),
+    snapshot.trackCount,
     snapshot.tracks.map((t) => t.id).join(","),
     snapshot.autoInterrupted ? "1" : "0",
     snapshot.settings.showTitleArtist ? "1" : "0",
@@ -293,7 +297,6 @@ export function QuizLiveRefresh({
   const timerRef = useRef<number | null>(null);
   const reconcileTimerRef = useRef<number | null>(null);
   const lastFpRef = useRef<string | null>(null);
-  const lastStructuralFpRef = useRef<string | null>(null);
   const syncInFlightRef = useRef(false);
   const syncAgainRef = useRef(false);
 
@@ -304,12 +307,13 @@ export function QuizLiveRefresh({
     let retryTimer: number | null = null;
     let retries = 0;
 
-    function scheduleRefresh(immediate = false) {
+    function scheduleRosterRefresh(immediate = false) {
       if (timerRef.current != null) {
         window.clearTimeout(timerRef.current);
       }
       const run = () => {
         emitPlayPatch(quizId, { type: "refresh" });
+        // Roster / header only — play UI is driven by the snapshot replace path.
         router.refresh();
       };
       if (immediate) {
@@ -325,11 +329,11 @@ export function QuizLiveRefresh({
       }
       reconcileTimerRef.current = window.setTimeout(() => {
         reconcileTimerRef.current = null;
-        void syncFromServer(true);
+        void syncFromServer();
       }, delayMs);
     }
 
-    async function syncFromServer(refreshOnChange: boolean) {
+    async function syncFromServer() {
       if (cancelled) return;
       if (syncInFlightRef.current) {
         syncAgainRef.current = true;
@@ -343,20 +347,12 @@ export function QuizLiveRefresh({
           if (cancelled || !snapshot) continue;
 
           const fingerprint = snapshotFingerprint(snapshot);
-          const structuralFp = snapshotStructuralFingerprint(snapshot);
           const changed = fingerprint !== lastFpRef.current;
-          const structuralChanged =
-            structuralFp !== lastStructuralFpRef.current;
           if (changed) {
             lastFpRef.current = fingerprint;
-            lastStructuralFpRef.current = structuralFp;
             emitPlayPatch(quizId, { type: "replace", snapshot });
-            // Presentation-only ticks (leaderboard reveal step) must not
-            // router.refresh() — on Vercel that aborts the in-flight reveal action
-            // and leaves the host button stuck on "Updating…".
-            if (refreshOnChange && structuralChanged) {
-              scheduleRefresh(true);
-            }
+            // Do not router.refresh() here: play panels / badges update from
+            // the snapshot. RSC refresh is reserved for roster (members) below.
           }
         } while (!cancelled && syncAgainRef.current);
       } finally {
@@ -364,8 +360,13 @@ export function QuizLiveRefresh({
       }
     }
 
-    function onGenericChange() {
+    function onPlayChange() {
       scheduleReconcile(300);
+    }
+
+    function onMemberChange() {
+      scheduleReconcile(300);
+      scheduleRosterRefresh();
     }
 
     function onGuessChange(payload: {
@@ -411,7 +412,7 @@ export function QuizLiveRefresh({
             table: "beatage_quizzes",
             filter: `id=eq.${quizId}`,
           },
-          onGenericChange,
+          onPlayChange,
         )
         .on(
           "postgres_changes",
@@ -421,7 +422,7 @@ export function QuizLiveRefresh({
             table: "beatage_rounds",
             filter: `quiz_id=eq.${quizId}`,
           },
-          onGenericChange,
+          onPlayChange,
         )
         .on(
           "postgres_changes",
@@ -431,7 +432,7 @@ export function QuizLiveRefresh({
             table: "beatage_curated_tracks",
             filter: `quiz_id=eq.${quizId}`,
           },
-          onGenericChange,
+          onPlayChange,
         )
         .on(
           "postgres_changes",
@@ -441,7 +442,7 @@ export function QuizLiveRefresh({
             table: "beatage_quiz_members",
             filter: `quiz_id=eq.${quizId}`,
           },
-          onGenericChange,
+          onMemberChange,
         )
         .on(
           "postgres_changes",
@@ -460,12 +461,12 @@ export function QuizLiveRefresh({
             // Guess-only: patch lists locally. A full refresh races the submitter.
             return;
           }
-          void syncFromServer(true);
+          void syncFromServer();
         })
         .subscribe((status) => {
           if (status === "SUBSCRIBED") {
             retries = 0;
-            void syncFromServer(true);
+            void syncFromServer();
             return;
           }
           if (
@@ -485,7 +486,7 @@ export function QuizLiveRefresh({
 
     function onVisibilityOrOnline() {
       if (document.visibilityState !== "visible") return;
-      void syncFromServer(true);
+      void syncFromServer();
     }
 
     const {
@@ -506,7 +507,7 @@ export function QuizLiveRefresh({
       await syncRealtimeAuth(session?.access_token);
       if (!cancelled) {
         bindChannel();
-        void syncFromServer(false);
+        void syncFromServer();
       }
     })();
 

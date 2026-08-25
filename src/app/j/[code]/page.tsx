@@ -89,7 +89,7 @@ export default async function JoinByCodePage({ params }: JoinPageProps) {
     ? quiz.status === "expired"
       ? "This quiz has expired."
       : quiz.is_full
-        ? "This quiz is full."
+        ? "This quiz is full. Ask the host to unlock the quiz or change their plan for more players."
         : "This quiz is not open for joining."
     : null;
 

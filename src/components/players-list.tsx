@@ -8,7 +8,10 @@ import {
 } from "@/app/actions/quiz";
 import { SwipeToRemoveRow } from "@/components/swipe-to-remove-row";
 import { CollapsibleCard } from "@/components/collapsible-card";
-import { broadcastQuizResync } from "@/components/quiz-live-refresh";
+import {
+  broadcastQuizResync,
+  subscribeQuizGuesses,
+} from "@/components/quiz-live-refresh";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +29,8 @@ export type PlayerRow = {
   displayName: string;
   role: string;
   joinedAt?: string | null;
+  /** Latest guess submission for this quiz (any round). */
+  lastSubmittedAt?: string | null;
 };
 
 type PlayersListProps = {
@@ -99,6 +104,27 @@ export function PlayersList({
   useEffect(() => {
     setMembers(initialMembers);
   }, [initialMembers]);
+
+  // Keep "Last submitted" fresh while the host stays on the page (guesses
+  // do not trigger a full RSC refresh).
+  useEffect(() => {
+    if (!isHost) return;
+    return subscribeQuizGuesses(quizId, (patch) => {
+      const at = new Date().toISOString();
+      setMembers((prev) =>
+        prev.map((member) =>
+          member.userId === patch.userId
+            ? { ...member, lastSubmittedAt: at }
+            : member,
+        ),
+      );
+      setDetailTarget((prev) =>
+        prev && prev.userId === patch.userId
+          ? { ...prev, lastSubmittedAt: at }
+          : prev,
+      );
+    });
+  }, [isHost, quizId]);
 
   useEffect(() => {
     if (!removeState?.success) return;
@@ -198,8 +224,16 @@ export function PlayersList({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{detailTarget?.displayName ?? "Player"}</DialogTitle>
-            <DialogDescription>
-              Joined {formatPlayerDateTime(detailTarget?.joinedAt)}
+            <DialogDescription className="space-y-1">
+              <span className="block">
+                Joined {formatPlayerDateTime(detailTarget?.joinedAt)}
+              </span>
+              <span className="block">
+                Last submitted{" "}
+                {detailTarget?.lastSubmittedAt
+                  ? formatPlayerDateTime(detailTarget.lastSubmittedAt)
+                  : "Never"}
+              </span>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">

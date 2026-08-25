@@ -16,9 +16,53 @@ export type YearScoreResult = {
 
 export type ChartGuessOutcome = "correct" | "none" | "wrong";
 
+/** Extra years added on top of the worst submitted miss. */
+export const CLOSER_WINS_NO_GUESS_EXTRA = 2;
+/** Hard cap so a skip cannot explode when someone guesses 1900. */
+export const CLOSER_WINS_NO_GUESS_YEAR_MAX = 20;
+
 /** Closer wins: penalty = years off (lowest total wins). */
 function scoreDistance(guessed: number, correct: number): number {
   return Math.abs(guessed - correct);
+}
+
+/**
+ * Year-off distances from submitted guesses only.
+ * Null / missing years (skippers) must not be included — skip penalties
+ * are derived once from this list, then shared by every skipper.
+ */
+export function submittedCloserWinsDistances(
+  guessedYears: Array<number | null | undefined>,
+  correctYear: number,
+): number[] {
+  const distances: number[] = [];
+  for (const year of guessedYears) {
+    if (typeof year !== "number" || !Number.isFinite(year)) continue;
+    distances.push(Math.abs(year - correctYear));
+  }
+  return distances;
+}
+
+/**
+ * Closer wins skip: one shared penalty for every skipper.
+ * Input must be distances from submitted years only — never skip scores,
+ * or skippers would inflate each other (worst+2, then that+2, …).
+ * If nobody submitted a year, use the cap (20).
+ */
+export function closerWinsNoGuessYearPenalty(
+  submittedDistances: number[],
+): number {
+  const distances = submittedDistances.filter(
+    (d) => typeof d === "number" && Number.isFinite(d) && d >= 0,
+  );
+  if (distances.length === 0) {
+    return CLOSER_WINS_NO_GUESS_YEAR_MAX;
+  }
+  const worst = Math.max(...distances);
+  return Math.min(
+    CLOSER_WINS_NO_GUESS_YEAR_MAX,
+    worst + CLOSER_WINS_NO_GUESS_EXTRA,
+  );
 }
 
 /**
@@ -119,12 +163,15 @@ export function resolveQuizSettings(raw: unknown): BeatageQuizSettings {
       partial.autoInterruptAfterEmptyRounds ??
         DEFAULT_QUIZ_SETTINGS.autoInterruptAfterEmptyRounds,
     ),
+    lastfmUsername:
+      typeof partial.lastfmUsername === "string"
+        ? partial.lastfmUsername.trim().replace(/^@/, "")
+        : DEFAULT_QUIZ_SETTINGS.lastfmUsername,
   };
 
-  // Presentation mode keeps the running board and others' past guesses hidden.
+  // Presentation mode keeps the running board hidden until the host presents.
   if (presentsLeaderboardAtEnd(resolved)) {
     resolved.showOverallResults = false;
-    resolved.showOthersInPastResults = false;
   }
 
   return resolved;
@@ -172,6 +219,8 @@ export function scoreYearGuess(opts: {
   settings: BeatageQuizSettings;
   wasNumberOne?: boolean;
   guessedWasNumberOne?: boolean | null;
+  /** Closer wins only: penalty when guessedYear is null. */
+  noGuessYearPenalty?: number;
 }): YearScoreResult {
   const modes = normalizeScoringModes(opts.settings.scoringModes);
   const hasDistance = modes.includes("year_distance");
@@ -181,21 +230,23 @@ export function scoreYearGuess(opts: {
   const wasOne = Boolean(opts.wasNumberOne);
 
   let yearPts = 0;
-  if (
-    (hasDistance || hasRange) &&
-    opts.guessedYear != null &&
-    opts.correctYear != null
-  ) {
-    if (hasDistance) {
-      yearPts = scoreDistance(opts.guessedYear, opts.correctYear);
+  if ((hasDistance || hasRange) && opts.correctYear != null) {
+    if (opts.guessedYear != null) {
+      if (hasDistance) {
+        yearPts = scoreDistance(opts.guessedYear, opts.correctYear);
+        breakdown.year_distance = yearPts;
+      } else {
+        yearPts = scoreRange(
+          opts.guessedYear,
+          opts.correctYear,
+          clampYearRangeTolerance(opts.settings.yearRangeTolerance),
+        );
+        breakdown.year_range = yearPts;
+      }
+    } else if (hasDistance) {
+      yearPts =
+        opts.noGuessYearPenalty ?? CLOSER_WINS_NO_GUESS_YEAR_MAX;
       breakdown.year_distance = yearPts;
-    } else {
-      yearPts = scoreRange(
-        opts.guessedYear,
-        opts.correctYear,
-        clampYearRangeTolerance(opts.settings.yearRangeTolerance),
-      );
-      breakdown.year_range = yearPts;
     }
   }
 

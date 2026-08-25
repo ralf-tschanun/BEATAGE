@@ -14,7 +14,7 @@ import {
 import { BILLING_SKU_LABELS } from "@/lib/billing-copy";
 import { goToBilling } from "@/lib/billing-nav";
 import type { PlanId } from "@/lib/quiz-plans";
-import { getQuizPlanLimits } from "@/lib/quiz-plans";
+import { getQuizPlanLimits, QUIZ_UNLOCK_LIMITS } from "@/lib/quiz-plans";
 
 type CreateQuizSlotLimitTipDialogProps = {
   open: boolean;
@@ -123,7 +123,7 @@ type CreateQuizUnlockDialogProps = {
 
 /**
  * Shown when Free/Plus active-quiz limit is reached, or the playlist exceeds the
- * free song cap — unlock once lifts slot / song / member / expiry caps for this quiz.
+ * plan song cap — unlock once raises slot / song / member / expiry caps for this quiz.
  */
 export function CreateQuizUnlockDialog({
   open,
@@ -153,7 +153,7 @@ export function CreateQuizUnlockDialog({
         <DialogHeader>
           <DialogTitle>
             {forSongs && !forSlot
-              ? "Unlock for unlimited songs"
+              ? `Unlock for up to ${QUIZ_UNLOCK_LIMITS.maxCuratedTracks} songs`
               : "Unlock this quiz to create"}
           </DialogTitle>
           <DialogDescription>
@@ -174,20 +174,22 @@ export function CreateQuizUnlockDialog({
               <>
                 {forSlot ? " " : null}
                 Your plan includes up to {plan.maxCuratedTracks ?? 10} songs per
-                quiz — unlock this quiz once for an unlimited playlist.
+                quiz — unlock this quiz once for up to{" "}
+                {QUIZ_UNLOCK_LIMITS.maxCuratedTracks} songs and{" "}
+                {QUIZ_UNLOCK_LIMITS.maxMembers} participants.
               </>
             ) : null}{" "}
-            Unlock also removes the participant cap and inactivity expiry, and this
-            quiz does not count toward your active quiz limit.
+            Unlock also removes inactivity expiry, and this quiz does not count
+            toward your active quiz limit.
           </DialogDescription>
         </DialogHeader>
 
         <ul className="space-y-2 text-sm text-muted-foreground">
           <li className="rounded-lg border border-border px-3 py-2">
-            Unlimited songs on this quiz
+            Up to {QUIZ_UNLOCK_LIMITS.maxCuratedTracks} songs on this quiz
           </li>
           <li className="rounded-lg border border-border px-3 py-2">
-            Unlimited participants on this quiz
+            Up to {QUIZ_UNLOCK_LIMITS.maxMembers} participants on this quiz
           </li>
           <li className="rounded-lg border border-border px-3 py-2">
             No inactivity expiry on this quiz
@@ -242,6 +244,96 @@ export function CreateQuizUnlockDialog({
             Cancel
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type CreateQuizParticipantLimitDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  maxMembers: number;
+  planLabel: string;
+  planId: PlanId;
+  hasSession: boolean;
+  isAnonymous?: boolean;
+  pending?: boolean;
+  onCreateWithPlanLimit: () => void;
+  onUnlockAndCreate: () => void;
+};
+
+/** Shown on Create when the account plan caps participants (Free/Plus/Pro). */
+export function CreateQuizParticipantLimitDialog({
+  open,
+  onOpenChange,
+  maxMembers,
+  planLabel,
+  planId,
+  hasSession,
+  isAnonymous = false,
+  pending = false,
+  onCreateWithPlanLimit,
+  onUnlockAndCreate,
+}: CreateQuizParticipantLimitDialogProps) {
+  const [planOpen, setPlanOpen] = useState(false);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader className="text-center sm:text-center">
+          <DialogTitle>Participant limit on {planLabel}</DialogTitle>
+          <DialogDescription className="text-center">
+            You can invite up to {maxMembers} participants on {planLabel}. Need
+            more?{" "}
+            <button
+              type="button"
+              className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+              disabled={pending}
+              onClick={onUnlockAndCreate}
+            >
+              Unlock
+            </button>{" "}
+            this quiz for unlimited participants, or{" "}
+            <button
+              type="button"
+              className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+              disabled={pending}
+              onClick={() => setPlanOpen(true)}
+            >
+              upgrade your plan
+            </button>
+            .
+          </DialogDescription>
+        </DialogHeader>
+
+        <DialogFooter className="flex-col items-stretch gap-2 sm:flex-col sm:items-stretch">
+          <Button
+            type="button"
+            disabled={pending}
+            onClick={onCreateWithPlanLimit}
+          >
+            {pending
+              ? "Creating…"
+              : `Create with max. ${maxMembers} participants`}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={pending}
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+        </DialogFooter>
+
+        <ChangePlanForm
+          currentPlan={planId}
+          hasSession={hasSession}
+          isAnonymous={isAnonymous}
+          open={planOpen}
+          onOpenChange={setPlanOpen}
+          showTrigger={false}
+        />
       </DialogContent>
     </Dialog>
   );

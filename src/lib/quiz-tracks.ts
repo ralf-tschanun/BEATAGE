@@ -8,7 +8,10 @@ import {
   pickOriginalReleaseYear,
   stripRecordingVersionLabel,
 } from "@/lib/original-release-year";
-import { DEFAULT_MAX_CURATED_TRACKS } from "@/lib/quiz-plans";
+import {
+  DEFAULT_MAX_CURATED_TRACKS,
+  QUIZ_UNLOCK_LIMITS,
+} from "@/lib/quiz-plans";
 import { resolveQuizSettings } from "@/lib/quiz-scoring";
 import type { AnswerYearMode } from "@/lib/quiz-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -51,9 +54,9 @@ export async function getQuizCuratedTrackLimit(
     throw new Error("QUIZ_NOT_FOUND");
   }
 
-  // Unlock (or unlock-at-create pending) lifts the song cap when max_rounds is null.
+  // Unlock (or unlock-at-create pending) uses unlock song cap when max_rounds is null.
   if (quiz.unlocked_at || quiz.status === "payment_pending") {
-    return quiz.max_rounds ?? null;
+    return quiz.max_rounds ?? QUIZ_UNLOCK_LIMITS.maxCuratedTracks;
   }
   if (typeof quiz.max_rounds === "number" && quiz.max_rounds > 0) {
     return quiz.max_rounds;
@@ -319,20 +322,11 @@ export async function addCuratedTrackToQuiz(
     }
   }
 
-  // Auto Spotify grows the playlist from now-playing — do not apply curated caps.
-  const { data: quizMeta } = await admin
-    .from("beatage_quizzes")
-    .select("source")
-    .eq("id", quizId)
-    .maybeSingle();
-  const isAutoSpotify = quizMeta?.source === "spotify_live";
-
-  if (!isAutoSpotify) {
-    const limit = await getQuizCuratedTrackLimit(quizId);
-    const existing = await countQuizCuratedTracks(quizId);
-    if (limit != null && existing >= limit) {
-      return { error: `TRACK_LIMIT:${limit}` };
-    }
+  // Live and curated share the same plan/unlock song+round cap (max_rounds).
+  const limit = await getQuizCuratedTrackLimit(quizId);
+  const existing = await countQuizCuratedTracks(quizId);
+  if (limit != null && existing >= limit) {
+    return { error: `TRACK_LIMIT:${limit}` };
   }
 
   // Prefer admin insert: play RPCs (003) are often not applied on the remote DB yet.

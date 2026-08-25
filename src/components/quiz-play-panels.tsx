@@ -18,6 +18,7 @@ import {
   type QuizGuessLivePatch,
   type QuizPlaySnapshot,
 } from "@/components/quiz-live-refresh";
+import { AutoLastfmHostControls } from "@/components/auto-lastfm-host-controls";
 import { AutoSpotifyHostControls } from "@/components/auto-spotify-host-controls";
 import { CollapsibleCard } from "@/components/collapsible-card";
 import { SongPickFields } from "@/components/song-pick-fields";
@@ -28,12 +29,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CaretDownIcon, CheckIcon, XIcon } from "@phosphor-icons/react";
-import { BILLING_SKU_LABELS } from "@/lib/billing-copy";
+import type { PlanId } from "@/lib/quiz-plans";
+import { isQuizPlanLimitError } from "@/lib/quiz-plan-limits";
 import { chartCountriesShortLabel, chartWasOneLabel } from "@/lib/charts";
+import { QuizPlanLimitPrompt } from "@/components/quiz-plan-limit-prompt";
 import { podiumRankClass, podiumRowClass } from "@/lib/result-podium-styles";
 import {
   applyQuizLeaderboardReveal,
   DEFAULT_QUIZ_SETTINGS,
+  isLiveQuizSource,
   isQuizLeaderboardRevealComplete,
   presentsLeaderboardAtEnd,
   scoringCombinesChart,
@@ -128,7 +132,7 @@ function RoundGuessesList({
               ) : null}
             </span>
             <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
-              {g.guessed_year ?? "—"}
+              {g.guessed_year ?? "no guess"}
               {showChartGuess ? (
                 <>
                   {g.guessed_was_number_one == null
@@ -194,10 +198,12 @@ type QuizPlayPanelsProps = {
   quizId: string;
   joinCode: string;
   isHost: boolean;
-  /** curated | spotify_live | … — drives Auto Spotify host UI. */
+  /** curated | spotify_live | lastfm_live | … — drives live auto host UI. */
   quizSource?: string;
   memberCount: number;
   tracks: CuratedTrackRow[];
+  /** Total curated tracks — required when tracks[] is empty for live / non-host. */
+  trackCount?: number;
   currentRoundNumber: number;
   activeRound: RoundRow | null;
   resultRound: RoundRow | null;
@@ -208,6 +214,8 @@ type QuizPlayPanelsProps = {
   leaderboard: LeaderboardRow[];
   quizStatus: string;
   maxCuratedTracks: number | null;
+  /** Participant cap for this quiz; null = unlimited. */
+  maxMembers?: number | null;
   settings?: BeatageQuizSettings;
   autoInterrupted?: boolean;
   /** Host-controlled end presentation progress (0 = not started). */
@@ -216,6 +224,10 @@ type QuizPlayPanelsProps = {
   isAnonymous?: boolean;
   currentUserId?: string | null;
   hostUserId?: string | null;
+  /** Host billing plan — unlock / change-plan prompts. */
+  planId?: PlanId;
+  /** True when this quiz was unlocked. */
+  unlocked?: boolean;
 };
 
 export function QuizPlayPanels({
@@ -225,6 +237,7 @@ export function QuizPlayPanels({
   quizSource = "curated",
   memberCount: memberCountProp,
   tracks: tracksProp,
+  trackCount: trackCountProp,
   currentRoundNumber: currentRoundNumberProp,
   activeRound: activeRoundProp,
   resultRound: resultRoundProp,
@@ -235,12 +248,15 @@ export function QuizPlayPanels({
   leaderboard: leaderboardProp,
   quizStatus: quizStatusProp,
   maxCuratedTracks: maxCuratedTracksProp,
+  maxMembers: maxMembersProp = null,
   settings: settingsProp = DEFAULT_QUIZ_SETTINGS,
   autoInterrupted: autoInterruptedProp = false,
   leaderboardRevealStep: leaderboardRevealStepProp = 0,
   isAnonymous = false,
   currentUserId = null,
   hostUserId = null,
+  planId = "free",
+  unlocked = false,
 }: QuizPlayPanelsProps) {
   const router = useRouter();
   const lastSyncIdRef = useRef<string | null>(null);
@@ -270,12 +286,15 @@ export function QuizPlayPanels({
     null,
   );
 
+  const isLive = isLiveQuizSource(quizSource);
+  const isLastfmLive = quizSource === "lastfm_live";
   const isAutoSpotify = quizSource === "spotify_live";
 
   // Live snapshot (MyContest pattern) — client fetch beats waiting on RSC alone.
   const [live, setLive] = useState<QuizPlaySnapshot>(() => ({
     currentRoundNumber: currentRoundNumberProp,
     tracks: tracksProp,
+    trackCount: trackCountProp ?? tracksProp.length,
     activeRound: activeRoundProp,
     resultRound: resultRoundProp,
     pastRounds: pastRoundsProp,
@@ -292,6 +311,7 @@ export function QuizPlayPanels({
   }));
 
   const tracks = live.tracks;
+  const trackCount = live.trackCount || tracks.length;
   const currentRoundNumber = live.currentRoundNumber;
   const activeRound = live.activeRound;
   const resultRound = live.resultRound;
@@ -326,11 +346,14 @@ export function QuizPlayPanels({
           rankedLeaderboard,
         )
       : rankedLeaderboard;
-  // Running board during play (host always; participants if enabled).
+  // Running board during play: same visibility as participants, except a
+  // non-playing host always sees it (to run the room) — unless the board is
+  // reserved for end-of-quiz presentation.
   const showRunningLeaderboard =
     !isFinished &&
     leaderboard.length > 0 &&
-    (isHost || settings.showOverallResults);
+    (settings.showOverallResults ||
+      (isHost && !settings.hostParticipates && !presentAtEnd));
   // Full board when finished without staged presentation.
   const showFinalLeaderboard =
     isFinished && leaderboard.length > 0 && !presentAtEnd;
@@ -340,18 +363,24 @@ export function QuizPlayPanels({
   const leaderboardListRef = useFlipList(flipOrderKey);
 
   const atTrackLimit =
-    !isAutoSpotify &&
-    maxCuratedTracks != null &&
-    tracks.length >= maxCuratedTracks;
-  const addHitTrackLimit = Boolean(
-    addState?.error &&
-      (addState.error.includes("maximum of") || addState.error.includes("TRACK_LIMIT")),
-  );
-  const showTrackUnlockCta = isHost && !isFinished && (atTrackLimit || addHitTrackLimit);
-  const unlockCheckoutPath = `/api/billing/checkout?sku=quiz_unlock&quizId=${encodeURIComponent(quizId)}`;
-  const unlockHref = isAnonymous
-    ? `/billing/account?next=${encodeURIComponent(unlockCheckoutPath)}`
-    : unlockCheckoutPath;
+    maxCuratedTracks != null && trackCount >= maxCuratedTracks;
+  const atRoundLimit =
+    maxCuratedTracks != null && currentRoundNumber >= maxCuratedTracks;
+  const atMemberLimit =
+    maxMembersProp != null && memberCount >= maxMembersProp;
+  const limitErrorMessage =
+    (startState?.error && isQuizPlanLimitError(startState.error)
+      ? startState.error
+      : null) ||
+    (addState?.error && isQuizPlanLimitError(addState.error)
+      ? addState.error
+      : null);
+  const showPlanLimitPrompt =
+    isHost &&
+    !isFinished &&
+    !unlocked &&
+    !isLive &&
+    (atRoundLimit || atTrackLimit || atMemberLimit || Boolean(limitErrorMessage));
 
   const [guessYear, setGuessYear] = useState(
     myGuessYearProp != null ? String(myGuessYearProp) : "",
@@ -556,15 +585,15 @@ export function QuizPlayPanels({
     if (!syncId || syncId === lastSyncIdRef.current) return;
     lastSyncIdRef.current = syncId;
     const guessOnly = guessState?.syncId === syncId && Boolean(guessState.guess);
-    const revealOnly = revealState?.syncId === syncId;
     void broadcastQuizResync(
       quizId,
       joinCode,
       guessOnly && guessState.guess ? { guess: guessState.guess } : undefined,
     );
-    // Guess/reveal patches update live state locally — skip RSC refresh so the
-    // in-flight server action is not aborted (Vercel leaves the button stuck).
-    if (!guessOnly && !revealOnly) {
+    // Play UI updates from the live snapshot. Skip RSC refresh on round
+    // start/close/guess/reveal so we do not double-load getQuizPlayState.
+    // Add-track and finish still refresh shell bits (rules track count / roster).
+    if (addState?.syncId === syncId || finishState?.syncId === syncId) {
       router.refresh();
     }
   }, [
@@ -579,24 +608,41 @@ export function QuizPlayPanels({
     router,
   ]);
 
-  const remainingCount = Math.max(0, tracks.length - currentRoundNumber);
+  const remainingCount = Math.max(0, trackCount - currentRoundNumber);
   const allTracksPlayed =
-    !isAutoSpotify && tracks.length > 0 && remainingCount === 0 && !activeRound;
+    !isLive && trackCount > 0 && remainingCount === 0 && !activeRound;
   const quizComplete = isFinished || allTracksPlayed;
   const canFinish = isHost && !isFinished && !activeRound;
   const waitingForHost = !isHost && !activeRound && !quizComplete && !isFinished;
 
   return (
     <div className="space-y-8">
-      {isHost && isAutoSpotify ? (
+      {isHost && isLastfmLive ? (
         <section className="space-y-4">
-          <AutoSpotifyHostControls
+          <AutoLastfmHostControls
             quizId={quizId}
             joinCode={joinCode}
+            lastfmUsername={settings.lastfmUsername}
             disabled={isFinished}
             autoInterrupted={autoInterrupted}
             emptyStreakThreshold={settings.autoInterruptAfterEmptyRounds}
+            planId={planId}
+            isAnonymous={isAnonymous}
+            unlocked={unlocked}
+            roundLimit={maxCuratedTracks}
+            currentRoundNumber={currentRoundNumber}
           />
+          {isHost && atMemberLimit && !unlocked && !isFinished ? (
+            <QuizPlanLimitPrompt
+              quizId={quizId}
+              joinCode={joinCode}
+              kind="participants"
+              cap={maxMembersProp}
+              planId={planId}
+              isAnonymous={isAnonymous}
+              unlocked={unlocked}
+            />
+          ) : null}
           {canFinish ? (
             <form action={finishAction} className="flex flex-wrap gap-2">
               <input type="hidden" name="quizId" value={quizId} />
@@ -612,15 +658,55 @@ export function QuizPlayPanels({
         </section>
       ) : null}
 
-      {isHost && !isAutoSpotify ? (
+      {isHost && isAutoSpotify ? (
+        <section className="space-y-4">
+          <AutoSpotifyHostControls
+            quizId={quizId}
+            joinCode={joinCode}
+            disabled={isFinished}
+            autoInterrupted={autoInterrupted}
+            emptyStreakThreshold={settings.autoInterruptAfterEmptyRounds}
+            planId={planId}
+            isAnonymous={isAnonymous}
+            unlocked={unlocked}
+            roundLimit={maxCuratedTracks}
+            currentRoundNumber={currentRoundNumber}
+          />
+          {isHost && atMemberLimit && !unlocked && !isFinished ? (
+            <QuizPlanLimitPrompt
+              quizId={quizId}
+              joinCode={joinCode}
+              kind="participants"
+              cap={maxMembersProp}
+              planId={planId}
+              isAnonymous={isAnonymous}
+              unlocked={unlocked}
+            />
+          ) : null}
+          {canFinish ? (
+            <form action={finishAction} className="flex flex-wrap gap-2">
+              <input type="hidden" name="quizId" value={quizId} />
+              <input type="hidden" name="joinCode" value={joinCode} />
+              <Button type="submit" variant="secondary" disabled={finishPending}>
+                {finishPending ? "Finishing…" : "End quiz"}
+              </Button>
+              {finishState?.error ? (
+                <p className="w-full text-sm text-destructive">{finishState.error}</p>
+              ) : null}
+            </form>
+          ) : null}
+        </section>
+      ) : null}
+
+      {isHost && !isLive ? (
         <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
           <div className="space-y-1">
             <h2 className="text-lg font-semibold">Host controls</h2>
             <p className="text-sm text-muted-foreground">
-              Playlist from create · {tracks.length}
+              Playlist from create · {trackCount}
               {maxCuratedTracks != null ? ` / ${maxCuratedTracks}` : ""} track
-              {tracks.length === 1 ? "" : "s"}
-              {tracks.length > 0
+              {trackCount === 1 ? "" : "s"}
+              {trackCount > 0
                 ? ` · ${remainingCount} left to play`
                 : " — add songs before starting"}
               {memberCount > 0 ? ` · ${memberCount} player${memberCount === 1 ? "" : "s"}` : ""}
@@ -700,7 +786,7 @@ export function QuizPlayPanels({
                   startPending ||
                   isFinished ||
                   Boolean(activeRound) ||
-                  tracks.length === 0 ||
+                  trackCount === 0 ||
                   allTracksPlayed
                 }
               >
@@ -712,7 +798,7 @@ export function QuizPlayPanels({
                       ? currentRoundNumber === 0
                         ? "Start first round"
                         : "Start next round"
-                      : tracks.length === 0
+                      : trackCount === 0
                         ? "Add tracks first"
                         : "All tracks played"}
               </Button>
@@ -747,7 +833,7 @@ export function QuizPlayPanels({
               </form>
             ) : null}
           </div>
-          {startState?.error ? (
+          {startState?.error && !isQuizPlanLimitError(startState.error) ? (
             <p className="text-sm text-destructive">{startState.error}</p>
           ) : null}
           {finishState?.error ? (
@@ -760,22 +846,26 @@ export function QuizPlayPanels({
             </p>
           ) : null}
 
-          {showTrackUnlockCta ? (
-            <p className="rounded-xl border border-primary/25 bg-primary/5 px-4 py-3 text-sm text-foreground">
-              {maxCuratedTracks != null
-                ? `This quiz is at the ${maxCuratedTracks}-song limit.`
-                : "This quiz is at the song limit."}{" "}
-              <a
-                href={unlockHref}
-                className="font-medium text-primary underline-offset-4 hover:underline"
-              >
-                Unlock this quiz ({BILLING_SKU_LABELS.quiz_unlock})
-              </a>{" "}
-              for unlimited songs, unlimited participants, and no inactivity expiry.
-            </p>
+          {showPlanLimitPrompt ? (
+            <QuizPlanLimitPrompt
+              quizId={quizId}
+              joinCode={joinCode}
+              message={limitErrorMessage}
+              kind={
+                atMemberLimit
+                  ? "participants"
+                  : atRoundLimit || atTrackLimit
+                    ? "songs"
+                    : undefined
+              }
+              cap={atMemberLimit ? maxMembersProp : maxCuratedTracks}
+              planId={planId}
+              isAnonymous={isAnonymous}
+              unlocked={unlocked}
+            />
           ) : null}
 
-          {addState?.error && !showAddTrack ? (
+          {addState?.error && !showAddTrack && !isQuizPlanLimitError(addState.error) ? (
             <p className="text-sm text-destructive">{addState.error}</p>
           ) : null}
 
@@ -817,22 +907,20 @@ export function QuizPlayPanels({
               >
                 {addPending ? "Adding…" : "Add to playlist"}
               </Button>
-              {addState?.error ? (
+              {addState?.error && !isQuizPlanLimitError(addState.error) ? (
                 <p className="text-sm text-destructive" role="alert">
                   {addState.error}
-                  {addHitTrackLimit ? (
-                    <>
-                      {" "}
-                      <a
-                        href={unlockHref}
-                        className="font-medium text-primary underline-offset-4 hover:underline"
-                      >
-                        Unlock this quiz ({BILLING_SKU_LABELS.quiz_unlock})
-                      </a>{" "}
-                      for unlimited songs.
-                    </>
-                  ) : null}
                 </p>
+              ) : null}
+              {addState?.error && isQuizPlanLimitError(addState.error) ? (
+                <QuizPlanLimitPrompt
+                  quizId={quizId}
+                  joinCode={joinCode}
+                  message={addState.error}
+                  planId={planId}
+                  isAnonymous={isAnonymous}
+                  unlocked={unlocked}
+                />
               ) : null}
             </form>
           ) : null}
@@ -844,10 +932,12 @@ export function QuizPlayPanels({
           <div className="space-y-1">
             <h2 className="text-lg font-semibold">Waiting for the host</h2>
             <p className="text-sm text-muted-foreground">
-              {isAutoSpotify
+              {isLive
                 ? currentRoundNumber > 0
                   ? "Round results are on the board. The next song in Spotify will open a new round."
-                  : "Auto Spotify is on — this page updates when the host starts playing a song."
+                  : isLastfmLive
+                    ? "Live mode is on — this page updates when Spotify scrobbles the next song to Last.fm."
+                    : "Auto Spotify is on — this page updates when the host starts playing a song."
                 : currentRoundNumber > 0
                   ? `Round ${currentRoundNumber} is done. Hang tight — the host will start the next round.`
                   : "The quiz is live. This page updates automatically when the host starts a round."}
@@ -888,7 +978,7 @@ export function QuizPlayPanels({
               Round {activeRound.round_number} · Guess the…
             </h2>
           </div>
-          {!isHost && settings.showTitleArtist ? (
+          {settings.showTitleArtist ? (
             <p className="text-sm">
               <span className="font-medium text-foreground">
                 {activeRound.track_name}
@@ -911,19 +1001,28 @@ export function QuizPlayPanels({
                     : "false"
               }
             />
-            <div className="flex flex-col items-center gap-2">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="guessedYear">Release year</Label>
-              <Input
-                id="guessedYear"
-                name="guessedYear"
-                type="number"
-                min={1900}
-                max={new Date().getFullYear()}
-                required
-                value={guessYear}
-                onChange={(event) => setGuessYear(event.target.value)}
-                className="w-32"
-              />
+              <div className="flex flex-wrap items-center gap-3">
+                <Input
+                  id="guessedYear"
+                  name="guessedYear"
+                  type="number"
+                  min={1900}
+                  max={new Date().getFullYear()}
+                  required
+                  value={guessYear}
+                  onChange={(event) => setGuessYear(event.target.value)}
+                  className="w-32"
+                />
+                <Button type="submit" disabled={guessBusy}>
+                  {guessBusy
+                    ? "Saving…"
+                    : (myGuessYear ?? optimisticGuessYear) != null
+                      ? "Update guess"
+                      : "Submit guess"}
+                </Button>
+              </div>
             </div>
             {chartComboEnabled ? (
               <div className="space-y-2">
@@ -967,13 +1066,6 @@ export function QuizPlayPanels({
                   : "Listen to the track the host is playing, then enter the release year. Updates appear live for everyone."}
               </p>
             ) : null}
-            <Button type="submit" disabled={guessBusy}>
-              {guessBusy
-                ? "Saving…"
-                : (myGuessYear ?? optimisticGuessYear) != null
-                  ? "Update guess"
-                  : "Submit guess"}
-            </Button>
             {guessState?.error ? (
               <p className="w-full text-sm text-destructive">{guessState.error}</p>
             ) : null}
@@ -991,7 +1083,7 @@ export function QuizPlayPanels({
             ) : null}
           </form>
 
-          {isHost && !isAutoSpotify ? (
+          {isHost && !isLive ? (
             <form action={closeAction}>
               <input type="hidden" name="roundId" value={activeRound.id} />
               <input type="hidden" name="joinCode" value={joinCode} />

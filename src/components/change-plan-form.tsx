@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { QUIZ_PLANS, type PlanId } from "@/lib/quiz-plans";
+import { QUIZ_PLANS, QUIZ_UNLOCK_LIMITS, type PlanId } from "@/lib/quiz-plans";
 import { BILLING_SKU_LABELS, type BillingSku } from "@/lib/billing-copy";
 import { goToBilling } from "@/lib/billing-nav";
 import { cn } from "@/lib/utils";
@@ -42,10 +42,9 @@ function formatCap(value: number | null, singular: string, plural = `${singular}
 /** Compact plan limits for the Your plan dialog (no mode labels). */
 function planLimitHint(planId: PlanId): string {
   const plan = QUIZ_PLANS[planId];
-  if (planId === "pro") return "Unlimited";
-
   return [
     formatCap(plan.maxActiveQuizzes, "quiz"),
+    formatCap(plan.maxCuratedTracks, "song"),
     formatCap(plan.maxMembers, "participant"),
     plan.inactivityExpiryDays === null
       ? "no expiry"
@@ -181,7 +180,8 @@ export function ChangePlanForm({
           ) : null}
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          One quiz: unlimited songs and participants, no inactivity expiry. Does
+          One quiz: up to {QUIZ_UNLOCK_LIMITS.maxCuratedTracks} songs and{" "}
+          {QUIZ_UNLOCK_LIMITS.maxMembers} participants, no inactivity expiry. Does
           not count toward your active quiz limit.
         </p>
         {unlockContest?.unlocked ? null : unlockContest?.id ? (

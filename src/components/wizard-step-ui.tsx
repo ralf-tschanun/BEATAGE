@@ -14,13 +14,20 @@ import { cn } from "@/lib/utils";
 import { getPlanLimits, type PlanId } from "@/lib/plans";
 
 /** Section divider before optional settings on create-wizard steps. */
-export function WizardOptionsDivider() {
+export function WizardOptionsDivider({
+  label = "Options",
+}: {
+  /** Section label under the rule; pass null for a plain divider. */
+  label?: string | null;
+} = {}) {
   return (
     <div className="space-y-3 pt-2">
       <div className="border-t-2 border-primary/50" />
-      <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-        Options
-      </p>
+      {label ? (
+        <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+          {label}
+        </p>
+      ) : null}
     </div>
   );
 }

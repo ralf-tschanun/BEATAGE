@@ -5,6 +5,7 @@ import {
   clampAutoInterruptAfterEmptyRounds,
   clampYearRangeTolerance,
   DEFAULT_QUIZ_SETTINGS,
+  isLiveQuizSource,
   normalizeScoringModes,
   parseOverallReveal,
   presentsLeaderboardAtEnd,
@@ -12,11 +13,18 @@ import {
   type ChartCountryCode,
   type ScoringModeId,
 } from "@/lib/quiz-settings";
+import { effectiveQuizTitle } from "@/lib/create-quiz-wizard";
+import { normalizeLastfmUsername } from "@/lib/lastfm";
 import {
   seedCuratedTracksForQuiz,
   type QuizTrackInput,
 } from "@/lib/quiz-tracks";
-import { DEFAULT_MAX_CURATED_TRACKS } from "@/lib/quiz-plans";
+import {
+  DEFAULT_MAX_CURATED_TRACKS,
+  getQuizPlanLimits,
+  QUIZ_UNLOCK_LIMITS,
+  type PlanId,
+} from "@/lib/quiz-plans";
 import { ensureAnonymousSession } from "@/lib/supabase/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -40,6 +48,15 @@ function mapQuizError(message: string): string {
   if (message.includes("ACTIVE_QUIZ_LIMIT")) {
     return "You reached the active quiz limit for your plan. Unlock this quiz once, upgrade, or finish an existing quiz.";
   }
+  if (message.includes("NOT_PAYMENT_PENDING")) {
+    return "This quiz is not waiting for unlock.";
+  }
+  if (message.includes("TRACKS_OVER_PLAN")) {
+    const cap = message.split(":")[1]?.trim();
+    return cap
+      ? `This quiz has more than ${cap} songs. Remove songs to fit your plan, unlock once, or change your plan.`
+      : "This quiz has too many songs for your plan. Remove songs, unlock once, or change your plan.";
+  }
   if (message.includes("QUIZ_NOT_FOUND")) return "That quiz was not found.";
   if (message.includes("NOT_HOST")) return "Only the host can do that.";
   if (message.includes("NOT_A_MEMBER")) return "You are not a member of this quiz.";
@@ -52,7 +69,9 @@ function mapQuizError(message: string): string {
   }
   if (message.includes("QUIZ_NOT_JOINABLE")) return "This quiz is not open for joining.";
   if (message.includes("QUIZ_EXPIRED")) return "This quiz has expired.";
-  if (message.includes("QUIZ_FULL")) return "This quiz is full.";
+  if (message.includes("QUIZ_FULL")) {
+    return "This quiz is full. Ask the host to unlock the quiz or change their plan for more players.";
+  }
   if (message.includes("NOT_AUTHENTICATED") || message.toLowerCase().includes("auth session")) {
     return "Session expired. Refresh and try again.";
   }
@@ -196,7 +215,7 @@ export async function createQuizAction(
   _prev: QuizActionState,
   formData: FormData,
 ): Promise<QuizActionState> {
-  const title = String(formData.get("title") ?? "").trim();
+  const title = effectiveQuizTitle(String(formData.get("title") ?? ""));
   const hostName = String(formData.get("hostName") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const tracksPayload = String(formData.get("tracksJson") ?? "").trim();
@@ -262,11 +281,15 @@ export async function createQuizAction(
           parsed.autoInterruptAfterEmptyRounds ??
             DEFAULT_QUIZ_SETTINGS.autoInterruptAfterEmptyRounds,
         ),
+        lastfmUsername: normalizeLastfmUsername(
+          typeof parsed.lastfmUsername === "string"
+            ? parsed.lastfmUsername
+            : DEFAULT_QUIZ_SETTINGS.lastfmUsername,
+        ),
       };
-      // Presentation mode forces the mid-quiz board / others hidden.
+      // Presentation mode forces the mid-quiz board hidden.
       if (presentsLeaderboardAtEnd(settings)) {
         settings.showOverallResults = false;
-        settings.showOthersInPastResults = false;
       }
       settings.combinedScoring = settings.scoringModes.length > 1;
       settings.secondaryScoringMode =
@@ -280,23 +303,44 @@ export async function createQuizAction(
     }
   }
 
-  const isAutoSpotify = settings.source === "spotify_live";
-  if (wizardCreate && tracks.length < 1 && !isAutoSpotify) {
+  const isLive = isLiveQuizSource(settings.source);
+  if (wizardCreate && tracks.length < 1 && !isLive) {
     return { error: "Please add at least one song before creating the quiz." };
   }
-  if (tracks.length > DEFAULT_MAX_CURATED_TRACKS && !requiresUnlock) {
-    return {
-      error: `Please keep the playlist to ${DEFAULT_MAX_CURATED_TRACKS} songs or fewer (or unlock this quiz).`,
-    };
+  if (settings.source === "lastfm_live" && !settings.lastfmUsername) {
+    return { error: "Enter your Last.fm username for live Spotify quizzes." };
   }
 
   try {
     const { supabase, user } = await ensureAnonymousSession();
+    const { data: profile } = await supabase
+      .from("beatage_profiles")
+      .select("plan")
+      .eq("id", user.id)
+      .maybeSingle();
+    const plan = getQuizPlanLimits((profile?.plan as PlanId | undefined) ?? "free");
+    const songCap = requiresUnlock
+      ? QUIZ_UNLOCK_LIMITS.maxCuratedTracks
+      : plan.maxCuratedTracks;
+    if (songCap != null && tracks.length > songCap) {
+      return {
+        error: requiresUnlock
+          ? `Please keep the playlist to ${songCap} songs or fewer.`
+          : `Please keep the playlist to ${songCap} songs or fewer (or unlock this quiz).`,
+      };
+    }
+
+    const pSource =
+      settings.source === "lastfm_live"
+        ? "lastfm_live"
+        : settings.source === "spotify_live"
+          ? "spotify_live"
+          : "curated";
     const { data, error } = await supabase.rpc("create_beatage_quiz", {
       p_title: title,
       p_host_name: hostName,
       p_description: description || null,
-      p_source: settings.source === "spotify_live" ? "spotify_live" : "curated",
+      p_source: pSource,
       p_settings: settings,
       p_chart_countries: settings.chartCountries,
       p_requires_unlock: requiresUnlock,
@@ -315,20 +359,6 @@ export async function createQuizAction(
     const quizId = String(payload.id ?? "").trim();
     if (!joinCode || !quizId) {
       return { error: "Quiz was created but no join code was returned." };
-    }
-
-    // Persist the free/plus song cap on the quiz row (unlock clears max_rounds).
-    if (!requiresUnlock) {
-      try {
-        const admin = createAdminClient();
-        await admin
-          .from("beatage_quizzes")
-          .update({ max_rounds: DEFAULT_MAX_CURATED_TRACKS })
-          .eq("id", quizId)
-          .is("unlocked_at", null);
-      } catch {
-        // Limit is still enforced in addCuratedTrackToQuiz / seed.
-      }
     }
 
     // Always send the host to the quiz page after create (MyContest pattern).
@@ -448,6 +478,46 @@ export async function leaveQuizAction(
     }
 
     return { redirectTo: "/?left=1" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Something went wrong.";
+    return { error: mapQuizError(message) };
+  }
+}
+
+export async function continueQuizWithPlanAction(
+  _prev: QuizActionState,
+  formData: FormData,
+): Promise<QuizActionState> {
+  const quizId = String(formData.get("quizId") ?? "").trim();
+  const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
+
+  if (!quizId) {
+    return { error: "Missing quiz." };
+  }
+
+  try {
+    const { supabase } = await ensureAnonymousSession();
+    const { data, error } = await supabase.rpc("beatage_continue_quiz_with_plan", {
+      p_quiz_id: quizId,
+    });
+
+    if (error) {
+      return { error: mapQuizError(error.message) };
+    }
+
+    const payload = (typeof data === "object" && data !== null ? data : {}) as {
+      join_code?: string;
+    };
+    const code = String(payload.join_code ?? joinCode).trim().toUpperCase();
+
+    revalidatePath("/");
+    if (code) revalidatePath(`/q/${code}`);
+
+    return {
+      success: true,
+      joinCode: code || undefined,
+      redirectTo: code ? `/q/${code}` : undefined,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Something went wrong.";
     return { error: mapQuizError(message) };

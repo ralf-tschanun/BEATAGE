@@ -1,4 +1,4 @@
-export type QuizSource = "curated" | "spotify_live" | "shazam";
+export type QuizSource = "curated" | "spotify_live" | "shazam" | "lastfm_live";
 
 export type ChartCountryCode = "DE" | "AT" | "GB";
 
@@ -17,8 +17,8 @@ export type AnswerYearMode = "this_release" | "original_recording";
 
 /**
  * How the final leaderboard is shown after the quiz ends.
- * When immediate / last_to_first, showOverallResults and showOthersInPastResults
- * are forced off so the board stays hidden until the host presents.
+ * When immediate / last_to_first, showOverallResults is forced off so the
+ * running board stays hidden until the host presents.
  */
 export type OverallReveal = "immediate" | "last_to_first" | "after_quiz";
 
@@ -27,7 +27,7 @@ export type BeatageQuizSettings = {
   chartCountries: ChartCountryCode[];
   guessPeriod: "until_next_track" | "host_manual" | "fixed_seconds";
   guessPeriodSeconds?: number;
-  /** Show song title & artist to participants during the live round. */
+  /** Show song title & artist during the live round (host and participants). */
   showTitleArtist: boolean;
   /** Show the correct release year after a round closes. */
   showCorrectAnswer: boolean;
@@ -44,10 +44,14 @@ export type BeatageQuizSettings = {
    */
   showOthersInPastResults: boolean;
   /**
-   * Auto Spotify only: pause auto ingest after this many consecutive rounds
+   * Live auto modes only: pause auto ingest after this many consecutive rounds
    * with zero guesses (1–10). Host must continue to resume.
    */
   autoInterruptAfterEmptyRounds: number;
+  /**
+   * Last.fm username for lastfm_live quizzes (Spotify must scrobble to this account).
+   */
+  lastfmUsername: string;
   guessMutability: "editable_until_close" | "locked_on_submit";
   speedBonus: boolean;
   releaseMode: "automatic" | "host_manual";
@@ -155,9 +159,10 @@ export const DEFAULT_QUIZ_SETTINGS: BeatageQuizSettings = {
   showTitleArtist: false,
   showCorrectAnswer: true,
   showOverallResults: true,
-  showResultDetails: false,
+  showResultDetails: true,
   showOthersInPastResults: false,
   autoInterruptAfterEmptyRounds: 3,
+  lastfmUsername: "",
   guessMutability: "editable_until_close",
   speedBonus: false,
   releaseMode: "host_manual",
@@ -276,8 +281,14 @@ export function answerYearModeLabel(mode: AnswerYearMode | string): string {
 
 export function quizSourceLabel(source: QuizSource | string): string {
   if (source === "spotify_live") return "Spotify live";
+  if (source === "lastfm_live") return "Live Spotify (Last.fm)";
   if (source === "shazam") return "Shazam";
   return "Curated list";
+}
+
+/** Auto ingest from an external player (no curated playlist required). */
+export function isLiveQuizSource(source: QuizSource | string | null | undefined): boolean {
+  return source === "spotify_live" || source === "lastfm_live";
 }
 
 export const SCORING_MODE_LABELS: Record<ScoringModeId, string> = {

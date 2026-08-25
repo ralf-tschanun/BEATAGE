@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { XIcon } from "@phosphor-icons/react";
 import { createQuizAction, type QuizActionState } from "@/app/actions/quiz";
 import {
+  CreateQuizParticipantLimitDialog,
   CreateQuizSlotLimitTipDialog,
   CreateQuizUnlockDialog,
 } from "@/components/create-quiz-unlock-dialog";
@@ -41,18 +42,25 @@ import { CHART_COUNTRY_OPTIONS } from "@/lib/charts";
 import { BRAND_NAME } from "@/lib/brand";
 import {
   clearQuizWizardState,
+  DEFAULT_QUIZ_TITLE,
   defaultQuizWizardState,
+  effectiveQuizTitle,
   filledQuizSongs,
   hasMeaningfulQuizWizardDraft,
   loadQuizWizardState,
+  loadRememberedLastfmUsername,
   quizWizardSettingsSummary,
   quizWizardStepTitle,
   saveQuizWizardState,
   validateQuizWizardStep,
   type CreateQuizWizardState,
 } from "@/lib/create-quiz-wizard";
-import type { PlanId } from "@/lib/quiz-plans";
-import { DEFAULT_MAX_CURATED_TRACKS, getQuizPlanLimits } from "@/lib/quiz-plans";
+import {
+  DEFAULT_MAX_CURATED_TRACKS,
+  getQuizPlanLimits,
+  QUIZ_UNLOCK_LIMITS,
+  type PlanId,
+} from "@/lib/quiz-plans";
 import type {
   AnswerYearMode,
   ChartCountryCode,
@@ -60,7 +68,6 @@ import type {
   ScoringModeId,
 } from "@/lib/quiz-settings";
 import {
-  answerYearModeLabel,
   clampYearRangeTolerance,
   QUIZ_LEADERBOARD_REVEAL_OPTIONS,
   toggleScoringModeSelection,
@@ -83,7 +90,7 @@ const YEAR_SCORING_OPTIONS: {
   {
     id: "year_distance",
     label: "Closer wins",
-    body: "Penalty points = years off the answer. Lowest score wins.",
+    body: "Penalty points = years off the answer. Lowest score wins. No guess: worst submitted miss + 2, capped at 20.",
   },
   {
     id: "year_range",
@@ -113,17 +120,23 @@ export function CreateQuizWizardForm({
 }: CreateQuizWizardFormProps) {
   const router = useRouter();
   const plan = getQuizPlanLimits(planId);
+  const planSongCap = plan.maxCuratedTracks ?? DEFAULT_MAX_CURATED_TRACKS;
+  const unlockSongCap = QUIZ_UNLOCK_LIMITS.maxCuratedTracks;
   const hostNameDefault = defaultHostName?.trim() ?? "";
   const [state, formAction] = useActionState(createQuizAction, initialState);
   const [pending, startTransition] = useTransition();
   const [hydrated, setHydrated] = useState(false);
   const [draftChoiceOpen, setDraftChoiceOpen] = useState(false);
   const [unlockOpen, setUnlockOpen] = useState(false);
+  const [participantLimitOpen, setParticipantLimitOpen] = useState(false);
+  const [quickLastfmOpen, setQuickLastfmOpen] = useState(false);
+  const [quickLastfmDraft, setQuickLastfmDraft] = useState("");
   /** Gate: slot-limit tip before the wizard when there is no free active slot. */
   const [slotGateOpen, setSlotGateOpen] = useState(!canCreate);
   const [slotAcked, setSlotAcked] = useState(canCreate);
-  /** Host opted in to unlock so the playlist can exceed the free song cap. */
+  /** Host opted in to unlock so the playlist can exceed the plan song cap. */
   const [unlockForTracks, setUnlockForTracks] = useState(false);
+  const songCap = unlockForTracks ? unlockSongCap : planSongCap;
   const [stepError, setStepError] = useState<string | null>(null);
   const [wizard, setWizard] = useState<CreateQuizWizardState>(() =>
     defaultQuizWizardState(hostNameDefault),
@@ -136,12 +149,24 @@ export function CreateQuizWizardForm({
   useEffect(() => {
     const saved = loadQuizWizardState(hostNameDefault);
     if (saved && hasMeaningfulQuizWizardDraft(saved)) {
-      setWizard(saved);
+      // Prefer draft username; fall back to last remembered Last.fm name.
+      const lastfmUsername =
+        saved.lastfmUsername.trim() || loadRememberedLastfmUsername();
+      setWizard(
+        lastfmUsername === saved.lastfmUsername
+          ? saved
+          : { ...saved, lastfmUsername },
+      );
       if (canCreate) {
         setDraftChoiceOpen(true);
       } else {
         // Show draft choice only after the slot-limit tip is acknowledged.
         pendingDraftRef.current = true;
+      }
+    } else {
+      const remembered = loadRememberedLastfmUsername();
+      if (remembered) {
+        setWizard((prev) => ({ ...prev, lastfmUsername: remembered }));
       }
     }
     setHydrated(true);
@@ -170,9 +195,16 @@ export function CreateQuizWizardForm({
     setWizard((prev) => ({ ...prev, ...patch }));
   }, []);
 
+  function freshWizardState(): CreateQuizWizardState {
+    return {
+      ...defaultQuizWizardState(hostNameDefault),
+      lastfmUsername: loadRememberedLastfmUsername(),
+    };
+  }
+
   function startFreshDraft() {
     clearQuizWizardState();
-    setWizard(defaultQuizWizardState(hostNameDefault));
+    setWizard(freshWizardState());
     setDraftChoiceOpen(false);
     setStepError(null);
   }
@@ -183,7 +215,7 @@ export function CreateQuizWizardForm({
 
   function handleClearDraft() {
     clearQuizWizardState();
-    setWizard(defaultQuizWizardState(hostNameDefault));
+    setWizard(freshWizardState());
     setStepError(null);
   }
 
@@ -208,7 +240,7 @@ export function CreateQuizWizardForm({
       return;
     }
     setStepError(null);
-    patchWizard({ step: Math.min(wizardRef.current.step + 1, 3) });
+    patchWizard({ step: Math.min(wizardRef.current.step + 1, 2) });
   }
 
   function handleBack() {
@@ -221,7 +253,7 @@ export function CreateQuizWizardForm({
     const formData = new FormData();
     formData.set("wizardCreate", "1");
     if (requiresUnlock) formData.set("requiresQuizUnlock", "1");
-    formData.set("title", current.title.trim());
+    formData.set("title", effectiveQuizTitle(current.title));
     formData.set("hostName", current.hostName.trim() || hostNameDefault);
     formData.set("description", current.description.trim());
     formData.set(
@@ -241,15 +273,28 @@ export function CreateQuizWizardForm({
     formData.set(
       "settingsJson",
       JSON.stringify({
-        source: current.playMode === "auto_spotify" ? "spotify_live" : "curated",
+        source:
+          current.playMode === "auto_lastfm"
+            ? "lastfm_live"
+            : current.playMode === "auto_spotify"
+              ? "spotify_live"
+              : "curated",
+        lastfmUsername:
+          current.playMode === "auto_lastfm"
+            ? current.lastfmUsername.trim().replace(/^@/, "")
+            : "",
         chartCountries: current.chartCountries,
         scoringModes: current.scoringModes,
         yearRangeTolerance: current.yearRangeTolerance,
         hostParticipates: current.hostParticipates,
         guessPeriod:
-          current.playMode === "auto_spotify" ? "until_next_track" : "host_manual",
+          current.playMode === "auto_lastfm" || current.playMode === "auto_spotify"
+            ? "until_next_track"
+            : "host_manual",
         releaseMode:
-          current.playMode === "auto_spotify" ? "automatic" : "host_manual",
+          current.playMode === "auto_lastfm" || current.playMode === "auto_spotify"
+            ? "automatic"
+            : "host_manual",
         answerYearMode: current.answerYearMode,
         showTitleArtist: current.showTitleArtist,
         showCorrectAnswer: current.showCorrectAnswer,
@@ -257,9 +302,7 @@ export function CreateQuizWizardForm({
           ? false
           : current.showOverallResults,
         showResultDetails: current.showResultDetails,
-        showOthersInPastResults: current.presentLeaderboardAtEnd
-          ? false
-          : current.showOthersInPastResults,
+        showOthersInPastResults: current.showOthersInPastResults,
         overallReveal: current.presentLeaderboardAtEnd
           ? current.overallReveal
           : "after_quiz",
@@ -272,22 +315,30 @@ export function CreateQuizWizardForm({
 
   function submitCreate(requiresUnlock = false) {
     const current = wizardRef.current;
-    const error = validateQuizWizardStep(current, 1);
-    if (error) {
-      setStepError(error);
+    const playlistError = validateQuizWizardStep(current, 1);
+    if (playlistError) {
+      setStepError(playlistError);
+      setParticipantLimitOpen(false);
       return;
     }
-    const overTracks =
-      filledQuizSongs(current).length > DEFAULT_MAX_CURATED_TRACKS;
+    const optionsError = validateQuizWizardStep(current, 2);
+    if (optionsError) {
+      setStepError(optionsError);
+      setParticipantLimitOpen(false);
+      return;
+    }
+    const overTracks = filledQuizSongs(current).length > planSongCap;
     const needsUnlock = !canCreate || overTracks || unlockForTracks;
 
     if (needsUnlock && !requiresUnlock) {
+      setParticipantLimitOpen(false);
       setUnlockOpen(true);
       return;
     }
 
     setStepError(null);
     setUnlockOpen(false);
+    setParticipantLimitOpen(false);
 
     const formData = buildCreateFormData(requiresUnlock || needsUnlock);
     clearQuizWizardState();
@@ -296,13 +347,99 @@ export function CreateQuizWizardForm({
     });
   }
 
+  /** MyContest pattern: confirm create via participant-limit dialog when within plan. */
+  function requestCreate() {
+    const current = wizardRef.current;
+    const setupError = validateQuizWizardStep(current, 0);
+    if (setupError) {
+      setStepError(setupError);
+      return;
+    }
+    const playlistError = validateQuizWizardStep(current, 1);
+    if (playlistError) {
+      setStepError(playlistError);
+      return;
+    }
+    const optionsError = validateQuizWizardStep(current, 2);
+    if (optionsError) {
+      setStepError(optionsError);
+      return;
+    }
+
+    const overTracks = filledQuizSongs(current).length > planSongCap;
+    const needsUnlock = !canCreate || overTracks || unlockForTracks;
+
+    if (needsUnlock) {
+      setUnlockOpen(true);
+      return;
+    }
+
+    if (plan.maxMembers != null) {
+      setParticipantLimitOpen(true);
+      return;
+    }
+
+    submitCreate(false);
+  }
+
+  /** Apply live defaults (keep title / host / description from step 1). */
+  function applyQuickLiveDefaults(lastfmUsername: string): CreateQuizWizardState {
+    const current = wizardRef.current;
+    const host = current.hostName.trim() || hostNameDefault;
+    const next: CreateQuizWizardState = {
+      ...defaultQuizWizardState(host),
+      title: current.title,
+      description: current.description,
+      hostName: host,
+      playMode: "auto_lastfm",
+      lastfmUsername: lastfmUsername.trim().replace(/^@/, ""),
+      step: 0,
+    };
+    wizardRef.current = next;
+    setWizard(next);
+    return next;
+  }
+
+  function handleQuickLiveQuiz() {
+    const current = wizardRef.current;
+    const host = current.hostName.trim() || hostNameDefault;
+    if (!host) {
+      setStepError("Please enter your name.");
+      return;
+    }
+    setStepError(null);
+    const lastfm =
+      current.lastfmUsername.trim().replace(/^@/, "") ||
+      loadRememberedLastfmUsername();
+    if (!lastfm) {
+      setStepError(null);
+      setQuickLastfmDraft("");
+      setQuickLastfmOpen(true);
+      return;
+    }
+    applyQuickLiveDefaults(lastfm);
+    requestCreate();
+  }
+
+  function confirmQuickLiveWithLastfm() {
+    const lastfm = quickLastfmDraft.trim().replace(/^@/, "");
+    if (!lastfm) {
+      setStepError("Enter your Last.fm username (link Spotify → Last.fm in the Spotify app first).");
+      return;
+    }
+    setQuickLastfmOpen(false);
+    setStepError(null);
+    applyQuickLiveDefaults(lastfm);
+    requestCreate();
+  }
+
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (wizardRef.current.step < 3) {
+    if (wizardRef.current.step < 2) {
       handleNext();
       return;
     }
-    submitCreate();
+    requestCreate();
   }
 
 
@@ -373,7 +510,7 @@ export function CreateQuizWizardForm({
         reason={
           !canCreate &&
           (unlockForTracks ||
-            filledQuizSongs(wizard).length > DEFAULT_MAX_CURATED_TRACKS)
+            filledQuizSongs(wizard).length > planSongCap)
             ? "both"
             : !canCreate
               ? "slot"
@@ -381,6 +518,65 @@ export function CreateQuizWizardForm({
         }
         onUnlockAndCreate={() => submitCreate(true)}
       />
+
+      <CreateQuizParticipantLimitDialog
+        open={participantLimitOpen}
+        onOpenChange={setParticipantLimitOpen}
+        maxMembers={plan.maxMembers ?? 0}
+        planLabel={plan.label}
+        planId={planId}
+        hasSession={hasSession}
+        isAnonymous={isAnonymous}
+        pending={pending}
+        onCreateWithPlanLimit={() => submitCreate(false)}
+        onUnlockAndCreate={() => submitCreate(true)}
+      />
+
+      <Dialog open={quickLastfmOpen} onOpenChange={setQuickLastfmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Last.fm username</DialogTitle>
+            <DialogDescription>
+              Quick Live Quiz follows Spotify via Last.fm. Connect Last.fm once in
+              the Spotify app (Settings → Social / Connections), then enter your
+              Last.fm username.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="quick-lastfm-username">Last.fm username</Label>
+            <Input
+              id="quick-lastfm-username"
+              value={quickLastfmDraft}
+              onChange={(event) => setQuickLastfmDraft(event.target.value)}
+              placeholder="your_lastfm_name"
+              autoComplete="username"
+              maxLength={64}
+              autoFocus
+            />
+          </div>
+          {stepError ? (
+            <p className="text-sm text-destructive" role="alert">
+              {stepError}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setQuickLastfmOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={pending}
+              onClick={confirmQuickLiveWithLastfm}
+            >
+              {pending ? "Creating…" : "Create quiz"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-6 py-8">
@@ -397,11 +593,13 @@ export function CreateQuizWizardForm({
               )}
             >
               <h1 className="truncate text-lg font-semibold tracking-tight sm:text-xl">
-                {wizard.title.trim() || "Create a quiz"}
+                {wizard.step === 0
+                  ? "Create a quiz"
+                  : effectiveQuizTitle(wizard.title)}
               </h1>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm font-medium text-foreground">
-                  Step {wizard.step + 1} of 4 · {quizWizardStepTitle(wizard.step)}
+                  Step {wizard.step + 1} of 3 · {quizWizardStepTitle(wizard.step)}
                 </p>
                 <Button type="button" variant="ghost" size="sm" onClick={handleClearDraft}>
                   Clear draft
@@ -442,7 +640,7 @@ export function CreateQuizWizardForm({
                           id="quiz-title"
                           value={wizard.title}
                           onChange={(event) => patchWizard({ title: event.target.value })}
-                          placeholder="Friday night hits"
+                          placeholder={DEFAULT_QUIZ_TITLE}
                           maxLength={80}
                           autoComplete="off"
                         />
@@ -478,6 +676,24 @@ export function CreateQuizWizardForm({
                       <div className="grid gap-3 sm:grid-cols-2">
                         <button
                           type="button"
+                          onClick={() => patchWizard({ playMode: "auto_lastfm" })}
+                          className={cn(
+                            "rounded-xl border px-4 py-3 text-left transition",
+                            wizard.playMode === "auto_lastfm"
+                              ? "border-primary bg-primary/5 ring-1 ring-primary/40"
+                              : "border-border/60 hover:border-border",
+                          )}
+                        >
+                          <p className="text-sm font-semibold text-foreground">
+                            Live Spotify (Last.fm)
+                          </p>
+                          <p className="mt-1 text-xs leading-snug text-muted-foreground">
+                            Play any playlist in Spotify — BEATAGE follows via Last.fm
+                            and opens rounds automatically. Works for every host.
+                          </p>
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => patchWizard({ playMode: "curate" })}
                           className={cn(
                             "rounded-xl border px-4 py-3 text-left transition",
@@ -494,31 +710,28 @@ export function CreateQuizWizardForm({
                             the quiz.
                           </p>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => patchWizard({ playMode: "auto_spotify" })}
-                          className={cn(
-                            "rounded-xl border px-4 py-3 text-left transition",
-                            wizard.playMode === "auto_spotify"
-                              ? "border-primary bg-primary/5 ring-1 ring-primary/40"
-                              : "border-border/60 hover:border-border",
-                          )}
-                        >
-                          <p className="text-sm font-semibold text-foreground">
-                            Auto Spotify
-                          </p>
-                          <p className="mt-1 text-xs leading-snug text-muted-foreground">
-                            Play any song in Spotify — everyone guesses its release year
-                            while it plays.
-                          </p>
-                        </button>
                       </div>
 
-                      {wizard.playMode === "auto_spotify" ? (
-                        <div className="rounded-xl border border-border/60 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-                          No playlist needed here. In the quiz, rounds open and close
-                          automatically from whatever is playing in Spotify (with a short
-                          5s delay so skips do not start a round by accident).
+                      {wizard.playMode === "auto_lastfm" ? (
+                        <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 px-4 py-3">
+                          <p className="text-sm text-muted-foreground">
+                            One-time setup: in the Spotify app go to Settings → Social /
+                            Connections → connect Last.fm. Then enter your Last.fm
+                            username below. No Spotify Developer allowlist needed.
+                          </p>
+                          <div className="space-y-2">
+                            <Label htmlFor="lastfmUsername">Last.fm username</Label>
+                            <Input
+                              id="lastfmUsername"
+                              value={wizard.lastfmUsername}
+                              onChange={(event) =>
+                                patchWizard({ lastfmUsername: event.target.value })
+                              }
+                              placeholder="your_lastfm_name"
+                              autoComplete="username"
+                              maxLength={64}
+                            />
+                          </div>
                         </div>
                       ) : null}
 
@@ -527,8 +740,8 @@ export function CreateQuizWizardForm({
                       <p className="text-sm text-muted-foreground">
                         Build your playlist in play order
                         {unlockForTracks
-                          ? " (unlimited with unlock at create)"
-                          : ` (max ${DEFAULT_MAX_CURATED_TRACKS} songs on your plan)`}
+                          ? ` (max ${unlockSongCap} songs with unlock at create)`
+                          : ` (max ${planSongCap} songs on your plan)`}
                         . Release years are resolved when the quiz is created.
                       </p>
                       {wizard.draftSongs.map((song, index) => (
@@ -570,12 +783,12 @@ export function CreateQuizWizardForm({
                           />
                         </div>
                       ))}
-                      {wizard.draftSongs.length >= DEFAULT_MAX_CURATED_TRACKS &&
+                      {wizard.draftSongs.length >= planSongCap &&
                       !unlockForTracks ? (
                         <div className="space-y-3 rounded-xl border border-primary/25 bg-primary/5 px-4 py-3">
                           <p className="text-sm text-foreground">
-                            Plan limit reached ({DEFAULT_MAX_CURATED_TRACKS} songs). Unlock
-                            this quiz once for an unlimited playlist — you pay at create.
+                            Plan limit reached ({planSongCap} songs). Unlock
+                            this quiz once for up to {unlockSongCap} songs — you pay at create.
                           </p>
                           <div className="flex flex-col gap-2 sm:flex-row">
                             <Button
@@ -610,10 +823,7 @@ export function CreateQuizWizardForm({
                         <WizardAddAnotherButton
                           onClick={() => {
                             const newIndex = wizard.draftSongs.length;
-                            if (
-                              !unlockForTracks &&
-                              newIndex >= DEFAULT_MAX_CURATED_TRACKS
-                            ) {
+                            if (newIndex >= songCap) {
                               return;
                             }
                             setWizard((prev) => ({
@@ -627,6 +837,7 @@ export function CreateQuizWizardForm({
                               keyboardSafe: true,
                             });
                           }}
+                          disabled={wizard.draftSongs.length >= songCap}
                         >
                           Add another song
                           {unlockForTracks ? " (unlock at create)" : ""}
@@ -639,77 +850,6 @@ export function CreateQuizWizardForm({
 
                   {wizard.step === 2 ? (
                     <div className="space-y-5">
-                      <div className="space-y-2">
-                        <Label>Chart countries</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {QUIZ_CHART_COUNTRIES.map((code) => {
-                            const option = CHART_COUNTRY_OPTIONS[code];
-                            const selected = wizard.chartCountries.includes(code);
-                            return (
-                              <Button
-                                key={code}
-                                type="button"
-                                variant={selected ? "default" : "outline"}
-                                size="sm"
-                                onClick={() => toggleChartCountry(code)}
-                              >
-                                {option.label}
-                              </Button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      <WizardOptionsDivider />
-
-                      <div className="space-y-2">
-                        <Label>Answer year</Label>
-                        <p className="text-sm text-muted-foreground">
-                          Remasters and sampler / hits albums are filtered out in
-                          both modes.
-                        </p>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          {(
-                            [
-                              {
-                                id: "this_release" as AnswerYearMode,
-                                title: "This release / cover",
-                                body: "Use the year of the played version (e.g. Fugees).",
-                              },
-                              {
-                                id: "original_recording" as AnswerYearMode,
-                                title: "Original recording",
-                                body: "Use the first recording of the song (e.g. Roberta Flack).",
-                              },
-                            ] as const
-                          ).map((option) => {
-                            const selected = wizard.answerYearMode === option.id;
-                            return (
-                              <button
-                                key={option.id}
-                                type="button"
-                                onClick={() =>
-                                  patchWizard({ answerYearMode: option.id })
-                                }
-                                className={cn(
-                                  "rounded-2xl border p-4 text-left transition-colors",
-                                  selected
-                                    ? "border-primary bg-primary/5"
-                                    : "border-border/60 hover:bg-muted/40",
-                                )}
-                              >
-                                <p className="font-medium">{option.title}</p>
-                                <p className="mt-1 text-sm text-muted-foreground">
-                                  {option.body}
-                                </p>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      <WizardOptionsDivider />
-
                       <div className="space-y-3">
                         <div className="space-y-1">
                           <Label>Scoring</Label>
@@ -797,7 +937,36 @@ export function CreateQuizWizardForm({
                             toggleScoringMode("chart_was_one")
                           }
                         />
+
+                        {wizard.scoringModes.includes("chart_was_one") ? (
+                          <div className="space-y-2 rounded-2xl border border-border/60 p-4">
+                            <Label>Chart countries</Label>
+                            <p className="text-sm text-muted-foreground">
+                              Which national charts count for the #1 question.
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {QUIZ_CHART_COUNTRIES.map((code) => {
+                                const option = CHART_COUNTRY_OPTIONS[code];
+                                const selected =
+                                  wizard.chartCountries.includes(code);
+                                return (
+                                  <Button
+                                    key={code}
+                                    type="button"
+                                    variant={selected ? "default" : "outline"}
+                                    size="sm"
+                                    onClick={() => toggleChartCountry(code)}
+                                  >
+                                    {option.label}
+                                  </Button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
+
+                      <WizardOptionsDivider label={null} />
 
                       <AdminSwitchField
                         id="hostParticipates"
@@ -811,129 +980,193 @@ export function CreateQuizWizardForm({
 
                       <WizardOptionsDivider />
 
-                      <div className="space-y-3">
-                        <Label>Visibility</Label>
-                        <AdminSwitchField
-                          id="showTitleArtist"
-                          label="Show song & artist"
-                          description="Show title and artist to participants during the live round (host always sees them)."
-                          checked={wizard.showTitleArtist}
-                          onCheckedChange={(checked) =>
-                            patchWizard({ showTitleArtist: checked })
-                          }
-                        />
-                        <AdminSwitchField
-                          id="showCorrectAnswer"
-                          label="Show correct answer"
-                          description="Reveal the correct release year after each round closes."
-                          checked={wizard.showCorrectAnswer}
-                          onCheckedChange={(checked) =>
-                            patchWizard({ showCorrectAnswer: checked })
-                          }
-                        />
-                        <AdminSwitchField
-                          id="presentLeaderboardAtEnd"
-                          label="Present leaderboard results at the end"
-                          description="Hide the running board during play. After the quiz ends, the host presents the final leaderboard (MyContest-style)."
-                          checked={wizard.presentLeaderboardAtEnd}
-                          onCheckedChange={(checked) =>
-                            patchWizard(
-                              checked
-                                ? {
-                                    presentLeaderboardAtEnd: true,
-                                    showOverallResults: false,
-                                    showOthersInPastResults: false,
+                      <div className="space-y-5">
+                        <div className="space-y-2">
+                          <Label>Answer year</Label>
+                          <p className="text-sm text-muted-foreground">
+                            Remasters and sampler / hits albums are filtered out in
+                            both modes.
+                          </p>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {(
+                              [
+                                {
+                                  id: "this_release" as AnswerYearMode,
+                                  title: "This release / cover",
+                                  body: "Use the year of the played version (e.g. Fugees).",
+                                },
+                                {
+                                  id: "original_recording" as AnswerYearMode,
+                                  title: "Original recording",
+                                  body: "Use the first recording of the song (e.g. Roberta Flack).",
+                                },
+                              ] as const
+                            ).map((option) => {
+                              const selected = wizard.answerYearMode === option.id;
+                              return (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  onClick={() =>
+                                    patchWizard({ answerYearMode: option.id })
                                   }
-                                : {
-                                    presentLeaderboardAtEnd: false,
-                                    showOverallResults: true,
-                                  },
-                            )
-                          }
-                        />
-                        {wizard.presentLeaderboardAtEnd ? (
-                          <div className="space-y-2 pl-1">
-                            <Label htmlFor="overallReveal">
-                              How to present the leaderboard?
-                            </Label>
-                            <select
-                              id="overallReveal"
-                              className={ADMIN_SELECT_CLASS}
-                              value={wizard.overallReveal}
-                              onChange={(event) =>
-                                patchWizard({
-                                  overallReveal: event.target
-                                    .value as Exclude<
-                                    OverallReveal,
-                                    "after_quiz"
-                                  >,
-                                })
-                              }
-                            >
-                              {(
-                                Object.keys(
-                                  QUIZ_LEADERBOARD_REVEAL_OPTIONS,
-                                ) as Array<
-                                  Exclude<OverallReveal, "after_quiz">
+                                  className={cn(
+                                    "rounded-2xl border p-4 text-left transition-colors",
+                                    selected
+                                      ? "border-primary bg-primary/5"
+                                      : "border-border/60 hover:bg-muted/40",
+                                  )}
                                 >
-                              ).map((key) => (
-                                <option key={key} value={key}>
-                                  {QUIZ_LEADERBOARD_REVEAL_OPTIONS[key].label}
-                                </option>
-                              ))}
-                            </select>
-                            <p className="text-xs text-muted-foreground">
-                              {
-                                QUIZ_LEADERBOARD_REVEAL_OPTIONS[
-                                  wizard.overallReveal
-                                ].description
-                              }
-                            </p>
+                                  <p className="font-medium">{option.title}</p>
+                                  <p className="mt-1 text-sm text-muted-foreground">
+                                    {option.body}
+                                  </p>
+                                </button>
+                              );
+                            })}
                           </div>
-                        ) : (
+                        </div>
+
+                        <div className="space-y-3">
+                          <Label>Player&apos;s visibility</Label>
+                          <AdminSwitchField
+                            id="showTitleArtist"
+                            label="Show song & artist"
+                            description="Show title and artist during the live round for everyone, including the host."
+                            checked={wizard.showTitleArtist}
+                            onCheckedChange={(checked) =>
+                              patchWizard({ showTitleArtist: checked })
+                            }
+                          />
+                          <AdminSwitchField
+                            id="showCorrectAnswer"
+                            label="Show correct answer"
+                            description="Reveal the correct release year after each round closes."
+                            checked={wizard.showCorrectAnswer}
+                            onCheckedChange={(checked) =>
+                              patchWizard({ showCorrectAnswer: checked })
+                            }
+                          />
+                          <AdminSwitchField
+                            id="showResultDetails"
+                            label="Show details in results list"
+                            description="Previous rounds show release years and expand to full round results. When off, players only see their points for each past round."
+                            checked={wizard.showResultDetails}
+                            onCheckedChange={(checked) =>
+                              patchWizard({ showResultDetails: checked })
+                            }
+                          />
+                          {wizard.showResultDetails ? (
+                            <AdminSwitchField
+                              id="showOthersInPastResults"
+                              label="Show other players' results"
+                              description="Let participants see other players’ guesses in expanded previous rounds. Host always sees everyone. Turn off for large groups."
+                              checked={wizard.showOthersInPastResults}
+                              onCheckedChange={(checked) =>
+                                patchWizard({ showOthersInPastResults: checked })
+                              }
+                            />
+                          ) : null}
+                        </div>
+
+                        <div className="space-y-3">
+                          <Label>Results</Label>
+                          <AdminSwitchField
+                            id="presentLeaderboardAtEnd"
+                            label="Present leaderboard results at the end"
+                            description="Hide the running board during play. After the quiz ends, the host presents the final leaderboard (MyContest-style)."
+                            checked={wizard.presentLeaderboardAtEnd}
+                            onCheckedChange={(checked) =>
+                              patchWizard(
+                                checked
+                                  ? {
+                                      presentLeaderboardAtEnd: true,
+                                      showOverallResults: false,
+                                    }
+                                  : {
+                                      presentLeaderboardAtEnd: false,
+                                      showOverallResults: true,
+                                    },
+                              )
+                            }
+                          />
+                          {wizard.presentLeaderboardAtEnd ? (
+                            <div className="space-y-2 pl-1">
+                              <Label htmlFor="overallReveal">
+                                How to present the leaderboard?
+                              </Label>
+                              <select
+                                id="overallReveal"
+                                className={ADMIN_SELECT_CLASS}
+                                value={wizard.overallReveal}
+                                onChange={(event) =>
+                                  patchWizard({
+                                    overallReveal: event.target
+                                      .value as Exclude<
+                                      OverallReveal,
+                                      "after_quiz"
+                                    >,
+                                  })
+                                }
+                              >
+                                {(
+                                  Object.keys(
+                                    QUIZ_LEADERBOARD_REVEAL_OPTIONS,
+                                  ) as Array<
+                                    Exclude<OverallReveal, "after_quiz">
+                                  >
+                                ).map((key) => (
+                                  <option key={key} value={key}>
+                                    {QUIZ_LEADERBOARD_REVEAL_OPTIONS[key].label}
+                                  </option>
+                                ))}
+                              </select>
+                              <p className="text-xs text-muted-foreground">
+                                {
+                                  QUIZ_LEADERBOARD_REVEAL_OPTIONS[
+                                    wizard.overallReveal
+                                  ].description
+                                }
+                              </p>
+                            </div>
+                          ) : null}
                           <AdminSwitchField
                             id="showOverallResults"
-                            label="Show overall results"
-                            description="Show the running leaderboard with scores during the quiz."
-                            checked={wizard.showOverallResults}
-                            onCheckedChange={(checked) =>
-                              patchWizard({ showOverallResults: checked })
+                            label="Live Leaderboard"
+                            description={
+                              wizard.presentLeaderboardAtEnd
+                                ? "Off while end presentation is on — the board stays hidden until the host presents."
+                                : "Show the running leaderboard with scores during the quiz for everyone. If the host is not playing along, they still see it."
                             }
-                          />
-                        )}
-                        <AdminSwitchField
-                          id="showResultDetails"
-                          label="Show details in results list"
-                          description="Previous rounds show release years and expand to full round results. When off, players only see their points for each past round."
-                          checked={wizard.showResultDetails}
-                          onCheckedChange={(checked) =>
-                            patchWizard({ showResultDetails: checked })
-                          }
-                        />
-                        {wizard.showResultDetails &&
-                        !wizard.presentLeaderboardAtEnd ? (
-                          <AdminSwitchField
-                            id="showOthersInPastResults"
-                            label="Show others in past results"
-                            description="Let participants see other players’ guesses in expanded previous rounds. Host always sees everyone. Turn off for large groups."
-                            checked={wizard.showOthersInPastResults}
-                            onCheckedChange={(checked) =>
-                              patchWizard({ showOthersInPastResults: checked })
+                            checked={
+                              !wizard.presentLeaderboardAtEnd &&
+                              wizard.showOverallResults
                             }
+                            onCheckedChange={(checked) => {
+                              if (wizard.presentLeaderboardAtEnd && checked) {
+                                patchWizard({
+                                  presentLeaderboardAtEnd: false,
+                                  showOverallResults: true,
+                                });
+                                return;
+                              }
+                              patchWizard({ showOverallResults: checked });
+                            }}
                           />
-                        ) : null}
+                        </div>
                       </div>
 
-                      {wizard.playMode === "auto_spotify" ? (
+                      {wizard.playMode === "auto_lastfm" ||
+                      wizard.playMode === "auto_spotify" ? (
                         <>
-                          <WizardOptionsDivider />
+                          <WizardOptionsDivider label="Safety" />
                           <div className="space-y-2">
                             <Label htmlFor="autoInterruptAfterEmptyRounds">
                               Interrupt after empty songs
                             </Label>
                             <p className="text-sm text-muted-foreground">
-                              If this many songs in a row get no guesses, Auto
-                              Spotify pauses until you continue (1–10).
+                              If this many songs in a row get no guesses, live mode
+                              pauses until you continue (1–10).
                             </p>
                             <Input
                               id="autoInterruptAfterEmptyRounds"
@@ -953,94 +1186,11 @@ export function CreateQuizWizardForm({
                           </div>
                         </>
                       ) : null}
-                    </div>
-                  ) : null}
 
-                  {wizard.step === 3 ? (
-                    <div className="space-y-3 text-sm">
-                      <p>
-                        <span className="font-medium">Title:</span> {wizard.title.trim()}
-                      </p>
-                      <p>
-                        <span className="font-medium">Host:</span>{" "}
-                        {wizard.hostName.trim() || hostNameDefault}
-                      </p>
-                      {wizard.description.trim() ? (
-                        <p>
-                          <span className="font-medium">Description:</span>{" "}
-                          {wizard.description.trim()}
-                        </p>
-                      ) : null}
-                      <p>
-                        <span className="font-medium">Mode:</span>{" "}
-                        {wizard.playMode === "auto_spotify"
-                          ? "Auto Spotify"
-                          : "Curated playlist"}
-                      </p>
-                      <p>
-                        <span className="font-medium">Answer year:</span>{" "}
-                        {answerYearModeLabel(wizard.answerYearMode)}
-                      </p>
-                      {wizard.playMode === "curate" ? (
-                        <p>
-                          <span className="font-medium">Playlist:</span>{" "}
-                          {filledQuizSongs(wizard).length} song
-                          {filledQuizSongs(wizard).length === 1 ? "" : "s"}
-                        </p>
-                      ) : null}
-                      <p>
-                        <span className="font-medium">Settings:</span>{" "}
-                        {quizWizardSettingsSummary(wizard)}
-                      </p>
-                      <p>
-                        <span className="font-medium">Show song & artist:</span>{" "}
-                        {wizard.showTitleArtist ? "yes" : "no"}
-                      </p>
-                      <p>
-                        <span className="font-medium">Show correct answer:</span>{" "}
-                        {wizard.showCorrectAnswer ? "yes" : "no"}
-                      </p>
-                      <p>
-                        <span className="font-medium">
-                          Present leaderboard at end:
-                        </span>{" "}
-                        {wizard.presentLeaderboardAtEnd
-                          ? wizard.overallReveal === "last_to_first"
-                            ? "yes · last to first"
-                            : "yes · all at once"
-                          : "no"}
-                      </p>
-                      {!wizard.presentLeaderboardAtEnd ? (
-                        <p>
-                          <span className="font-medium">
-                            Show overall results:
-                          </span>{" "}
-                          {wizard.showOverallResults ? "yes" : "no"}
-                        </p>
-                      ) : null}
-                      <p>
-                        <span className="font-medium">Result details:</span>{" "}
-                        {wizard.showResultDetails ? "yes" : "no"}
-                      </p>
-                      {wizard.showResultDetails &&
-                      !wizard.presentLeaderboardAtEnd ? (
-                        <p>
-                          <span className="font-medium">
-                            Others in past results:
-                          </span>{" "}
-                          {wizard.showOthersInPastResults ? "yes" : "no"}
-                        </p>
-                      ) : null}
-                      {wizard.playMode === "auto_spotify" ? (
-                        <p>
-                          <span className="font-medium">Auto interrupt:</span>{" "}
-                          after {wizard.autoInterruptAfterEmptyRounds} empty
-                          songs
-                        </p>
-                      ) : null}
-                      <p className="text-muted-foreground">
-                        Press Create quiz to publish. Nothing is stored until now — same flow as
-                        MyContest.
+                      <p className="text-sm text-muted-foreground">
+                        Press Create quiz to create &ldquo;
+                        {effectiveQuizTitle(wizard.title)}
+                        &rdquo;.
                       </p>
                     </div>
                   ) : null}
@@ -1051,7 +1201,7 @@ export function CreateQuizWizardForm({
                     </p>
                   ) : null}
 
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {wizard.step > 0 ? (
                       <Button
                         type="button"
@@ -1066,7 +1216,7 @@ export function CreateQuizWizardForm({
                         Cancel
                       </Link>
                     )}
-                    {wizard.step < 3 ? (
+                    {wizard.step < 2 ? (
                       <Button type="button" onClick={handleNext} disabled={pending}>
                         Next
                       </Button>
@@ -1074,11 +1224,22 @@ export function CreateQuizWizardForm({
                       <Button
                         type="button"
                         disabled={pending}
-                        onClick={() => submitCreate(false)}
+                        onClick={() => requestCreate()}
                       >
                         {pending ? "Creating…" : "Create quiz"}
                       </Button>
                     )}
+                    {wizard.step === 0 ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="ml-auto"
+                        disabled={pending}
+                        onClick={handleQuickLiveQuiz}
+                      >
+                        {pending ? "Creating…" : "Quick Live Quiz"}
+                      </Button>
+                    ) : null}
                   </div>
                 </form>
               </CardContent>

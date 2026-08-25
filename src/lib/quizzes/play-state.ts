@@ -74,11 +74,16 @@ export type PastRoundRow = RoundRow & {
   guesses: GuessRow[];
 };
 
+/** Slim round columns — preview/art only fetched for the latest revealed round. */
+const ROUND_CORE_COLUMNS =
+  "id, round_number, status, track_name, artist_name, correct_release_year, original_release_year, spotify_track_id, chart_was_number_one";
+
 function emptyPlayState(joinCode: string) {
   return {
     joinCode,
     currentRoundNumber: 0,
     tracks: [] as CuratedTrackRow[],
+    trackCount: 0,
     activeRound: null as RoundRow | null,
     resultRound: null as RoundRow | null,
     pastRounds: [] as PastRoundRow[],
@@ -86,6 +91,7 @@ function emptyPlayState(joinCode: string) {
     myGuessYear: null as number | null,
     myGuessWasNumberOne: null as boolean | null,
     leaderboard: [] as LeaderboardRow[],
+    lastSubmittedByUserId: {} as Record<string, string>,
     memberCount: 0,
     quizStatus: "open",
     maxCuratedTracks: DEFAULT_MAX_CURATED_TRACKS as number | null,
@@ -124,38 +130,50 @@ export async function getQuizPlayState(
     return emptyPlayState(joinCode);
   }
 
+  const isHost = (membership as { role?: string }).role === "host";
+  const isHostMember = isHost;
+
+  const { data: quizMeta } = await admin
+    .from("beatage_quizzes")
+    .select("current_round_number, status, settings, source")
+    .eq("id", quizId)
+    .maybeSingle();
+
+  const source =
+    typeof (quizMeta as { source?: string } | null)?.source === "string"
+      ? (quizMeta as { source: string }).source
+      : "curated";
+  const isLive = source === "spotify_live" || source === "lastfm_live";
+  // Full playlist is only rendered for host + curated (non-live) quizzes.
+  const needFullTracks = isHost && !isLive;
+
   const [
-    { data: quizMeta },
-    { data: tracks },
+    tracksResult,
     { data: activeRound },
     { data: revealedRoundsRaw },
     { data: members },
   ] = await Promise.all([
-    admin
-      .from("beatage_quizzes")
-      .select("current_round_number, status, settings")
-      .eq("id", quizId)
-      .maybeSingle(),
-    admin
-      .from("beatage_curated_tracks")
-      .select(
-        "id, sort_order, track_name, artist_name, release_year, original_release_year, album_art_url, spotify_track_id",
-      )
-      .eq("quiz_id", quizId)
-      .order("sort_order", { ascending: true }),
+    needFullTracks
+      ? admin
+          .from("beatage_curated_tracks")
+          .select(
+            "id, sort_order, track_name, artist_name, release_year, spotify_track_id",
+          )
+          .eq("quiz_id", quizId)
+          .order("sort_order", { ascending: true })
+      : admin
+          .from("beatage_curated_tracks")
+          .select("id", { count: "exact", head: true })
+          .eq("quiz_id", quizId),
     admin
       .from("beatage_rounds")
-      .select(
-        "id, round_number, status, track_name, artist_name, correct_release_year, original_release_year, album_art_url, preview_url, spotify_track_id, chart_was_number_one",
-      )
+      .select(ROUND_CORE_COLUMNS)
       .eq("quiz_id", quizId)
       .eq("status", "active")
       .maybeSingle(),
     admin
       .from("beatage_rounds")
-      .select(
-        "id, round_number, status, track_name, artist_name, correct_release_year, original_release_year, album_art_url, preview_url, spotify_track_id, chart_was_number_one",
-      )
+      .select(ROUND_CORE_COLUMNS)
       .eq("quiz_id", quizId)
       .eq("status", "revealed")
       .order("round_number", { ascending: false })
@@ -172,7 +190,6 @@ export async function getQuizPlayState(
   const runtime = readQuizSettingsRuntime(
     (quizMeta as { settings?: unknown } | null)?.settings,
   );
-  const isHostMember = (membership as { role?: string }).role === "host";
   const hideCorrectForViewer = !settings.showCorrectAnswer && !isHostMember;
 
   const currentRoundNumber =
@@ -182,72 +199,123 @@ export async function getQuizPlayState(
       ? (quizMeta as { status: string }).status
       : "open";
 
-  // Host: backfill missing release years (answers stay server-side until reveal).
-  let curatedTracksRaw = (tracks ?? []) as Array<{
+  // Host curated: backfill missing release years (answers stay server-side until reveal).
+  let curatedTracksRaw: Array<{
     id: string;
     sort_order: number;
     track_name: string;
     artist_name: string | null;
     release_year: number | null;
-    original_release_year: number | null;
-    album_art_url: string | null;
     spotify_track_id: string | null;
-  }>;
-  const isHost = (membership as { role?: string }).role === "host";
-  const shouldBackfill = options?.backfillReleaseYears !== false;
-  if (
-    shouldBackfill &&
-    isHost &&
-    curatedTracksRaw.some((track) => track.release_year == null)
-  ) {
-    const filled = await backfillMissingReleaseYearsForQuiz(quizId, 8);
-    if (filled > 0) {
-      const { data: refreshed } = await admin
-        .from("beatage_curated_tracks")
-        .select(
-          "id, sort_order, track_name, artist_name, release_year, original_release_year, album_art_url, spotify_track_id",
-        )
-        .eq("quiz_id", quizId)
-        .order("sort_order", { ascending: true });
-      curatedTracksRaw = (refreshed ?? []) as typeof curatedTracksRaw;
+  }> = [];
+  let trackCount = 0;
+
+  if (needFullTracks) {
+    curatedTracksRaw = ((tracksResult as { data?: unknown }).data ??
+      []) as typeof curatedTracksRaw;
+    trackCount = curatedTracksRaw.length;
+    const shouldBackfill = options?.backfillReleaseYears !== false;
+    if (
+      shouldBackfill &&
+      curatedTracksRaw.some((track) => track.release_year == null)
+    ) {
+      const filled = await backfillMissingReleaseYearsForQuiz(quizId, 8);
+      if (filled > 0) {
+        const { data: refreshed } = await admin
+          .from("beatage_curated_tracks")
+          .select(
+            "id, sort_order, track_name, artist_name, release_year, spotify_track_id",
+          )
+          .eq("quiz_id", quizId)
+          .order("sort_order", { ascending: true });
+        curatedTracksRaw = (refreshed ?? []) as typeof curatedTracksRaw;
+        trackCount = curatedTracksRaw.length;
+      }
     }
+  } else {
+    trackCount =
+      typeof (tracksResult as { count?: number | null }).count === "number"
+        ? ((tracksResult as { count: number }).count ?? 0)
+        : 0;
   }
 
   // Never send answer years to the client before reveal (host can play fairly).
   const curatedTracks: CuratedTrackRow[] = curatedTracksRaw.map((track) => ({
-    ...track,
+    id: track.id,
+    sort_order: track.sort_order,
+    track_name: track.track_name,
+    artist_name: track.artist_name,
     has_release_year: track.release_year != null,
     release_year: null,
     original_release_year: null,
+    album_art_url: null,
+    spotify_track_id: track.spotify_track_id,
   }));
 
+  type RoundCore = {
+    id: string;
+    round_number: number;
+    status: string;
+    track_name: string | null;
+    artist_name: string | null;
+    correct_release_year: number | null;
+    original_release_year: number | null;
+    spotify_track_id: string | null;
+    chart_was_number_one: boolean | null;
+  };
+
+  const toRoundRow = (
+    round: RoundCore,
+    opts: {
+      hideYears: boolean;
+      previewUrl?: string | null;
+      albumArtUrl?: string | null;
+    },
+  ): RoundRow => ({
+    id: round.id,
+    round_number: round.round_number,
+    status: round.status,
+    track_name: round.track_name,
+    artist_name: round.artist_name,
+    has_correct_year: round.correct_release_year != null,
+    correct_release_year: opts.hideYears ? null : round.correct_release_year,
+    original_release_year: opts.hideYears ? null : round.original_release_year,
+    album_art_url: opts.albumArtUrl ?? null,
+    preview_url: opts.previewUrl ?? null,
+    spotify_track_id: round.spotify_track_id,
+    chart_was_number_one: opts.hideYears
+      ? null
+      : typeof round.chart_was_number_one === "boolean"
+        ? round.chart_was_number_one
+        : null,
+  });
+
   const activeRoundPublic: RoundRow | null = activeRound
-    ? {
-        ...(activeRound as RoundRow),
-        has_correct_year:
-          (activeRound as RoundRow).correct_release_year != null,
-        correct_release_year: null,
-        original_release_year: null,
-        chart_was_number_one: null,
-      }
+    ? toRoundRow(activeRound as RoundCore, { hideYears: true })
     : null;
 
-  const revealedList = (revealedRoundsRaw ?? []) as RoundRow[];
+  const revealedList = (revealedRoundsRaw ?? []) as RoundCore[];
+
+  // Preview audio only for the latest revealed round (results card).
+  let latestPreviewUrl: string | null = null;
+  if (revealedList[0]) {
+    const { data: media } = await admin
+      .from("beatage_rounds")
+      .select("preview_url")
+      .eq("id", revealedList[0].id)
+      .maybeSingle();
+    latestPreviewUrl =
+      typeof (media as { preview_url?: string | null } | null)?.preview_url ===
+      "string"
+        ? (media as { preview_url: string }).preview_url
+        : null;
+  }
+
   const resultRoundPublic: RoundRow | null = revealedList[0]
-    ? {
-        ...revealedList[0],
-        has_correct_year: revealedList[0].correct_release_year != null,
-        correct_release_year: hideCorrectForViewer
-          ? null
-          : revealedList[0].correct_release_year,
-        original_release_year: hideCorrectForViewer
-          ? null
-          : revealedList[0].original_release_year,
-        chart_was_number_one:
-          typeof revealedList[0].chart_was_number_one === "boolean"
-            ? revealedList[0].chart_was_number_one
-            : null,
-      }
+    ? toRoundRow(revealedList[0], {
+        hideYears: hideCorrectForViewer,
+        previewUrl: latestPreviewUrl,
+      })
     : null;
 
   let maxCuratedTracks: number | null = DEFAULT_MAX_CURATED_TRACKS;
@@ -322,8 +390,22 @@ export async function getQuizPlayState(
   const revealedRoundIds = revealedList.map((r) => r.id);
   const pastGuessesByRound = new Map<string, GuessRow[]>();
   const myPointsByRound = new Map<string, number>();
+  const totals = new Map<string, number>();
+  const lastRoundPts = new Map<string, number>();
+  const lastSubmittedByUserId: Record<string, string> = {};
+  const latestRevealedId = revealedList[0]?.id ?? null;
+
+  // Seed last-submit from the open/result round guesses (already loaded).
+  for (const g of roundGuesses) {
+    if (!g.submitted_at) continue;
+    const prev = lastSubmittedByUserId[g.user_id];
+    if (!prev || g.submitted_at > prev) {
+      lastSubmittedByUserId[g.user_id] = g.submitted_at;
+    }
+  }
 
   if (revealedRoundIds.length > 0) {
+    // One query drives past-round details + leaderboard (was previously two).
     const { data: pastGuesses } = await admin
       .from("beatage_guesses")
       .select(
@@ -344,6 +426,16 @@ export async function getQuizPlayState(
       const pts = g.points_total ?? g.points ?? 0;
       if (g.user_id === user.id) {
         myPointsByRound.set(g.round_id, pts);
+      }
+      totals.set(g.user_id, (totals.get(g.user_id) ?? 0) + pts);
+      if (latestRevealedId && g.round_id === latestRevealedId) {
+        lastRoundPts.set(g.user_id, pts);
+      }
+      if (g.submitted_at) {
+        const prev = lastSubmittedByUserId[g.user_id];
+        if (!prev || g.submitted_at > prev) {
+          lastSubmittedByUserId[g.user_id] = g.submitted_at;
+        }
       }
       if (!settings.showResultDetails) continue;
       if (
@@ -378,53 +470,26 @@ export async function getQuizPlayState(
     }
   }
 
-  const pastRounds: PastRoundRow[] = revealedList.map((round) => ({
-    ...round,
-    has_correct_year: round.correct_release_year != null,
-    correct_release_year:
-      hideCorrectForViewer || !settings.showResultDetails
-        ? null
-        : round.correct_release_year,
-    original_release_year:
-      hideCorrectForViewer || !settings.showResultDetails
-        ? null
-        : round.original_release_year,
-    chart_was_number_one:
-      typeof round.chart_was_number_one === "boolean"
-        ? round.chart_was_number_one
+  const pastRounds: PastRoundRow[] = revealedList.map((round, index) => {
+    const hideYears = hideCorrectForViewer || !settings.showResultDetails;
+    const base = toRoundRow(round, {
+      hideYears,
+      // Media only on the latest revealed round (also exposed as resultRound).
+      previewUrl: index === 0 ? latestPreviewUrl : null,
+    });
+    return {
+      ...base,
+      my_points: myPointsByRound.has(round.id)
+        ? (myPointsByRound.get(round.id) as number)
         : null,
-    my_points: myPointsByRound.has(round.id)
-      ? (myPointsByRound.get(round.id) as number)
-      : null,
-    guesses: settings.showResultDetails
-      ? (pastGuessesByRound.get(round.id) ?? [])
-      : [],
-  }));
+      guesses: settings.showResultDetails
+        ? (pastGuessesByRound.get(round.id) ?? [])
+        : [],
+    };
+  });
 
   let leaderboard: LeaderboardRow[] = [];
-  const latestRevealedId = revealedList[0]?.id ?? null;
-
   if (revealedRoundIds.length > 0) {
-    const { data: allGuesses } = await admin
-      .from("beatage_guesses")
-      .select("user_id, round_id, points, points_total")
-      .in("round_id", revealedRoundIds);
-
-    const totals = new Map<string, number>();
-    const lastRoundPts = new Map<string, number>();
-    for (const g of (allGuesses ?? []) as Array<{
-      user_id: string;
-      round_id: string;
-      points: number | null;
-      points_total: number | null;
-    }>) {
-      const pts = g.points_total ?? g.points ?? 0;
-      totals.set(g.user_id, (totals.get(g.user_id) ?? 0) + pts);
-      if (latestRevealedId && g.round_id === latestRevealedId) {
-        lastRoundPts.set(g.user_id, pts);
-      }
-    }
-
     leaderboard = [...totals.entries()]
       .map(([userId, total_points]) => ({
         user_id: userId,
@@ -444,6 +509,7 @@ export async function getQuizPlayState(
     joinCode,
     currentRoundNumber,
     tracks: curatedTracks,
+    trackCount,
     activeRound: activeRoundPublic,
     resultRound,
     pastRounds,
@@ -451,6 +517,7 @@ export async function getQuizPlayState(
     myGuessYear,
     myGuessWasNumberOne,
     leaderboard,
+    lastSubmittedByUserId: isHost ? lastSubmittedByUserId : {},
     memberCount: ((members ?? []) as Array<{ user_id: string }>).length,
     quizStatus,
     maxCuratedTracks,

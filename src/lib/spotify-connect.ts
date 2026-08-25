@@ -470,6 +470,18 @@ export type SpotifyCurrentlyPlaying = {
   durationMs: number;
 };
 
+type SpotifyNowPlayingResult =
+  | { ok: true; playing: false }
+  | { ok: true; playing: true; track: SpotifyCurrentlyPlaying }
+  | { ok: false; code: "not_connected" | "failed"; message: string };
+
+/** Short in-memory TTL so poll + sync on the same instance share one Spotify call. */
+const SPOTIFY_NOW_PLAYING_CACHE_MS = 3000;
+const spotifyNowPlayingCache = new Map<
+  string,
+  { at: number; result: SpotifyNowPlayingResult }
+>();
+
 function parseReleaseYear(releaseDate: string | undefined | null): number | null {
   if (!releaseDate || typeof releaseDate !== "string") return null;
   const year = Number(releaseDate.slice(0, 4));
@@ -477,11 +489,7 @@ function parseReleaseYear(releaseDate: string | undefined | null): number | null
 }
 
 /** Read the host's currently playing Spotify track (Connect). */
-export async function getCurrentlyPlayingForUser(): Promise<
-  | { ok: true; playing: false }
-  | { ok: true; playing: true; track: SpotifyCurrentlyPlaying }
-  | { ok: false; code: "not_connected" | "failed"; message: string }
-> {
+export async function getCurrentlyPlayingForUser(): Promise<SpotifyNowPlayingResult> {
   const accessToken = await getValidSpotifyUserAccessToken();
   if (!accessToken) {
     return {
@@ -489,6 +497,12 @@ export async function getCurrentlyPlayingForUser(): Promise<
       code: "not_connected",
       message: "Connect Spotify once to use Auto Spotify mode.",
     };
+  }
+
+  const cacheKey = `np:${accessToken.slice(0, 24)}`;
+  const cached = spotifyNowPlayingCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < SPOTIFY_NOW_PLAYING_CACHE_MS) {
+    return cached.result;
   }
 
   const response = await fetch(
@@ -500,7 +514,9 @@ export async function getCurrentlyPlayingForUser(): Promise<
   );
 
   if (response.status === 204) {
-    return { ok: true, playing: false };
+    const result = { ok: true as const, playing: false as const };
+    spotifyNowPlayingCache.set(cacheKey, { at: Date.now(), result });
+    return result;
   }
   if (response.status === 401) {
     await clearSpotifyUserTokens();
@@ -537,7 +553,9 @@ export async function getCurrentlyPlayingForUser(): Promise<
 
   const item = data?.item;
   if (!item || item.type === "episode" || typeof item.id !== "string" || !item.id) {
-    return { ok: true, playing: false };
+    const result = { ok: true as const, playing: false as const };
+    spotifyNowPlayingCache.set(cacheKey, { at: Date.now(), result });
+    return result;
   }
 
   const artist =
@@ -546,9 +564,9 @@ export async function getCurrentlyPlayingForUser(): Promise<
       .filter((name): name is string => Boolean(name))
       .join(", ") || "Unknown artist";
 
-  return {
-    ok: true,
-    playing: true,
+  const result = {
+    ok: true as const,
+    playing: true as const,
     track: {
       isPlaying: Boolean(data?.is_playing),
       spotifyTrackId: item.id,
@@ -560,6 +578,8 @@ export async function getCurrentlyPlayingForUser(): Promise<
       durationMs: typeof item.duration_ms === "number" ? item.duration_ms : 0,
     },
   };
+  spotifyNowPlayingCache.set(cacheKey, { at: Date.now(), result });
+  return result;
 }
 
 /** Skip to the next track in the user's Spotify queue. */

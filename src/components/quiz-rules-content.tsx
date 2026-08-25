@@ -1,6 +1,7 @@
 import { CHART_COUNTRY_OPTIONS } from "@/lib/charts";
 import {
   answerYearModeLabel,
+  isLiveQuizSource,
   quizSourceLabel,
   scoringModeLabel,
   presentsLeaderboardAtEnd,
@@ -59,7 +60,7 @@ export function QuizRulesContent({
 }: QuizRulesContentProps) {
   const scoring = settings.scoringModes.map(scoringModeLabel).join(", ");
   const charts = settings.chartCountries.map(chartCountryLabel).join(", ");
-  const isAutoSpotify = source === "spotify_live";
+  const isLive = isLiveQuizSource(source);
 
   return (
     <div className="space-y-2 text-sm">
@@ -75,17 +76,22 @@ export function QuizRulesContent({
       ) : null}
       <p>
         <span className="text-muted-foreground">Mode:</span> {quizSourceLabel(source)}
-        {!isAutoSpotify && trackCount > 0
+        {!isLive && trackCount > 0
           ? ` · ${trackCount} song${trackCount === 1 ? "" : "s"}`
+          : null}
+        {source === "lastfm_live" && settings.lastfmUsername
+          ? ` · Last.fm @${settings.lastfmUsername}`
           : null}
       </p>
       <p>
         <span className="text-muted-foreground">Answer year:</span>{" "}
         {answerYearModeLabel(settings.answerYearMode)}
       </p>
-      <p>
-        <span className="text-muted-foreground">Charts:</span> {charts}
-      </p>
+      {settings.scoringModes.includes("chart_was_one") ? (
+        <p>
+          <span className="text-muted-foreground">Charts:</span> {charts}
+        </p>
+      ) : null}
       <p>
         <span className="text-muted-foreground">Scoring:</span> {scoring}
         {settings.scoringModes.includes("year_range")
@@ -94,7 +100,7 @@ export function QuizRulesContent({
             : ` · ±${settings.yearRangeTolerance} years`
           : ""}
         {settings.scoringModes.includes("year_distance")
-          ? " · lowest score wins"
+          ? " · lowest score wins · no guess: worst miss + 2 (max 20)"
           : " · highest score wins"}
         {settings.scoringModes.includes("chart_was_one") &&
         (settings.scoringModes.includes("year_distance") ||
@@ -131,18 +137,20 @@ export function QuizRulesContent({
         {presentsLeaderboardAtEnd(settings)
           ? "hidden during play (presented at the end)"
           : settings.showOverallResults
-            ? "leaderboard shown during play"
-            : "hidden during play"}
+            ? "live leaderboard shown during play"
+            : settings.hostParticipates
+              ? "hidden during play"
+              : "hidden for players (host sees the board while not playing along)"}
       </p>
       <p>
         <span className="text-muted-foreground">Result details:</span>{" "}
         {settings.showResultDetails
-          ? presentsLeaderboardAtEnd(settings) || !settings.showOthersInPastResults
-            ? "previous rounds expand; participants only see their own guess"
-            : "previous rounds expand to full results for everyone"
+          ? settings.showOthersInPastResults
+            ? "previous rounds expand to full results for everyone"
+            : "previous rounds expand; participants only see their own guess"
           : "previous rounds show your points only"}
       </p>
-      {isAutoSpotify ? (
+      {isLive ? (
         <p>
           <span className="text-muted-foreground">Auto interrupt:</span>{" "}
           after {settings.autoInterruptAfterEmptyRounds} songs without guesses
