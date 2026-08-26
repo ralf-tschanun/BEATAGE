@@ -17,8 +17,8 @@ export function LiveHostScreenLockField({
   disabled = false,
   className,
 }: LiveHostScreenLockFieldProps) {
-  const [preventScreenLock, setPreventScreenLock] = useState(false);
-  const { supported } = useScreenWakeLock(preventScreenLock);
+  const [screenLockOn, setScreenLockOn] = useState(false);
+  const { supported } = useScreenWakeLock(screenLockOn);
 
   if (!supported) return null;
 
@@ -31,16 +31,19 @@ export function LiveHostScreenLockField({
       )}
       onClick={() => {
         if (disabled) return;
-        setPreventScreenLock((prev) => !prev);
+        setScreenLockOn((prev) => !prev);
       }}
     >
       <Label htmlFor={id} className="text-xs font-normal text-muted-foreground">
-        Prevent Screen Lock
+        Screen lock
       </Label>
+      <span className="min-w-[1.75rem] text-xs tabular-nums">
+        {screenLockOn ? "On" : "Off"}
+      </span>
       <Switch
         id={id}
-        checked={preventScreenLock}
-        onCheckedChange={setPreventScreenLock}
+        checked={screenLockOn}
+        onCheckedChange={setScreenLockOn}
         disabled={disabled}
         onClick={(event) => event.stopPropagation()}
         className="scale-90"

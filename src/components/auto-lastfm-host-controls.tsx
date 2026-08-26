@@ -11,13 +11,24 @@ import {
 import { QuizPlanLimitPrompt } from "@/components/quiz-plan-limit-prompt";
 import { LiveHostScreenLockField } from "@/components/live-host-screen-lock-field";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isQuizPlanLimitError } from "@/lib/quiz-plan-limits";
 import type { PlanId } from "@/lib/quiz-plans";
+import { cn } from "@/lib/utils";
 
 const POLL_MS = 5000;
-const DEBOUNCE_MS = 5000;
+const DEFAULT_LISTEN_SECONDS = 5;
+const MIN_LISTEN_SECONDS = 1;
+const MAX_LISTEN_SECONDS = 120;
 /**
  * Only for true stop / silence (no next track yet).
  * Song changes do NOT wait on this — a new trackKey closes + opens immediately.
@@ -27,6 +38,8 @@ const DEBOUNCE_MS = 5000;
 const NOT_PLAYING_STREAK_TO_CLOSE = 2;
 /** Ignore one-off Last.fm / network blips before showing a red error. */
 const ERROR_STREAK_TO_SHOW = 2;
+
+type OpenMode = "automatic" | "manual";
 
 type AutoLastfmHostControlsProps = {
   quizId: string;
@@ -40,6 +53,12 @@ type AutoLastfmHostControlsProps = {
   unlocked?: boolean;
   roundLimit?: number | null;
   currentRoundNumber?: number;
+  /** True while a round is open for guesses — Close this round is only useful then. */
+  hasActiveRound?: boolean;
+  canFinish?: boolean;
+  finishAction?: (formData: FormData) => void | Promise<void>;
+  finishPending?: boolean;
+  finishError?: string | null;
 };
 
 type NowPlayingTrack = {
@@ -48,6 +67,14 @@ type NowPlayingTrack = {
   artist: string;
   albumArtUrl?: string | null;
 };
+
+function clampListenSeconds(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_LISTEN_SECONDS;
+  return Math.min(
+    MAX_LISTEN_SECONDS,
+    Math.max(MIN_LISTEN_SECONDS, Math.round(value)),
+  );
+}
 
 function isSoftSyncError(message: string): boolean {
   // Races from overlapping close/open or a refresh mid-action — not actionable.
@@ -63,7 +90,7 @@ function isSoftSyncError(message: string): boolean {
   );
 }
 
-/** Host Live Spotify via Last.fm: poll now-playing and open/close rounds with a 5s debounce. */
+/** Host Live Spotify via Last.fm: poll now-playing and open/close rounds with host listen mode. */
 export function AutoLastfmHostControls({
   quizId,
   joinCode,
@@ -76,6 +103,11 @@ export function AutoLastfmHostControls({
   unlocked = false,
   roundLimit = null,
   currentRoundNumber = 0,
+  hasActiveRound = false,
+  canFinish = false,
+  finishAction,
+  finishPending = false,
+  finishError = null,
 }: AutoLastfmHostControlsProps) {
   const router = useRouter();
   const [username, setUsername] = useState(initialUsername);
@@ -85,6 +117,17 @@ export function AutoLastfmHostControls({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [planLimitError, setPlanLimitError] = useState<string | null>(null);
+  const [openMode, setOpenMode] = useState<OpenMode>("automatic");
+  const [listenSeconds, setListenSeconds] = useState(DEFAULT_LISTEN_SECONDS);
+  const [listenSecondsDraft, setListenSecondsDraft] = useState(
+    String(DEFAULT_LISTEN_SECONDS),
+  );
+  const [pendingReveal, setPendingReveal] = useState(false);
+  const [endQuizConfirmOpen, setEndQuizConfirmOpen] = useState(false);
+  /** True while Automatic mode is counting down before opening the round. */
+  const [awaitingAutoOpen, setAwaitingAutoOpen] = useState(false);
+  /** Optimistic: disable Close immediately on click until hasActiveRound clears. */
+  const [closeInFlight, setCloseInFlight] = useState(false);
 
   const pendingKeyRef = useRef<string | null>(null);
   const lastKeyRef = useRef<string | null>(null);
@@ -98,6 +141,8 @@ export function AutoLastfmHostControls({
   const errorStreakRef = useRef(0);
   const autoInterruptedRef = useRef(autoInterrupted);
   const emptyStreakRef = useRef(emptyStreakThreshold);
+  const openModeRef = useRef<OpenMode>(openMode);
+  const listenSecondsRef = useRef(listenSeconds);
 
   useEffect(() => {
     setUsername(initialUsername);
@@ -112,11 +157,24 @@ export function AutoLastfmHostControls({
     emptyStreakRef.current = emptyStreakThreshold;
   }, [emptyStreakThreshold]);
 
+  useEffect(() => {
+    openModeRef.current = openMode;
+  }, [openMode]);
+
+  useEffect(() => {
+    listenSecondsRef.current = listenSeconds;
+  }, [listenSeconds]);
+
+  useEffect(() => {
+    if (!hasActiveRound) setCloseInFlight(false);
+  }, [hasActiveRound]);
+
   const clearDebounce = useCallback(() => {
     if (debounceTimerRef.current != null) {
       window.clearTimeout(debounceTimerRef.current);
     }
     debounceTimerRef.current = null;
+    setAwaitingAutoOpen(false);
   }, []);
 
   const trackLabel = useCallback((track: NowPlayingTrack) => {
@@ -182,6 +240,8 @@ export function AutoLastfmHostControls({
         if (result.interrupted) {
           clearDebounce();
           pendingKeyRef.current = null;
+          setPendingReveal(false);
+          setAwaitingAutoOpen(false);
           const key = lastKeyRef.current;
           if (key) deferredKeyRef.current = key;
           autoInterruptedRef.current = true;
@@ -192,14 +252,19 @@ export function AutoLastfmHostControls({
           return result;
         }
         if (result.startedRound && result.trackTitle) {
+          setPendingReveal(false);
+          setAwaitingAutoOpen(false);
+          setCloseInFlight(false);
           setStatus(
             `Round open: ${result.trackTitle} — ${result.trackArtist ?? ""}`,
           );
           router.refresh();
         } else if (result.closedRound && result.nothingPlaying) {
+          setCloseInFlight(false);
           setStatus("Round closed — nothing playing on Last.fm");
           router.refresh();
         } else if (result.closedRound) {
+          setCloseInFlight(false);
           setStatus("Round closed");
           router.refresh();
         }
@@ -223,87 +288,116 @@ export function AutoLastfmHostControls({
     runSyncRef.current = runSync;
   }, [runSync]);
 
+  const openPendingTrack = useCallback(
+    async (track: NowPlayingTrack) => {
+      try {
+        // Host may have ended/paused while we were waiting.
+        if (
+          autoInterruptedRef.current ||
+          deferredKeyRef.current === track.trackKey
+        ) {
+          pendingKeyRef.current = null;
+          setPendingReveal(false);
+          return;
+        }
+        // Re-check Last.fm so we do not open if the host already skipped again.
+        const response = await fetch(
+          `/api/lastfm/now-playing?user=${encodeURIComponent(username.trim())}`,
+          { cache: "no-store" },
+        );
+        const data = (await response.json()) as {
+          ok?: boolean;
+          playing?: boolean;
+          track?: NowPlayingTrack;
+        };
+        if (
+          autoInterruptedRef.current ||
+          deferredKeyRef.current === track.trackKey
+        ) {
+          pendingKeyRef.current = null;
+          setPendingReveal(false);
+          return;
+        }
+        const stillSame =
+          response.ok &&
+          data.ok !== false &&
+          data.playing &&
+          data.track?.trackKey === track.trackKey;
+
+            if (!stillSame) {
+              // Last.fm blip on the same expected song — wait again instead of aborting.
+              if (lastKeyRef.current === track.trackKey) {
+                pendingKeyRef.current = null;
+                setPendingReveal(false);
+                setAwaitingAutoOpen(false);
+                scheduleOpenRef.current(track);
+                return;
+              }
+              setStatus("Song changed again — waiting…");
+              pendingKeyRef.current = null;
+              setPendingReveal(false);
+              setAwaitingAutoOpen(false);
+              return;
+            }
+            pendingKeyRef.current = null;
+            setPendingReveal(false);
+            setAwaitingAutoOpen(false);
+            const confirmed = data.track ?? track;
+        await runSyncRef.current({
+          openNewRound: true,
+          nowPlaying: {
+            playing: true,
+            title: confirmed.title,
+            artist: confirmed.artist,
+            albumArtUrl: confirmed.albumArtUrl ?? null,
+          },
+        });
+      } catch {
+        pendingKeyRef.current = null;
+        setPendingReveal(false);
+        setAwaitingAutoOpen(false);
+        reportError("Could not start the round from Last.fm.");
+      }
+    },
+    [reportError, username],
+  );
+
   const scheduleOpen = useCallback(
     (track: NowPlayingTrack) => {
       if (deferredKeyRef.current === track.trackKey) {
         setStatus(`Waiting for next song (ended ${trackLabel(track)})`);
+        setPendingReveal(false);
+        setAwaitingAutoOpen(false);
         return;
       }
+      // Already waiting on this track (automatic timer or manual reveal).
       if (
         pendingKeyRef.current === track.trackKey &&
-        debounceTimerRef.current != null
+        (debounceTimerRef.current != null || openModeRef.current === "manual")
       ) {
         return;
       }
 
       clearDebounce();
       pendingKeyRef.current = track.trackKey;
-      setStatus(`Detected: ${trackLabel(track)} — opening in 5s…`);
+
+      if (openModeRef.current === "manual") {
+        setAwaitingAutoOpen(false);
+        setPendingReveal(true);
+        setStatus(`Detected: ${trackLabel(track)} — waiting for reveal`);
+        return;
+      }
+
+      setPendingReveal(false);
+      setAwaitingAutoOpen(true);
+      const seconds = clampListenSeconds(listenSecondsRef.current);
+      setStatus(`Detected: ${trackLabel(track)} — opening in ${seconds}s…`);
       debounceTimerRef.current = window.setTimeout(() => {
         debounceTimerRef.current = null;
-        void (async () => {
-          try {
-            // Host may have ended/paused while we were waiting.
-            if (
-              autoInterruptedRef.current ||
-              deferredKeyRef.current === track.trackKey
-            ) {
-              pendingKeyRef.current = null;
-              return;
-            }
-            // Re-check Last.fm so we do not open if the host already skipped again.
-            const response = await fetch(
-              `/api/lastfm/now-playing?user=${encodeURIComponent(username.trim())}`,
-              { cache: "no-store" },
-            );
-            const data = (await response.json()) as {
-              ok?: boolean;
-              playing?: boolean;
-              track?: NowPlayingTrack;
-            };
-            if (
-              autoInterruptedRef.current ||
-              deferredKeyRef.current === track.trackKey
-            ) {
-              pendingKeyRef.current = null;
-              return;
-            }
-            const stillSame =
-              response.ok &&
-              data.ok !== false &&
-              data.playing &&
-              data.track?.trackKey === track.trackKey;
-
-            if (!stillSame) {
-              // Last.fm blip on the same expected song — debounce again instead of aborting.
-              if (lastKeyRef.current === track.trackKey) {
-                pendingKeyRef.current = null;
-                scheduleOpenRef.current(track);
-                return;
-              }
-              setStatus("Song changed again — waiting…");
-              pendingKeyRef.current = null;
-              return;
-            }
-            pendingKeyRef.current = null;
-            const confirmed = data.track ?? track;
-            await runSyncRef.current({
-              openNewRound: true,
-              nowPlaying: {
-                playing: true,
-                title: confirmed.title,
-                artist: confirmed.artist,
-                albumArtUrl: confirmed.albumArtUrl ?? null,
-              },
-            });
-          } catch {
-            pendingKeyRef.current = null;
-            reportError("Could not start the round from Last.fm.");
-          }
-        })();
-      }, DEBOUNCE_MS);
+        void openPendingTrack(track);
+      }, seconds * 1000);
     },
-    [clearDebounce, reportError, trackLabel, username],
+    [clearDebounce, openPendingTrack, trackLabel],
   );
 
   const scheduleOpenRef = useRef(scheduleOpen);
@@ -315,6 +409,8 @@ export function AutoLastfmHostControls({
     if (autoInterrupted) {
       clearDebounce();
       pendingKeyRef.current = null;
+      setPendingReveal(false);
+      setAwaitingAutoOpen(false);
     }
   }, [autoInterrupted, clearDebounce]);
 
@@ -371,6 +467,8 @@ export function AutoLastfmHostControls({
             }
             clearDebounce();
             pendingKeyRef.current = null;
+            setPendingReveal(false);
+            setAwaitingAutoOpen(false);
             if (!autoInterruptedRef.current) {
               setStatus("Track ended — closing round…");
               await runSyncRef.current({
@@ -402,7 +500,7 @@ export function AutoLastfmHostControls({
           return;
         }
 
-        // New song → close previous round immediately, then debounce-open.
+        // New song → close previous round immediately, then debounce-open / wait for reveal.
         // (Same-song Last.fm blips never reach here as a "change".)
         const changed = lastKeyRef.current !== track.trackKey;
         if (changed) {
@@ -411,6 +509,8 @@ export function AutoLastfmHostControls({
           wasPlayingRef.current = true;
           clearDebounce();
           pendingKeyRef.current = null;
+          setPendingReveal(false);
+          setAwaitingAutoOpen(false);
           // Keep skip-lock if this is still the interrupted/ended song.
           if (deferredKeyRef.current === track.trackKey) {
             setStatus(
@@ -467,9 +567,63 @@ export function AutoLastfmHostControls({
     return key;
   }
 
+  function applyListenSeconds(raw: string) {
+    const parsed = Number.parseInt(raw, 10);
+    const next = clampListenSeconds(parsed);
+    setListenSeconds(next);
+    setListenSecondsDraft(String(next));
+    listenSecondsRef.current = next;
+
+    // Restart automatic countdown with the new duration if still waiting.
+    if (
+      openModeRef.current === "automatic" &&
+      pendingKeyRef.current != null &&
+      nowPlaying &&
+      pendingKeyRef.current === nowPlaying.trackKey &&
+      deferredKeyRef.current !== nowPlaying.trackKey
+    ) {
+      clearDebounce();
+      pendingKeyRef.current = null;
+      scheduleOpenRef.current(nowPlaying);
+    }
+  }
+
+  function onOpenModeChange(mode: OpenMode) {
+    if (mode === openMode) return;
+    setOpenMode(mode);
+    openModeRef.current = mode;
+
+    const track = nowPlaying;
+    const pendingKey = pendingKeyRef.current;
+    if (!track || pendingKey !== track.trackKey) return;
+    if (deferredKeyRef.current === track.trackKey) return;
+    if (autoInterruptedRef.current) return;
+
+    clearDebounce();
+    pendingKeyRef.current = null;
+    setPendingReveal(false);
+    scheduleOpenRef.current(track);
+  }
+
+  async function onRevealNow() {
+    const track = nowPlaying;
+    if (!track || pendingKeyRef.current !== track.trackKey) return;
+    if (deferredKeyRef.current === track.trackKey) return;
+    clearDebounce();
+    setBusy(true);
+    try {
+      await openPendingTrack(track);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onCloseThisRound() {
     clearDebounce();
     pendingKeyRef.current = null;
+    setPendingReveal(false);
+    setAwaitingAutoOpen(false);
+    setCloseInFlight(true);
     deferCurrentTrack();
     setBusy(true);
     reportError(null);
@@ -497,6 +651,8 @@ export function AutoLastfmHostControls({
         // on, open the current track; only skip the interrupted one.
         clearDebounce();
         pendingKeyRef.current = null;
+        setPendingReveal(false);
+        setAwaitingAutoOpen(false);
         notPlayingStreakRef.current = 0;
         const skippedKey = deferredKeyRef.current;
         const current = nowPlaying;
@@ -532,6 +688,8 @@ export function AutoLastfmHostControls({
       // Pause: lock the song being interrupted (not whatever plays later).
       clearDebounce();
       pendingKeyRef.current = null;
+      setPendingReveal(false);
+      setAwaitingAutoOpen(false);
       deferCurrentTrack();
       autoInterruptedRef.current = true;
       setStatus("Paused — closing round…");
@@ -570,6 +728,23 @@ export function AutoLastfmHostControls({
       setBusy(false);
     }
   }
+
+  const hostBusy = disabled || busy;
+  /** Only while a round is open for guesses — not during listen/reveal wait. */
+  const canCloseThisRound =
+    hasActiveRound &&
+    !pendingReveal &&
+    !awaitingAutoOpen &&
+    !closeInFlight &&
+    !autoInterrupted &&
+    !hostBusy;
+  const revealNowEnabled =
+    !hostBusy &&
+    !autoInterrupted &&
+    !atRoundLimit &&
+    pendingReveal &&
+    nowPlaying != null &&
+    pendingKeyRef.current === nowPlaying.trackKey;
 
   if (!username.trim()) {
     return (
@@ -616,9 +791,6 @@ export function AutoLastfmHostControls({
       <div>
         <h2 className="text-lg font-semibold">Live Spotify (Last.fm)</h2>
         <p className="text-sm text-muted-foreground">{status}</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Following @{username} · skip songs in Spotify · rounds open after 5s
-        </p>
       </div>
 
       {atRoundLimit ? (
@@ -634,43 +806,173 @@ export function AutoLastfmHostControls({
         />
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="border-t border-border/60" />
+
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div
+            className="inline-flex rounded-2xl border border-border/60 p-0.5"
+            role="radiogroup"
+            aria-label="Round open mode"
+          >
+            <Button
+              type="button"
+              size="sm"
+              variant={openMode === "automatic" ? "default" : "ghost"}
+              className={cn(
+                "rounded-[14px]",
+                openMode !== "automatic" && "text-muted-foreground",
+              )}
+              disabled={hostBusy}
+              aria-checked={openMode === "automatic"}
+              role="radio"
+              onClick={() => onOpenModeChange("automatic")}
+            >
+              Automatic
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={openMode === "manual" ? "default" : "ghost"}
+              className={cn(
+                "rounded-[14px]",
+                openMode !== "manual" && "text-muted-foreground",
+              )}
+              disabled={hostBusy}
+              aria-checked={openMode === "manual"}
+              role="radio"
+              onClick={() => onOpenModeChange("manual")}
+            >
+              Manual
+            </Button>
+          </div>
+
+          {openMode === "automatic" ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Label htmlFor="lastfm-listen-seconds" className="font-normal">
+                after
+              </Label>
+              <Input
+                id="lastfm-listen-seconds"
+                type="number"
+                inputMode="numeric"
+                min={MIN_LISTEN_SECONDS}
+                max={MAX_LISTEN_SECONDS}
+                value={listenSecondsDraft}
+                disabled={hostBusy}
+                className="h-8 w-16"
+                onChange={(event) => setListenSecondsDraft(event.target.value)}
+                onBlur={() => applyListenSeconds(listenSecondsDraft)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                  }
+                }}
+              />
+              <span>sec.</span>
+            </div>
+          ) : null}
+        </div>
+
+        {openMode === "manual" ? (
+          <Button
+            type="button"
+            className="w-full sm:w-auto"
+            disabled={!revealNowEnabled}
+            onClick={() => {
+              void onRevealNow();
+            }}
+          >
+            Reveal now
+          </Button>
+        ) : null}
+      </div>
+
+      <div className="border-t border-border/60" />
+
+      <div className="grid gap-2 sm:grid-cols-2">
         <Button
           type="button"
           variant="outline"
-          disabled={disabled || busy || autoInterrupted}
+          className="w-full"
+          disabled={!canCloseThisRound}
           onClick={() => {
             void onCloseThisRound();
           }}
         >
-          End this round
+          Close this round
         </Button>
         <Button
           type="button"
           variant="outline"
+          className="w-full"
           disabled={
-            disabled ||
-            busy ||
-            (autoInterrupted ? atRoundLimit : false)
+            hostBusy || (autoInterrupted ? atRoundLimit : false)
           }
           onClick={() => {
             void onInterruptOrContinue();
           }}
         >
-          {autoInterrupted ? "Resume" : "Pause"}
+          {autoInterrupted ? "Resume this Quiz" : "Pause this Quiz"}
         </Button>
-        <LiveHostScreenLockField
-          id="lastfm-screen-lock"
-          disabled={disabled}
-          className="ml-auto"
-        />
       </div>
+
+      {canFinish && finishAction ? (
+        <Button
+          type="button"
+          variant="secondary"
+          className="w-full"
+          disabled={finishPending || disabled}
+          onClick={() => setEndQuizConfirmOpen(true)}
+        >
+          {finishPending ? "Ending…" : "End this Quiz"}
+        </Button>
+      ) : null}
+
+      <LiveHostScreenLockField id="lastfm-screen-lock" disabled={disabled} />
 
       {error ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
         </p>
       ) : null}
+      {finishError ? (
+        <p className="text-sm text-destructive" role="alert">
+          {finishError}
+        </p>
+      ) : null}
+
+      <Dialog open={endQuizConfirmOpen} onOpenChange={setEndQuizConfirmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>End this quiz?</DialogTitle>
+            <DialogDescription>
+              Are you sure? This ends the quiz permanently — players can no longer
+              guess, and you cannot continue this live session.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            action={finishAction}
+            onSubmit={() => setEndQuizConfirmOpen(false)}
+          >
+            <input type="hidden" name="quizId" value={quizId} />
+            <input type="hidden" name="joinCode" value={joinCode} />
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={finishPending}
+                onClick={() => setEndQuizConfirmOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" variant="destructive" disabled={finishPending}>
+                {finishPending ? "Ending…" : "Yes, end this quiz"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

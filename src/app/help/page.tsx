@@ -125,9 +125,14 @@ export default function HelpPage() {
                 running (Pause if you need a break).
               </li>
               <li>
-                Play any playlist or song in Spotify on the linked account. After
-                about <strong className="font-medium text-foreground">5 seconds</strong>,{" "}
-                {BRAND_NAME} opens a round for that track.
+                Play any playlist or song in Spotify on the linked account. On the
+                host page you choose how rounds open:{" "}
+                <strong className="font-medium text-foreground">Automatic</strong>{" "}
+                (default: listen for about{" "}
+                <strong className="font-medium text-foreground">5 seconds</strong>,
+                then open) or{" "}
+                <strong className="font-medium text-foreground">Manual</strong>{" "}
+                (tap Reveal now when you are ready).
               </li>
               <li>
                 Skip or change songs in Spotify to move on — a new round opens for

@@ -643,6 +643,11 @@ export function QuizPlayPanels({
             unlocked={unlocked}
             roundLimit={maxCuratedTracks}
             currentRoundNumber={currentRoundNumber}
+            hasActiveRound={Boolean(activeRound)}
+            canFinish={!isFinished}
+            finishAction={finishAction}
+            finishPending={finishPending}
+            finishError={finishState?.error ?? null}
           />
           {isHost && atMemberLimit && !unlocked && !isFinished ? (
             <QuizPlanLimitPrompt
@@ -654,18 +659,6 @@ export function QuizPlayPanels({
               isAnonymous={isAnonymous}
               unlocked={unlocked}
             />
-          ) : null}
-          {canFinish ? (
-            <form action={finishAction} className="flex flex-wrap gap-2">
-              <input type="hidden" name="quizId" value={quizId} />
-              <input type="hidden" name="joinCode" value={joinCode} />
-              <Button type="submit" variant="secondary" disabled={finishPending}>
-                {finishPending ? "Finishing…" : "End quiz"}
-              </Button>
-              {finishState?.error ? (
-                <p className="w-full text-sm text-destructive">{finishState.error}</p>
-              ) : null}
-            </form>
           ) : null}
         </section>
       ) : null}
@@ -683,6 +676,11 @@ export function QuizPlayPanels({
             unlocked={unlocked}
             roundLimit={maxCuratedTracks}
             currentRoundNumber={currentRoundNumber}
+            hasActiveRound={Boolean(activeRound)}
+            canFinish={!isFinished}
+            finishAction={finishAction}
+            finishPending={finishPending}
+            finishError={finishState?.error ?? null}
           />
           {isHost && atMemberLimit && !unlocked && !isFinished ? (
             <QuizPlanLimitPrompt
@@ -694,18 +692,6 @@ export function QuizPlayPanels({
               isAnonymous={isAnonymous}
               unlocked={unlocked}
             />
-          ) : null}
-          {canFinish ? (
-            <form action={finishAction} className="flex flex-wrap gap-2">
-              <input type="hidden" name="quizId" value={quizId} />
-              <input type="hidden" name="joinCode" value={joinCode} />
-              <Button type="submit" variant="secondary" disabled={finishPending}>
-                {finishPending ? "Finishing…" : "End quiz"}
-              </Button>
-              {finishState?.error ? (
-                <p className="w-full text-sm text-destructive">{finishState.error}</p>
-              ) : null}
-            </form>
           ) : null}
         </section>
       ) : null}
