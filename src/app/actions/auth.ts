@@ -10,6 +10,8 @@ import { getSiteUrl, safeNextPath } from "@/lib/site-url";
 export type AuthActionState = {
   error?: string;
   success?: string;
+  /** True when signup succeeded but email must be confirmed before sign-in. */
+  needsEmailConfirmation?: boolean;
   /** Client navigates here when server redirect is unreliable. */
   redirectTo?: string;
 } | null;
@@ -87,6 +89,12 @@ function mapAuthError(message: string): string {
   if (normalized.includes("email not confirmed")) {
     return "Please confirm your email first. Check your inbox for the confirmation link.";
   }
+  if (
+    normalized.includes("password") &&
+    (normalized.includes("verif") || normalized.includes("confirm"))
+  ) {
+    return "Please confirm your email first, then sign in. Check your inbox for the confirmation link.";
+  }
   if (normalized.includes("rate") || normalized.includes("too many")) {
     return "Too many attempts. Wait a minute and try again.";
   }
@@ -123,11 +131,16 @@ export async function saveAccountAction(
     // Prefer converting the guest in place so hosted contests (and unlock drafts)
     // keep the same user id. Fresh signUp would orphan payment_pending contests.
     if (user?.is_anonymous) {
-      const { error: convertError } = await supabase.auth.updateUser({
-        email,
-        password,
-        data: { display_name: displayName },
-      });
+      const { data: converted, error: convertError } = await supabase.auth.updateUser(
+        {
+          email,
+          password,
+          data: { display_name: displayName },
+        },
+        // Shared Supabase with MyContest — without this, confirm links fall back
+        // to the project Site URL (MyContest) instead of Beatage.
+        { emailRedirectTo: authRedirectTo(next) },
+      );
       if (convertError) {
         return { error: mapAuthError(convertError.message) };
       }
@@ -137,10 +150,24 @@ export async function saveAccountAction(
         .update({ display_name: displayName, updated_at: new Date().toISOString() })
         .eq("id", user.id);
 
-      revalidatePath("/", "layout");
-      if (next !== "/") {
-        redirect(next);
+      const { data: again } = await supabase.auth.getUser();
+      const current = again.user ?? converted.user;
+      // Email confirmation is usually required before the guest becomes a full account.
+      const needsEmailConfirmation =
+        !current ||
+        Boolean(current.is_anonymous) ||
+        !current.email_confirmed_at;
+
+      if (needsEmailConfirmation) {
+        // Do not revalidate yet — keep client action state so the notice stays visible.
+        return {
+          success:
+            "Please confirm your email address. We’ve sent you a link — after you confirm, you can sign in.",
+          needsEmailConfirmation: true,
+        };
       }
+
+      // Client shows the success dialog, then refreshes identity.
       return { success: "Account created. You are signed in." };
     }
 
@@ -157,6 +184,19 @@ export async function saveAccountAction(
       return { error: mapAuthError(error.message) };
     }
 
+    // Supabase may return a user with no identities when the email is already registered.
+    if (
+      data.user &&
+      !data.session &&
+      Array.isArray(data.user.identities) &&
+      data.user.identities.length === 0
+    ) {
+      return {
+        error:
+          "This email already has an account. Sign in instead — we will move any pending unlock on this device to that login.",
+      };
+    }
+
     if (data.user?.id) {
       await supabase
         .from("profiles")
@@ -165,16 +205,17 @@ export async function saveAccountAction(
     }
 
     if (data.session) {
-      revalidatePath("/", "layout");
-      if (next !== "/") {
-        redirect(next);
-      }
-      return { success: "Account created. You are signed in." };
+      // Client shows the success dialog, then refreshes / continues to next.
+      return {
+        success: "Account created. You are signed in.",
+        redirectTo: next !== "/" ? next : undefined,
+      };
     }
 
     return {
       success:
-        "Check your email and confirm once. After that, sign in with your email and password.",
+        "Please confirm your email address. We’ve sent you a link — after you confirm, you can sign in.",
+      needsEmailConfirmation: true,
     };
   } catch (error) {
     if (isNextRedirect(error)) throw error;

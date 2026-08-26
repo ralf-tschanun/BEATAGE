@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, type FormEvent } from "react";
+import { useActionState, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   requestPasswordResetAction,
@@ -24,6 +24,8 @@ import { goToBilling } from "@/lib/billing-nav";
 
 const initialState: AuthActionState = null;
 
+const ACCOUNT_NOTICE_KEY = "beatage:account-notice";
+
 type AccountAuthFormProps = {
   hasSession: boolean;
   isAnonymous: boolean;
@@ -38,6 +40,25 @@ type AccountAuthFormProps = {
   preferSignup?: boolean;
 };
 
+function readStoredNotice(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return sessionStorage.getItem(ACCOUNT_NOTICE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredNotice(message: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (message) sessionStorage.setItem(ACCOUNT_NOTICE_KEY, message);
+    else sessionStorage.removeItem(ACCOUNT_NOTICE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export function AccountAuthForm({
   hasSession,
   isAnonymous,
@@ -48,6 +69,7 @@ export function AccountAuthForm({
   const [mode, setMode] = useState<"signin" | "reset">("signin");
   // Do not auto-open create — both sign-in and create must stay reachable.
   const [signupOpen, setSignupOpen] = useState(false);
+  const [signupStep, setSignupStep] = useState<"form" | "done">("form");
   const [saveState, saveAction, savePending] = useActionState(
     saveAccountAction,
     initialState,
@@ -62,22 +84,40 @@ export function AccountAuthForm({
   );
 
   const [mismatch, setMismatch] = useState(false);
+  const [accountNotice, setAccountNotice] = useState<string | null>(null);
+  const [signupName, setSignupName] = useState("");
+  const [signupEmail, setSignupEmail] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+  const [signupPasswordConfirm, setSignupPasswordConfirm] = useState("");
+  const [signInEmail, setSignInEmail] = useState("");
+  const signupEmailRef = useRef(signupEmail);
+  signupEmailRef.current = signupEmail;
+
   const pending = savePending || signInPending || resetPending;
   const state = mode === "reset" ? resetState : signInState;
   const checkoutGate = Boolean(nextPath) || preferSignup;
+  const needsEmailConfirmation = Boolean(
+    saveState?.needsEmailConfirmation ||
+      (accountNotice && /confirm your email/i.test(accountNotice)),
+  );
+
+  // Restore notice after refresh / remount (e.g. nav drawer).
+  useEffect(() => {
+    const stored = readStoredNotice();
+    if (stored) setAccountNotice(stored);
+  }, []);
 
   useEffect(() => {
     if (!saveState?.success) return;
-    setSignupOpen(false);
-    if (nextPath) {
-      if (nextPath.startsWith("/api/billing")) {
-        goToBilling(nextPath);
-        return;
-      }
-      router.push(nextPath);
-      router.refresh();
-    }
-  }, [saveState?.success, nextPath, router]);
+
+    writeStoredNotice(saveState.success);
+    setAccountNotice(saveState.success);
+    setSignupStep("done");
+    setSignupOpen(true);
+    setSignupPassword("");
+    setSignupPasswordConfirm("");
+    setSignInEmail((prev) => signupEmailRef.current.trim() || prev);
+  }, [saveState]);
 
   useEffect(() => {
     if (!signInState?.redirectTo) return;
@@ -90,11 +130,45 @@ export function AccountAuthForm({
     router.refresh();
   }, [signInState?.redirectTo, router]);
 
+  function resetSignupFields() {
+    setMismatch(false);
+    setSignupName("");
+    setSignupEmail("");
+    setSignupPassword("");
+    setSignupPasswordConfirm("");
+  }
+
+  function openSignup() {
+    resetSignupFields();
+    setSignupStep("form");
+    setSignupOpen(true);
+  }
+
+  function dismissSignupSuccess() {
+    const continueTo = saveState?.redirectTo ?? nextPath;
+    setSignupOpen(false);
+    setSignupStep("form");
+    // Keep accountNotice visible on the sign-in surface.
+    if (!saveState?.needsEmailConfirmation && !needsEmailConfirmation) {
+      // Fully signed in — refresh identity after the user has read the message.
+      if (continueTo && continueTo !== "/") {
+        if (continueTo.startsWith("/api/billing")) {
+          goToBilling(continueTo);
+          return;
+        }
+        router.push(continueTo);
+      }
+      router.refresh();
+    }
+  }
+
+  function clearAccountNotice() {
+    writeStoredNotice(null);
+    setAccountNotice(null);
+  }
+
   function handleSignupSubmit(event: FormEvent<HTMLFormElement>) {
-    const data = new FormData(event.currentTarget);
-    const password = String(data.get("password") ?? "");
-    const confirm = String(data.get("passwordConfirm") ?? "");
-    if (password !== confirm) {
+    if (signupPassword !== signupPasswordConfirm) {
       event.preventDefault();
       setMismatch(true);
     } else {
@@ -102,10 +176,58 @@ export function AccountAuthForm({
     }
   }
 
-  if (hasSession && !isAnonymous) {
+  const noticeBlock = accountNotice ? (
+    <p
+      className={
+        needsEmailConfirmation
+          ? "rounded-2xl border border-border/60 bg-muted/40 px-3 py-2 text-sm text-foreground"
+          : "text-sm text-foreground"
+      }
+      role="status"
+    >
+      {accountNotice}
+    </p>
+  ) : null;
+
+  const signupSuccessDialog =
+    signupOpen && signupStep === "done" ? (
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) dismissSignupSuccess();
+        }}
+      >
+        <DialogContent
+          className="z-[80] sm:max-w-md"
+          overlayClassName="z-[80]"
+        >
+          <div className="grid gap-4">
+            <DialogHeader>
+              <DialogTitle>
+                {needsEmailConfirmation
+                  ? "Confirm your email"
+                  : "Account created"}
+              </DialogTitle>
+              <DialogDescription>
+                {accountNotice ?? saveState?.success}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex-col gap-2 sm:flex-col sm:items-stretch">
+              <Button type="button" onClick={dismissSignupSuccess}>
+                {needsEmailConfirmation ? "Back to sign in" : "Continue"}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+    ) : null;
+
+  // Keep the success dialog mounted even if identity flips to signed-in mid-flow.
+  if (hasSession && !isAnonymous && signupStep !== "done") {
     if (nextPath) {
       return (
         <div className="space-y-3">
+          {noticeBlock}
           <p className="text-sm text-muted-foreground">
             You are signed in. Continue to checkout.
           </p>
@@ -116,23 +238,28 @@ export function AccountAuthForm({
       );
     }
     return (
-      <form action={signOutAction}>
-        <Button type="submit" variant="outline" size="sm">
-          Sign out
-        </Button>
-      </form>
+      <div className="space-y-3">
+        {noticeBlock}
+        <form action={signOutAction}>
+          <Button type="submit" variant="outline" size="sm">
+            Sign out
+          </Button>
+        </form>
+      </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      {checkoutGate && isAnonymous && mode === "signin" ? (
+      {checkoutGate && isAnonymous && mode === "signin" && !needsEmailConfirmation ? (
         <p className="text-sm leading-relaxed text-muted-foreground">
           New here? Create an account on this device to keep pending contests.
           Already registered? Sign in below — we move any pending unlock on this
           device to that account, then continue to payment.
         </p>
       ) : null}
+
+      {noticeBlock}
 
       {mode === "signin" && checkoutGate ? (
         <p className="text-sm font-medium text-foreground">
@@ -148,6 +275,7 @@ export function AccountAuthForm({
       <form
         action={mode === "reset" ? resetAction : signInAction}
         className="space-y-2"
+        onSubmit={() => clearAccountNotice()}
       >
         {nextPath && mode === "signin" ? (
           <input type="hidden" name="next" value={nextPath} />
@@ -162,6 +290,8 @@ export function AccountAuthForm({
             required
             placeholder="you@email.com"
             disabled={pending}
+            value={signInEmail}
+            onChange={(event) => setSignInEmail(event.target.value)}
           />
         </div>
         {mode === "signin" ? (
@@ -199,11 +329,6 @@ export function AccountAuthForm({
           {state.success}
         </p>
       ) : null}
-      {saveState?.success ? (
-        <p className="text-sm text-foreground" role="status">
-          {saveState.success}
-        </p>
-      ) : null}
       <div className="flex flex-col items-stretch gap-2">
         {mode === "signin" ? (
           <>
@@ -220,10 +345,7 @@ export function AccountAuthForm({
                 variant={preferSignup ? "default" : "outline"}
                 className="w-full"
                 disabled={pending}
-                onClick={() => {
-                  setMismatch(false);
-                  setSignupOpen(true);
-                }}
+                onClick={openSignup}
               >
                 Create a new account
               </Button>
@@ -231,10 +353,7 @@ export function AccountAuthForm({
               <button
                 type="button"
                 className="text-left text-xs font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                onClick={() => {
-                  setMismatch(false);
-                  setSignupOpen(true);
-                }}
+                onClick={openSignup}
               >
                 Create an account
               </button>
@@ -251,20 +370,32 @@ export function AccountAuthForm({
         )}
       </div>
 
+      {signupSuccessDialog}
+
       <Dialog
-        open={signupOpen}
+        open={signupOpen && signupStep === "form"}
         onOpenChange={(open) => {
           if (pending) return;
           setSignupOpen(open);
-          if (!open) setMismatch(false);
+          if (!open) {
+            setMismatch(false);
+            setSignupPassword("");
+            setSignupPasswordConfirm("");
+          }
         }}
       >
         <DialogContent
           className="z-[80] sm:max-w-md"
           overlayClassName="z-[80]"
         >
-          <form action={saveAction} className="grid gap-4" onSubmit={handleSignupSubmit}>
-            {nextPath ? <input type="hidden" name="next" value={nextPath} /> : null}
+          <form
+            action={saveAction}
+            className="grid gap-4"
+            onSubmit={handleSignupSubmit}
+          >
+            {nextPath ? (
+              <input type="hidden" name="next" value={nextPath} />
+            ) : null}
             <DialogHeader>
               <DialogTitle>Create a new account</DialogTitle>
               <DialogDescription>
@@ -286,6 +417,8 @@ export function AccountAuthForm({
                 autoFocus
                 placeholder="Your name"
                 disabled={pending}
+                value={signupName}
+                onChange={(event) => setSignupName(event.target.value)}
               />
             </div>
             <div className="space-y-2">
@@ -298,6 +431,8 @@ export function AccountAuthForm({
                 required
                 placeholder="you@email.com"
                 disabled={pending}
+                value={signupEmail}
+                onChange={(event) => setSignupEmail(event.target.value)}
               />
             </div>
             <div className="space-y-2">
@@ -311,6 +446,8 @@ export function AccountAuthForm({
                 minLength={8}
                 placeholder="At least 8 characters"
                 disabled={pending}
+                value={signupPassword}
+                onChange={(event) => setSignupPassword(event.target.value)}
               />
             </div>
             <div className="space-y-2">
@@ -324,7 +461,9 @@ export function AccountAuthForm({
                 minLength={8}
                 placeholder="Repeat password"
                 disabled={pending}
-                onChange={() => {
+                value={signupPasswordConfirm}
+                onChange={(event) => {
+                  setSignupPasswordConfirm(event.target.value);
                   if (mismatch) setMismatch(false);
                 }}
               />
