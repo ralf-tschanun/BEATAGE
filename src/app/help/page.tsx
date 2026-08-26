@@ -3,10 +3,14 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
-import { BRAND_NAME, brandHtmlTitle } from "@/lib/brand";
+import { BRAND_NAME } from "@/lib/brand";
 
 export const metadata: Metadata = {
-  title: brandHtmlTitle("Help"),
+  title: "Help",
+  description: `How to host and play ${BRAND_NAME}: create a quiz, invite friends, guess release years, and score rounds.`,
+  alternates: {
+    canonical: "/help",
+  },
 };
 
 function HelpSection({

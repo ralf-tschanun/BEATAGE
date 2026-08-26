@@ -1,7 +1,16 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { BRAND_NAME } from "@/lib/brand";
+
+export const metadata: Metadata = {
+  title: "About",
+  description: `${BRAND_NAME} is a music quiz where the host plays a track and participants guess the release year.`,
+  alternates: {
+    canonical: "/about",
+  },
+};
 
 export default function AboutPage() {
   return (

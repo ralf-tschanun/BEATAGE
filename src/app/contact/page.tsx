@@ -1,6 +1,16 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
+import { BRAND_NAME } from "@/lib/brand";
+
+export const metadata: Metadata = {
+  title: "Contact",
+  description: `Questions or feedback about ${BRAND_NAME}? Reach the gosmooth team by email.`,
+  alternates: {
+    canonical: "/contact",
+  },
+};
 
 export default function ContactPage() {
   return (

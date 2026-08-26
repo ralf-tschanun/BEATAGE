@@ -1,6 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
+
+export const metadata: Metadata = {
+  title: "Impressum",
+  description: "Legal notice and operator details for this site.",
+  alternates: {
+    canonical: "/impressum",
+  },
+};
 
 export default function ImpressumPage() {
   return (
