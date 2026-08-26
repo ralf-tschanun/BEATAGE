@@ -818,21 +818,6 @@ export function AutoLastfmHostControls({
             <Button
               type="button"
               size="sm"
-              variant={openMode === "automatic" ? "default" : "ghost"}
-              className={cn(
-                "rounded-[14px]",
-                openMode !== "automatic" && "text-muted-foreground",
-              )}
-              disabled={hostBusy}
-              aria-checked={openMode === "automatic"}
-              role="radio"
-              onClick={() => onOpenModeChange("automatic")}
-            >
-              Automatic
-            </Button>
-            <Button
-              type="button"
-              size="sm"
               variant={openMode === "manual" ? "default" : "ghost"}
               className={cn(
                 "rounded-[14px]",
@@ -844,6 +829,21 @@ export function AutoLastfmHostControls({
               onClick={() => onOpenModeChange("manual")}
             >
               Manual
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={openMode === "automatic" ? "default" : "ghost"}
+              className={cn(
+                "rounded-[14px]",
+                openMode !== "automatic" && "text-muted-foreground",
+              )}
+              disabled={hostBusy}
+              aria-checked={openMode === "automatic"}
+              role="radio"
+              onClick={() => onOpenModeChange("automatic")}
+            >
+              Automatic
             </Button>
           </div>
 
