@@ -2,11 +2,14 @@ import {
   clampAutoInterruptAfterEmptyRounds,
   clampYearRangeTolerance,
   DEFAULT_QUIZ_SETTINGS,
+  isYearScoringMode,
   normalizeScoringModes,
   parseOverallReveal,
+  primaryYearScoringMode,
   presentsLeaderboardAtEnd,
   type BeatageQuizSettings,
   type QuizSettingsRuntime,
+  type YearScoringModeId,
 } from "@/lib/quiz-settings";
 
 export type YearScoreResult = {
@@ -24,6 +27,11 @@ export const CLOSER_WINS_NO_GUESS_YEAR_MAX = 20;
 /** Closer wins: penalty = years off (lowest total wins). */
 function scoreDistance(guessed: number, correct: number): number {
   return Math.abs(guessed - correct);
+}
+
+/** Pro Dynamic: same as Closer wins, but each year off costs 2 points. */
+function scoreDistanceDynamic(guessed: number, correct: number): number {
+  return scoreDistance(guessed, correct) * 2;
 }
 
 /**
@@ -66,6 +74,15 @@ export function closerWinsNoGuessYearPenalty(
 }
 
 /**
+ * Pro Dynamic skip: same shared Closest-wins skip, then ×2 (points).
+ */
+export function closerWinsDynamicNoGuessPenalty(
+  submittedDistances: number[],
+): number {
+  return closerWinsNoGuessYearPenalty(submittedDistances) * 2;
+}
+
+/**
  * Range: at tolerance T>0, exact = T, each year off loses 1, floor 0.
  * At T=0, only an exact year scores 1.
  */
@@ -101,14 +118,14 @@ export function chartGuessOutcome(
 
 /**
  * Extra Chart #1 points when combined with a year mode.
- * Closer wins (low wins): correct 0, no answer 1, wrong 2 (penalty).
+ * Closer wins / Pro (low wins): correct 0, no answer 1, wrong 2 (penalty).
  * Range (high wins): correct 2, no answer 1, wrong 0 (mirror of closer).
  */
 export function chartComboExtraPoints(
   outcome: ChartGuessOutcome,
-  yearMode: "year_distance" | "year_range",
+  yearMode: YearScoringModeId,
 ): number {
-  if (yearMode === "year_distance") {
+  if (yearMode === "year_distance" || yearMode === "year_distance_dynamic") {
     if (outcome === "correct") return 0;
     if (outcome === "none") return 1;
     return 2;
@@ -219,22 +236,25 @@ export function scoreYearGuess(opts: {
   settings: BeatageQuizSettings;
   wasNumberOne?: boolean;
   guessedWasNumberOne?: boolean | null;
-  /** Closer wins only: penalty when guessedYear is null. */
+  /** Closer wins / Pro only: penalty when guessedYear is null. */
   noGuessYearPenalty?: number;
 }): YearScoreResult {
   const modes = normalizeScoringModes(opts.settings.scoringModes);
-  const hasDistance = modes.includes("year_distance");
-  const hasRange = modes.includes("year_range");
+  const yearMode = primaryYearScoringMode(modes);
+  const hasYear = modes.some(isYearScoringMode);
   const hasChart = modes.includes("chart_was_one");
   const breakdown: Record<string, number> = {};
   const wasOne = Boolean(opts.wasNumberOne);
 
   let yearPts = 0;
-  if ((hasDistance || hasRange) && opts.correctYear != null) {
+  if (hasYear && opts.correctYear != null) {
     if (opts.guessedYear != null) {
-      if (hasDistance) {
+      if (yearMode === "year_distance") {
         yearPts = scoreDistance(opts.guessedYear, opts.correctYear);
         breakdown.year_distance = yearPts;
+      } else if (yearMode === "year_distance_dynamic") {
+        yearPts = scoreDistanceDynamic(opts.guessedYear, opts.correctYear);
+        breakdown.year_distance_dynamic = yearPts;
       } else {
         yearPts = scoreRange(
           opts.guessedYear,
@@ -243,21 +263,24 @@ export function scoreYearGuess(opts: {
         );
         breakdown.year_range = yearPts;
       }
-    } else if (hasDistance) {
-      yearPts =
-        opts.noGuessYearPenalty ?? CLOSER_WINS_NO_GUESS_YEAR_MAX;
-      breakdown.year_distance = yearPts;
+    } else if (
+      yearMode === "year_distance" ||
+      yearMode === "year_distance_dynamic"
+    ) {
+      const fallbackMax =
+        yearMode === "year_distance_dynamic"
+          ? CLOSER_WINS_NO_GUESS_YEAR_MAX * 2
+          : CLOSER_WINS_NO_GUESS_YEAR_MAX;
+      yearPts = opts.noGuessYearPenalty ?? fallbackMax;
+      breakdown[yearMode] = yearPts;
     }
   }
 
   let chartPts = 0;
   if (hasChart) {
-    if (hasDistance || hasRange) {
+    if (hasYear) {
       const outcome = chartGuessOutcome(opts.guessedWasNumberOne, wasOne);
-      chartPts = chartComboExtraPoints(
-        outcome,
-        hasDistance ? "year_distance" : "year_range",
-      );
+      chartPts = chartComboExtraPoints(outcome, yearMode);
     } else {
       chartPts = wasOne ? 1 : 0;
     }

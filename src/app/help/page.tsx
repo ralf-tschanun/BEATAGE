@@ -146,13 +146,22 @@ export default function HelpPage() {
           <HelpSection title="Scoring">
             <ul className="list-disc space-y-2 pl-5">
               <li>
-                <strong className="font-medium text-foreground">Closer wins</strong> —
-                each year off the answer counts against you. Lowest total wins.
+                <strong className="font-medium text-foreground">
+                  Basic - Closer wins
+                </strong>{" "}
+                — each year off the answer counts against you. Lowest total wins.
+              </li>
+              <li>
+                <strong className="font-medium text-foreground">
+                  Pro - Closer wins - Dynamic
+                </strong>{" "}
+                — same as Basic, but each year off costs double (points). Lowest
+                total wins.
               </li>
               <li>
                 <strong className="font-medium text-foreground">No guess</strong> —
-                in Closer wins, missing a round scores the worst submitted miss + 2
-                (capped at 20).
+                in Closer wins modes, missing a round scores the worst submitted
+                miss + 2 (capped; Pro doubles that penalty).
               </li>
               <li>
                 <strong className="font-medium text-foreground">Range</strong> —

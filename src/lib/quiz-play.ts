@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { songWasSinglesNumberOne } from "@/lib/charts/was-number-one";
 import {
+  closerWinsDynamicNoGuessPenalty,
   closerWinsNoGuessYearPenalty,
   correctYearForScoring,
   submittedCloserWinsDistances,
@@ -13,6 +14,7 @@ import {
   nextQuizLeaderboardRevealStep,
   isQuizLeaderboardRevealComplete,
   presentsLeaderboardAtEnd,
+  primaryYearScoringMode,
 } from "@/lib/quiz-settings";
 import { getQuizCuratedTrackLimit } from "@/lib/quiz-tracks";
 
@@ -326,16 +328,20 @@ export async function closeRoundForHost(
     const submittedYearGuesses = guessRows.filter(
       (g) => g.guessed_year != null,
     );
-    const noGuessYearPenalty = settings.scoringModes.includes("year_distance")
-      ? closerWinsNoGuessYearPenalty(
-          correct != null
-            ? submittedCloserWinsDistances(
-                submittedYearGuesses.map((g) => g.guessed_year),
-                correct,
-              )
-            : [],
-        )
-      : 0;
+    const yearMode = primaryYearScoringMode(settings.scoringModes);
+    const submittedDistances =
+      correct != null
+        ? submittedCloserWinsDistances(
+            submittedYearGuesses.map((g) => g.guessed_year),
+            correct,
+          )
+        : [];
+    const noGuessYearPenalty =
+      yearMode === "year_distance"
+        ? closerWinsNoGuessYearPenalty(submittedDistances)
+        : yearMode === "year_distance_dynamic"
+          ? closerWinsDynamicNoGuessPenalty(submittedDistances)
+          : 0;
 
     const { data: members } = await admin
       .from("beatage_quiz_members")

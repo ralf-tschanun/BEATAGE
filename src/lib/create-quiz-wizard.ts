@@ -173,8 +173,14 @@ export function validateQuizWizardStep(state: CreateQuizWizardState, step: numbe
       return "Select at least one chart country.";
     }
     if (modes.length < 1) return "Select at least one scoring mode.";
-    if (modes.includes("year_distance") && modes.includes("year_range")) {
-      return "Closer wins and Range cannot be combined.";
+    const yearModes = modes.filter(
+      (mode) =>
+        mode === "year_distance" ||
+        mode === "year_distance_dynamic" ||
+        mode === "year_range",
+    );
+    if (yearModes.length > 1) {
+      return "Pick only one year scoring model.";
     }
     if (modes.includes("year_range")) {
       const t = state.yearRangeTolerance;
@@ -211,7 +217,7 @@ export function quizWizardSettingsSummary(state: CreateQuizWizardState): string 
   const scoring = modes.map(scoringModeLabel).join(" + ");
   const rangeBit = modes.includes("year_range")
     ? state.yearRangeTolerance === 0
-      ? " · exact year = 1 yr"
+      ? " · exact year = 1 pt"
       : ` · ±${state.yearRangeTolerance} years`
     : "";
   const chartsBit = modes.includes("chart_was_one")

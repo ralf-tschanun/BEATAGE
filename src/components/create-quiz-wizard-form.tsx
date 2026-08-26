@@ -35,6 +35,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   WizardAddAnotherButton,
+  WizardCollapsibleOptions,
   WizardOptionsDivider,
 } from "@/components/wizard-step-ui";
 import { BILLING_SKU_LABELS } from "@/lib/billing-copy";
@@ -66,10 +67,16 @@ import type {
   ChartCountryCode,
   OverallReveal,
   ScoringModeId,
+  YearScoringModeId,
 } from "@/lib/quiz-settings";
 import {
+  AUTO_INTERRUPT_EMPTY_ROUNDS_MAX,
+  AUTO_INTERRUPT_EMPTY_ROUNDS_MIN,
   clampYearRangeTolerance,
+  primaryYearScoringMode,
   QUIZ_LEADERBOARD_REVEAL_OPTIONS,
+  QUIZ_YEAR_SCORING_OPTIONS,
+  setYearScoringModeSelection,
   toggleScoringModeSelection,
   YEAR_RANGE_TOLERANCE_MAX,
   YEAR_RANGE_TOLERANCE_MIN,
@@ -81,23 +88,6 @@ import { cn } from "@/lib/utils";
 const initialState: QuizActionState = null;
 
 const QUIZ_CHART_COUNTRIES: ChartCountryCode[] = ["DE", "AT", "GB"];
-
-const YEAR_SCORING_OPTIONS: {
-  id: "year_distance" | "year_range";
-  label: string;
-  body: string;
-}[] = [
-  {
-    id: "year_distance",
-    label: "Closer wins",
-    body: "Try to hit the release year. Any difference counts against you.",
-  },
-  {
-    id: "year_range",
-    label: "Range",
-    body: "Score only within the range.",
-  },
-];
 
 const RANGE_TOLERANCE_PRESETS = [0, 5, 10, 15, 20] as const;
 
@@ -480,6 +470,13 @@ export function CreateQuizWizardForm({
     }));
   }
 
+  function setYearScoringMode(mode: YearScoringModeId) {
+    setWizard((prev) => ({
+      ...prev,
+      scoringModes: setYearScoringModeSelection(prev.scoringModes, mode),
+    }));
+  }
+
   const wizardReady = hydrated && slotAcked;
 
   // Scroll to page top whenever the step changes (Next / Back).
@@ -498,7 +495,7 @@ export function CreateQuizWizardForm({
       focusById("song-0-search", top);
       return;
     }
-    focusById("quiz-scoring-year_distance", top);
+    focusById("quiz-scoring", top);
   }, [hydrated, wizardReady, wizard.step, focusById]);
 
   return (
@@ -942,30 +939,33 @@ export function CreateQuizWizardForm({
                   {wizard.step === 2 ? (
                     <div className="space-y-5">
                       <div className="space-y-3">
-                        <Label>Scoring</Label>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          {YEAR_SCORING_OPTIONS.map((option) => {
-                            const selected = wizard.scoringModes.includes(option.id);
-                            return (
-                              <button
-                                key={option.id}
-                                id={`quiz-scoring-${option.id}`}
-                                type="button"
-                                onClick={() => toggleScoringMode(option.id)}
-                                className={cn(
-                                  "rounded-2xl border p-4 text-left transition-colors",
-                                  selected
-                                    ? "border-primary bg-primary/5"
-                                    : "border-border/60 hover:bg-muted/40",
-                                )}
-                              >
-                                <p className="font-medium">{option.label}</p>
-                                <p className="mt-1 text-sm text-muted-foreground">
-                                  {option.body}
-                                </p>
-                              </button>
-                            );
-                          })}
+                        <div className="space-y-2">
+                          <Label htmlFor="quiz-scoring">Scoring</Label>
+                          <select
+                            id="quiz-scoring"
+                            className={ADMIN_SELECT_CLASS}
+                            value={primaryYearScoringMode(wizard.scoringModes)}
+                            onChange={(event) =>
+                              setYearScoringMode(
+                                event.target.value as YearScoringModeId,
+                              )
+                            }
+                          >
+                            {(
+                              Object.keys(QUIZ_YEAR_SCORING_OPTIONS) as YearScoringModeId[]
+                            ).map((key) => (
+                              <option key={key} value={key}>
+                                {QUIZ_YEAR_SCORING_OPTIONS[key].label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-muted-foreground">
+                            {
+                              QUIZ_YEAR_SCORING_OPTIONS[
+                                primaryYearScoringMode(wizard.scoringModes)
+                              ].description
+                            }
+                          </p>
                         </div>
 
                         {wizard.scoringModes.includes("year_range") ? (
@@ -1060,9 +1060,7 @@ export function CreateQuizWizardForm({
                         }
                       />
 
-                      <WizardOptionsDivider />
-
-                      <div className="space-y-5">
+                      <WizardCollapsibleOptions sectionId="quiz-create-options">
                         <div className="space-y-2">
                           <Label>Release Year</Label>
                           <p className="text-sm text-muted-foreground">
@@ -1231,34 +1229,55 @@ export function CreateQuizWizardForm({
                             }}
                           />
                         </div>
-                      </div>
 
-                      {wizard.playMode === "auto_lastfm" ||
-                      wizard.playMode === "auto_spotify" ? (
-                        <>
-                          <WizardOptionsDivider label="Safety" />
+                        {wizard.playMode === "auto_lastfm" ||
+                        wizard.playMode === "auto_spotify" ? (
                           <div className="space-y-2">
-                            <Label htmlFor="autoInterruptAfterEmptyRounds">
-                              Interrupt after empty songs
-                            </Label>
-                            <Input
-                              id="autoInterruptAfterEmptyRounds"
-                              type="number"
-                              min={1}
-                              max={10}
-                              value={wizard.autoInterruptAfterEmptyRounds}
-                              onChange={(event) =>
-                                patchWizard({
-                                  autoInterruptAfterEmptyRounds: Number(
-                                    event.target.value,
-                                  ),
-                                })
-                              }
-                              className="w-24"
-                            />
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <Label
+                                htmlFor="autoInterruptAfterEmptyRounds"
+                                className="min-w-0 flex-1"
+                              >
+                                Interrupt quiz after empty guesses
+                              </Label>
+                              <select
+                                id="autoInterruptAfterEmptyRounds"
+                                className={cn(
+                                  ADMIN_SELECT_CLASS,
+                                  "w-auto shrink-0",
+                                )}
+                                value={wizard.autoInterruptAfterEmptyRounds}
+                                onChange={(event) =>
+                                  patchWizard({
+                                    autoInterruptAfterEmptyRounds: Number(
+                                      event.target.value,
+                                    ),
+                                  })
+                                }
+                              >
+                                {Array.from(
+                                  {
+                                    length:
+                                      AUTO_INTERRUPT_EMPTY_ROUNDS_MAX -
+                                      AUTO_INTERRUPT_EMPTY_ROUNDS_MIN +
+                                      1,
+                                  },
+                                  (_, i) =>
+                                    AUTO_INTERRUPT_EMPTY_ROUNDS_MIN + i,
+                                ).map((n) => (
+                                  <option key={n} value={n}>
+                                    {n}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Pause auto ingest after this many consecutive songs
+                              without guesses. Host can resume.
+                            </p>
                           </div>
-                        </>
-                      ) : null}
+                        ) : null}
+                      </WizardCollapsibleOptions>
 
                       <p className="text-sm text-muted-foreground">
                         Press Create quiz to create &ldquo;

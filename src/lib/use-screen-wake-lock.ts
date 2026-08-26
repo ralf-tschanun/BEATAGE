@@ -9,7 +9,11 @@ function isWakeLockSupported(): boolean {
 /** Keep the screen awake while `enabled` (Screen Wake Lock API). */
 export function useScreenWakeLock(enabled: boolean) {
   const sentinelRef = useRef<WakeLockSentinel | null>(null);
-  const [supported] = useState(isWakeLockSupported);
+  const [supported, setSupported] = useState(false);
+
+  useEffect(() => {
+    setSupported(isWakeLockSupported());
+  }, []);
 
   const release = useCallback(async () => {
     const sentinel = sentinelRef.current;

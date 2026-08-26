@@ -42,6 +42,7 @@ import {
   presentsLeaderboardAtEnd,
   scoringCombinesChart,
   scoringLowWins,
+  scoringUnitLabel,
   type BeatageQuizSettings,
 } from "@/lib/quiz-settings";
 import { scrollToSection } from "@/lib/scroll";
@@ -114,12 +115,14 @@ function RoundGuessesList({
   showChartGuess = false,
   wasNumberOne = null,
   currentUserId = null,
+  scoreUnit = "yr",
 }: {
   guesses: GuessRow[];
   emptyLabel?: string;
   showChartGuess?: boolean;
   wasNumberOne?: boolean | null;
   currentUserId?: string | null;
+  scoreUnit?: "yr" | "pt";
 }) {
   return (
     <ul className="divide-y divide-border/60 text-sm">
@@ -148,7 +151,7 @@ function RoundGuessesList({
                 </>
               ) : null}
               {" · "}
-              {g.points_total} yr
+              {g.points_total} {scoreUnit}
             </span>
           </li>
         ))
@@ -573,6 +576,7 @@ export function QuizPlayPanels({
 
   const chartComboEnabled = scoringCombinesChart(settings);
   const chartCountriesShort = chartCountriesShortLabel(settings.chartCountries);
+  const scoreUnit = scoringUnitLabel(settings);
 
   // Keep the staged reveal near the top while the host presents.
   useEffect(() => {
@@ -1067,7 +1071,7 @@ export function QuizPlayPanels({
                         ) : null}
                       </span>
                       <span className="font-medium tabular-nums">
-                        {row.total_points} yr
+                        {row.total_points} {scoreUnit}
                       </span>
                     </li>
                   ))}
@@ -1303,6 +1307,7 @@ export function QuizPlayPanels({
               chartComboEnabled ? displayResultRound.chart_was_number_one : null
             }
             currentUserId={currentUserId}
+            scoreUnit={scoreUnit}
           />
         </section>
       ) : null}
@@ -1335,7 +1340,7 @@ export function QuizPlayPanels({
                   ) : null}
                 </span>
                 <span className="shrink-0 font-medium tabular-nums">
-                  {row.total_points} yr
+                  {row.total_points} {scoreUnit}
                   <span className="ml-2 font-normal text-muted-foreground">
                     {scoringLowWins(settings)
                       ? `(${row.last_round_points ?? 0})`
@@ -1397,7 +1402,7 @@ export function QuizPlayPanels({
                         ? isHost || settings.showCorrectAnswer
                           ? (round.correct_release_year ?? "—")
                           : "—"
-                        : `${round.my_points ?? 0} yr`}
+                        : `${round.my_points ?? 0} ${scoreUnit}`}
                       {canExpand ? (
                         <CaretDownIcon
                           className={cn(
@@ -1424,6 +1429,7 @@ export function QuizPlayPanels({
                           chartComboEnabled ? round.chart_was_number_one : null
                         }
                         currentUserId={currentUserId}
+                        scoreUnit={scoreUnit}
                         emptyLabel={
                           !isHost && !settings.showOthersInPastResults
                             ? "Only your guess is shown for this round."

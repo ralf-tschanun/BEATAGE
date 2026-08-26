@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { CaretDownIcon } from "@phosphor-icons/react";
 import { ChangePlanForm } from "@/components/change-plan-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useCollapsibleSection } from "@/lib/collapsible-sections";
 import {
   combineNominationDuration,
   formatNominationDuration,
@@ -28,6 +30,48 @@ export function WizardOptionsDivider({
           {label}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Collapsible Options block for quiz create step 3.
+ * Default open; remembers last open/closed state in localStorage.
+ */
+export function WizardCollapsibleOptions({
+  sectionId,
+  label = "Options",
+  defaultOpen = true,
+  children,
+}: {
+  sectionId: string;
+  label?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useCollapsibleSection(sectionId, defaultOpen);
+
+  return (
+    <div className="space-y-5 pt-2">
+      <div className="border-t-2 border-primary/50" />
+      <button
+        type="button"
+        className="flex w-full items-center gap-3 text-left"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <p className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-primary">
+          {label}
+        </p>
+        <CaretDownIcon
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform",
+            open && "rotate-180",
+          )}
+          aria-hidden
+        />
+      </button>
+      {open ? <div className="space-y-5">{children}</div> : null}
     </div>
   );
 }

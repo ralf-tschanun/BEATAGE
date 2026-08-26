@@ -2,8 +2,12 @@ import { CHART_COUNTRY_OPTIONS } from "@/lib/charts";
 import {
   answerYearModeLabel,
   isLiveQuizSource,
+  isYearScoringMode,
+  primaryYearScoringMode,
   quizSourceLabel,
+  scoringLowWins,
   scoringModeLabel,
+  scoringUnitLabel,
   presentsLeaderboardAtEnd,
   QUIZ_LEADERBOARD_REVEAL_OPTIONS,
   type BeatageQuizSettings,
@@ -61,6 +65,9 @@ export function QuizRulesContent({
   const scoring = settings.scoringModes.map(scoringModeLabel).join(", ");
   const charts = settings.chartCountries.map(chartCountryLabel).join(", ");
   const isLive = isLiveQuizSource(source);
+  const yearMode = primaryYearScoringMode(settings.scoringModes);
+  const unit = scoringUnitLabel(settings);
+  const lowWins = scoringLowWins(settings);
 
   return (
     <div className="space-y-2 text-sm">
@@ -94,18 +101,22 @@ export function QuizRulesContent({
       ) : null}
       <p>
         <span className="text-muted-foreground">Scoring:</span> {scoring}
-        {settings.scoringModes.includes("year_range")
+        {yearMode === "year_range"
           ? settings.yearRangeTolerance === 0
-            ? " · exact year = 1 yr"
+            ? ` · exact year = 1 ${unit}`
             : ` · ±${settings.yearRangeTolerance} years`
           : ""}
-        {settings.scoringModes.includes("year_distance")
-          ? " · lowest score wins · no guess: worst miss + 2 (max 20)"
+        {yearMode === "year_distance_dynamic"
+          ? " · each year off ×2"
+          : null}
+        {lowWins
+          ? yearMode === "year_distance_dynamic"
+            ? " · lowest score wins · no guess: (worst miss + 2) ×2 (max 40)"
+            : " · lowest score wins · no guess: worst miss + 2 (max 20)"
           : " · highest score wins"}
         {settings.scoringModes.includes("chart_was_one") &&
-        (settings.scoringModes.includes("year_distance") ||
-          settings.scoringModes.includes("year_range"))
-          ? settings.scoringModes.includes("year_distance")
+        settings.scoringModes.some(isYearScoringMode)
+          ? lowWins
             ? " · #1 combo: +0 / +1 / +2 (correct / skip / wrong)"
             : " · #1 combo: +2 / +1 / +0 (correct / skip / wrong)"
           : null}

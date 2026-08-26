@@ -4,8 +4,15 @@ export type ChartCountryCode = "DE" | "AT" | "GB";
 
 export type ScoringModeId =
   | "year_distance"
+  | "year_distance_dynamic"
   | "year_range"
   | "chart_was_one";
+
+/** Mutually exclusive year-based scoring models (Chart #1 is optional on top). */
+export type YearScoringModeId =
+  | "year_distance"
+  | "year_distance_dynamic"
+  | "year_range";
 
 /**
  * Which year counts as the quiz answer.
@@ -191,11 +198,33 @@ export function clampYearRangeTolerance(value: unknown): number {
 
 const ACTIVE_SCORING_MODES = new Set<ScoringModeId>([
   "year_distance",
+  "year_distance_dynamic",
   "year_range",
   "chart_was_one",
 ]);
 
-/** Drop retired modes and keep Closer wins / Range mutually exclusive. */
+const YEAR_SCORING_MODES = new Set<YearScoringModeId>([
+  "year_distance",
+  "year_distance_dynamic",
+  "year_range",
+]);
+
+export function isYearScoringMode(
+  mode: string | null | undefined,
+): mode is YearScoringModeId {
+  return YEAR_SCORING_MODES.has(mode as YearScoringModeId);
+}
+
+/** Active year model from scoringModes (defaults to Basic). */
+export function primaryYearScoringMode(
+  modes: ScoringModeId[] | string[] | null | undefined,
+): YearScoringModeId {
+  const normalized = normalizeScoringModes(modes);
+  const year = normalized.find(isYearScoringMode);
+  return year ?? "year_distance";
+}
+
+/** Drop retired modes and keep year models mutually exclusive. */
 export function normalizeScoringModes(
   modes: ScoringModeId[] | string[] | null | undefined,
 ): ScoringModeId[] {
@@ -210,9 +239,7 @@ export function normalizeScoringModes(
     if (!ACTIVE_SCORING_MODES.has(mode as ScoringModeId)) continue;
     if (!mapped.includes(mode as ScoringModeId)) mapped.push(mode as ScoringModeId);
   }
-  const yearModes = mapped.filter(
-    (mode) => mode === "year_distance" || mode === "year_range",
-  );
+  const yearModes = mapped.filter(isYearScoringMode);
   const chart = mapped.includes("chart_was_one");
   const year = yearModes[0] ?? null;
   const next: ScoringModeId[] = [];
@@ -221,24 +248,44 @@ export function normalizeScoringModes(
   return next.length > 0 ? next : [...DEFAULT_QUIZ_SETTINGS.scoringModes];
 }
 
-/** Closer wins uses penalty points — lowest total wins. */
+/** Basic / Pro closer-wins use penalty points — lowest total wins. */
 export function scoringLowWins(settings: Pick<BeatageQuizSettings, "scoringModes">): boolean {
-  return settings.scoringModes.includes("year_distance");
+  const year = primaryYearScoringMode(settings.scoringModes);
+  return year === "year_distance" || year === "year_distance_dynamic";
 }
 
-/** Chart #1 combined with Closer wins or Range (player yes/no guess). */
+/** Score unit shown in play UI: years for Basic, points for Pro Dynamic / Range. */
+export function scoringUnitLabel(
+  settings: Pick<BeatageQuizSettings, "scoringModes">,
+): "yr" | "pt" {
+  return primaryYearScoringMode(settings.scoringModes) === "year_distance"
+    ? "yr"
+    : "pt";
+}
+
+/** Chart #1 combined with a year model (player yes/no guess). */
 export function scoringCombinesChart(
   settings: Pick<BeatageQuizSettings, "scoringModes">,
 ): boolean {
   const modes = settings.scoringModes;
-  return (
-    modes.includes("chart_was_one") &&
-    (modes.includes("year_distance") || modes.includes("year_range"))
-  );
+  return modes.includes("chart_was_one") && modes.some(isYearScoringMode);
 }
 
 /**
- * Toggle scoring modes with mutex: Closer wins XOR Range; Chart #1 optional.
+ * Set the exclusive year scoring model while keeping Chart #1 if selected.
+ */
+export function setYearScoringModeSelection(
+  current: ScoringModeId[] | string[] | null | undefined,
+  yearMode: YearScoringModeId,
+): ScoringModeId[] {
+  const chart = normalizeScoringModes(current).includes("chart_was_one");
+  const next: ScoringModeId[] = [yearMode];
+  if (chart) next.push("chart_was_one");
+  return normalizeScoringModes(next);
+}
+
+/**
+ * Toggle scoring modes with mutex among year models; Chart #1 optional.
  * Always keeps at least one mode selected.
  */
 export function toggleScoringModeSelection(
@@ -246,15 +293,10 @@ export function toggleScoringModeSelection(
   mode: ScoringModeId,
 ): ScoringModeId[] {
   const selected = new Set(normalizeScoringModes(current));
-  if (mode === "year_distance" || mode === "year_range") {
-    const other = mode === "year_distance" ? "year_range" : "year_distance";
-    if (selected.has(mode)) {
-      selected.delete(mode);
-    } else {
-      selected.delete(other);
-      selected.add(mode);
-    }
-  } else if (mode === "chart_was_one") {
+  if (isYearScoringMode(mode)) {
+    return setYearScoringModeSelection(current, mode);
+  }
+  if (mode === "chart_was_one") {
     if (selected.has("chart_was_one")) selected.delete("chart_was_one");
     else selected.add("chart_was_one");
   }
@@ -292,9 +334,32 @@ export function isLiveQuizSource(source: QuizSource | string | null | undefined)
 }
 
 export const SCORING_MODE_LABELS: Record<ScoringModeId, string> = {
-  year_distance: "Closer wins",
+  year_distance: "Basic - Closer wins",
+  year_distance_dynamic: "Pro - Closer wins - Dynamic",
   year_range: "Range",
   chart_was_one: "Chart #1",
+};
+
+/** Wizard / rules copy for the year scoring select (like leaderboard present). */
+export const QUIZ_YEAR_SCORING_OPTIONS: Record<
+  YearScoringModeId,
+  { label: string; description: string }
+> = {
+  year_distance: {
+    label: SCORING_MODE_LABELS.year_distance,
+    description:
+      "Try to hit the release year. Any difference counts against you. Lowest score wins.",
+  },
+  year_distance_dynamic: {
+    label: SCORING_MODE_LABELS.year_distance_dynamic,
+    description:
+      "Try to hit the release year. Stay close — high differences count against you twice. Lowest score wins.",
+  },
+  year_range: {
+    label: SCORING_MODE_LABELS.year_range,
+    description:
+      "Score only within the selected range. Hit the exact release year for maximum points; out of range = no points. Highest points wins.",
+  },
 };
 
 export function scoringModeLabel(mode: ScoringModeId | string): string {
