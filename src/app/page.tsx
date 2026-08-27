@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AuthLinkErrorBanner } from "@/components/account-auth-form";
 import { QuizList } from "@/components/quiz-list";
 import { HomeHero } from "@/components/home-hero";
@@ -92,6 +93,16 @@ export default async function HomePage({ searchParams }: HomePageProps) {
             />
           </section>
         </div>
+
+        <p className="px-6 text-center text-sm text-muted-foreground">
+          Looking for a music quiz about release years?{" "}
+          <Link
+            href="/music-quiz-release-year"
+            className="font-medium text-foreground underline-offset-2 hover:underline"
+          >
+            Guess the release year →
+          </Link>
+        </p>
       </main>
 
       <SiteFooter />
