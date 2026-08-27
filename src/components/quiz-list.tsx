@@ -122,7 +122,16 @@ function QuizRow({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          <Badge variant="secondary">{quiz.status}</Badge>
+          <Badge
+            variant={quiz.status === "playing" ? "outline" : "secondary"}
+            className={
+              quiz.status === "playing"
+                ? "border-amber-300/90 bg-amber-200 text-amber-950 dark:border-amber-700/60 dark:bg-amber-500/25 dark:text-amber-200"
+                : undefined
+            }
+          >
+            {quiz.status}
+          </Badge>
           {quiz.status === "payment_pending" ? (
             <span className="text-xs font-medium text-primary">Finish unlock</span>
           ) : null}
