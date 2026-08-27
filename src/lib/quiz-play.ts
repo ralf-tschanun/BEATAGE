@@ -74,7 +74,7 @@ export async function startRoundForHost(
 
     const { data: quiz, error: quizError } = await admin
       .from("beatage_quizzes")
-      .select("current_round_number, status, settings, chart_countries")
+      .select("current_round_number, status, settings, chart_countries, source")
       .eq("id", quizId)
       .maybeSingle();
 
@@ -90,6 +90,7 @@ export async function startRoundForHost(
     }
 
     const settings = resolveQuizSettings(quiz.settings);
+    const runtime = readQuizSettingsRuntime(quiz.settings);
     const chartCountries =
       settings.chartCountries.length > 0
         ? settings.chartCountries
@@ -98,9 +99,14 @@ export async function startRoundForHost(
     const currentRoundNumber =
       typeof quiz.current_round_number === "number" ? quiz.current_round_number : 0;
 
-    // Plan / unlock round cap (also applies to live Spotify / Last.fm quizzes).
+    const source =
+      typeof quiz.source === "string" ? quiz.source : settings.source;
+    const isLive = source === "spotify_live" || source === "lastfm_live";
+    const isPreRound = isLive && runtime.quizStarted === false;
+
+    // Plan / unlock round cap — official rounds only (pre-rounds do not consume the cap).
     const roundLimit = await getQuizCuratedTrackLimit(quizId);
-    if (roundLimit != null && currentRoundNumber >= roundLimit) {
+    if (!isPreRound && roundLimit != null && currentRoundNumber >= roundLimit) {
       return { error: `ROUND_LIMIT:${roundLimit}` };
     }
 
@@ -143,7 +149,17 @@ export async function startRoundForHost(
       track = data;
     }
 
-    const roundNumber = currentRoundNumber + 1;
+    // Always allocate the next unique round_number (pre + official share the sequence).
+    const { data: maxRoundRow } = await admin
+      .from("beatage_rounds")
+      .select("round_number")
+      .eq("quiz_id", quizId)
+      .order("round_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const maxRoundNumber =
+      typeof maxRoundRow?.round_number === "number" ? maxRoundRow.round_number : 0;
+    const roundNumber = maxRoundNumber + 1;
     const now = new Date().toISOString();
 
     const needsChartFlag = settings.scoringModes.includes("chart_was_one");
@@ -177,11 +193,14 @@ export async function startRoundForHost(
       return { error: insertError.message };
     }
 
+    // Official rounds bump current_round_number; pre-rounds leave the official counter alone.
     const { error: updateError } = await admin
       .from("beatage_quizzes")
       .update({
         status: "playing",
-        current_round_number: roundNumber,
+        ...(isPreRound
+          ? {}
+          : { current_round_number: currentRoundNumber + 1 }),
         last_activity_at: now,
       })
       .eq("id", quizId);
@@ -193,6 +212,94 @@ export async function startRoundForHost(
     return {};
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to start round.";
+    return { error: message };
+  }
+}
+
+/** Host ends pre-round mode: close any active warm-up round and start counting official rounds. */
+export async function startOfficialQuizForHost(
+  quizId: string,
+  userId: string,
+): Promise<{ error?: string; closedRound?: boolean }> {
+  try {
+    await assertQuizHost(quizId, userId);
+    const admin = createAdminClient();
+
+    const { data: quiz, error: quizError } = await admin
+      .from("beatage_quizzes")
+      .select("status, settings, source")
+      .eq("id", quizId)
+      .maybeSingle();
+
+    if (quizError || !quiz) {
+      return { error: "QUIZ_NOT_FOUND" };
+    }
+    if (quiz.status === "finished" || quiz.status === "expired") {
+      return { error: "QUIZ_FINISHED" };
+    }
+
+    const source =
+      typeof quiz.source === "string" ? quiz.source : "curated";
+    if (source !== "spotify_live" && source !== "lastfm_live") {
+      return { error: "NOT_LIVE_QUIZ" };
+    }
+
+    const settings = resolveQuizSettings(quiz.settings);
+    const runtime = readQuizSettingsRuntime(quiz.settings);
+    if (runtime.quizStarted !== false) {
+      return {};
+    }
+
+    let closedRound = false;
+    const { data: active } = await admin
+      .from("beatage_rounds")
+      .select("id")
+      .eq("quiz_id", quizId)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (active?.id) {
+      const closed = await closeRoundForHost(active.id, userId);
+      if (closed.error) {
+        return { error: closed.error };
+      }
+      closedRound = true;
+    }
+
+    const { data: maxRoundRow } = await admin
+      .from("beatage_rounds")
+      .select("round_number")
+      .eq("quiz_id", quizId)
+      .order("round_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const preRoundCutoff =
+      typeof maxRoundRow?.round_number === "number"
+        ? maxRoundRow.round_number
+        : 0;
+
+    const { error: updateError } = await admin
+      .from("beatage_quizzes")
+      .update({
+        settings: mergeQuizSettingsForStorage(settings, {
+          ...runtime,
+          quizStarted: true,
+          preRoundCutoff,
+          autoEmptyStreak: 0,
+          autoInterrupted: false,
+        }),
+        last_activity_at: new Date().toISOString(),
+      })
+      .eq("id", quizId);
+
+    if (updateError) {
+      return { error: updateError.message };
+    }
+
+    return { closedRound };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to start quiz.";
     return { error: message };
   }
 }

@@ -6,6 +6,7 @@ import {
   closeRoundForHost,
   finishQuizForHost,
   advanceLeaderboardRevealForHost,
+  startOfficialQuizForHost,
   startRoundForHost,
   submitGuessForMember,
 } from "@/lib/quiz-play";
@@ -14,6 +15,7 @@ import {
   readQuizSettingsRuntime,
   resolveQuizSettings,
 } from "@/lib/quiz-scoring";
+import { isPreRoundNumber } from "@/lib/quiz-settings";
 import { ensureAnonymousSession } from "@/lib/supabase/auth";
 import { getQuizPlayState } from "@/lib/quizzes/play-state";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -65,6 +67,9 @@ function mapError(message: string): string {
   }
   if (message.includes("QUIZ_EXPIRED")) return "This quiz has expired.";
   if (message.includes("QUIZ_NOT_JOINABLE")) return "This quiz cannot be changed right now.";
+  if (message.includes("NOT_LIVE_QUIZ")) {
+    return "Start Quiz Now is only available for live quizzes.";
+  }
   return message || "Something went wrong.";
 }
 
@@ -81,6 +86,25 @@ async function applyEmptyRoundStreak(
 ): Promise<{ interrupted: boolean; emptyStreak: number }> {
   const settings = resolveQuizSettings(rawSettings);
   const runtime = readQuizSettingsRuntime(rawSettings);
+
+  // Pre-rounds are practice — do not count toward the empty-streak interrupt.
+  const { data: closedRound } = await admin
+    .from("beatage_rounds")
+    .select("round_number")
+    .eq("id", closedRoundId)
+    .maybeSingle();
+  const closedRoundNumber =
+    typeof (closedRound as { round_number?: number } | null)?.round_number ===
+    "number"
+      ? (closedRound as { round_number: number }).round_number
+      : 0;
+  if (isPreRoundNumber(closedRoundNumber, runtime)) {
+    return {
+      interrupted: Boolean(runtime.autoInterrupted),
+      emptyStreak: runtime.autoEmptyStreak ?? 0,
+    };
+  }
+
   const { count } = await admin
     .from("beatage_guesses")
     .select("id", { count: "exact", head: true })
@@ -153,6 +177,24 @@ export async function fetchQuizPlaySnapshotAction(quizId: string, joinCode: stri
   await ensureAnonymousSession();
   // Live polls must not re-run Spotify/iTunes backfill on every snapshot.
   return getQuizPlayState(id, code, { backfillReleaseYears: false });
+}
+
+/** Host ends pre-round warm-up; next detected song opens Round 1. */
+export async function startOfficialQuizAction(
+  quizId: string,
+  joinCode: string,
+): Promise<{ ok?: boolean; error?: string; closedRound?: boolean }> {
+  const id = quizId.trim();
+  const code = joinCode.trim().toUpperCase();
+  if (!id) return { error: "Missing quiz id." };
+
+  const { user } = await ensureAnonymousSession();
+  const result = await startOfficialQuizForHost(id, user.id);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
+  revalidatePath(`/q/${code}`);
+  return { ok: true, closedRound: result.closedRound };
 }
 
 export async function addCuratedTrackAction(

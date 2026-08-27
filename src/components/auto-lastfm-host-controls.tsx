@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   interruptAutoSpotifyQuizAction,
   resumeAutoSpotifyQuizAction,
+  startOfficialQuizAction,
   syncLastfmLiveRoundAction,
   updateLastfmUsernameAction,
 } from "@/app/actions/quiz-round";
@@ -47,6 +48,8 @@ type AutoLastfmHostControlsProps = {
   lastfmUsername: string;
   disabled?: boolean;
   autoInterrupted?: boolean;
+  /** False while the quiz is still in pre-round warm-up. */
+  quizStarted?: boolean;
   emptyStreakThreshold?: number;
   planId?: PlanId;
   isAnonymous?: boolean;
@@ -97,6 +100,7 @@ export function AutoLastfmHostControls({
   lastfmUsername: initialUsername,
   disabled = false,
   autoInterrupted = false,
+  quizStarted = true,
   emptyStreakThreshold = 3,
   planId = "free",
   isAnonymous = false,
@@ -124,6 +128,12 @@ export function AutoLastfmHostControls({
   );
   const [pendingReveal, setPendingReveal] = useState(false);
   const [endQuizConfirmOpen, setEndQuizConfirmOpen] = useState(false);
+  const [localQuizStarted, setLocalQuizStarted] = useState(quizStarted);
+  const localQuizStartedRef = useRef(quizStarted);
+  useEffect(() => {
+    setLocalQuizStarted(quizStarted);
+    localQuizStartedRef.current = quizStarted;
+  }, [quizStarted]);
   /** True while Automatic mode is counting down before opening the round. */
   const [awaitingAutoOpen, setAwaitingAutoOpen] = useState(false);
   /** Optimistic: disable Close immediately on click until hasActiveRound clears. */
@@ -256,7 +266,7 @@ export function AutoLastfmHostControls({
           setAwaitingAutoOpen(false);
           setCloseInFlight(false);
           setStatus(
-            `Round open: ${result.trackTitle} — ${result.trackArtist ?? ""}`,
+            `${localQuizStartedRef.current ? "Round" : "Pre Round"} open: ${result.trackTitle} — ${result.trackArtist ?? ""}`,
           );
           router.refresh();
         } else if (result.closedRound && result.nothingPlaying) {
@@ -642,6 +652,35 @@ export function AutoLastfmHostControls({
     }
   }
 
+  async function onStartQuizNow() {
+    if (localQuizStarted || hostBusy) return;
+    clearDebounce();
+    pendingKeyRef.current = null;
+    setPendingReveal(false);
+    setAwaitingAutoOpen(false);
+    setBusy(true);
+    reportError(null);
+    setStatus("Starting quiz…");
+    try {
+      const result = await startOfficialQuizAction(quizId, joinCode);
+      if (result.error) {
+        reportError(result.error);
+        setStatus("Could not start the quiz");
+        return;
+      }
+      setLocalQuizStarted(true);
+      localQuizStartedRef.current = true;
+      deferCurrentTrack();
+      setStatus("Quiz started — next song opens Round 1");
+      router.refresh();
+    } catch {
+      reportError("Could not start the quiz.");
+      setStatus("Could not start the quiz");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onInterruptOrContinue() {
     setBusy(true);
     reportError(null);
@@ -791,6 +830,12 @@ export function AutoLastfmHostControls({
       <div>
         <h2 className="text-lg font-semibold">Live Spotify (Last.fm)</h2>
         <p className="text-sm text-muted-foreground">{status}</p>
+        {!localQuizStarted ? (
+          <p className="mt-1 text-sm text-muted-foreground">
+            Pre-rounds are running so everyone can practice. Scores are saved but
+            do not count on the leaderboard until you start the quiz.
+          </p>
+        ) : null}
       </div>
 
       {atRoundLimit ? (
@@ -804,6 +849,19 @@ export function AutoLastfmHostControls({
           isAnonymous={isAnonymous}
           unlocked={unlocked}
         />
+      ) : null}
+
+      {!localQuizStarted ? (
+        <Button
+          type="button"
+          className="w-full"
+          disabled={hostBusy || disabled}
+          onClick={() => {
+            void onStartQuizNow();
+          }}
+        >
+          Start Quiz Now
+        </Button>
       ) : null}
 
       <div className="border-t border-border/60" />

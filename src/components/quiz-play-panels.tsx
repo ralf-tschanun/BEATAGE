@@ -37,6 +37,7 @@ import { podiumRankClass, podiumRowClass } from "@/lib/result-podium-styles";
 import {
   applyQuizLeaderboardReveal,
   DEFAULT_QUIZ_SETTINGS,
+  formatRoundLabel,
   isLiveQuizSource,
   isQuizLeaderboardRevealComplete,
   presentsLeaderboardAtEnd,
@@ -222,6 +223,8 @@ type QuizPlayPanelsProps = {
   maxMembers?: number | null;
   settings?: BeatageQuizSettings;
   autoInterrupted?: boolean;
+  /** False while live quiz is still in pre-round warm-up. */
+  quizStarted?: boolean;
   /** Host-controlled end presentation progress (0 = not started). */
   leaderboardRevealStep?: number;
   /** Guest sessions need an email account before Polar unlock checkout. */
@@ -255,6 +258,7 @@ export function QuizPlayPanels({
   maxMembers: maxMembersProp = null,
   settings: settingsProp = DEFAULT_QUIZ_SETTINGS,
   autoInterrupted: autoInterruptedProp = false,
+  quizStarted: quizStartedProp = true,
   leaderboardRevealStep: leaderboardRevealStepProp = 0,
   isAnonymous = false,
   currentUserId = null,
@@ -311,6 +315,7 @@ export function QuizPlayPanels({
     maxCuratedTracks: maxCuratedTracksProp,
     settings: settingsProp,
     autoInterrupted: autoInterruptedProp,
+    quizStarted: quizStartedProp,
     leaderboardRevealStep: leaderboardRevealStepProp,
   }));
 
@@ -330,6 +335,7 @@ export function QuizPlayPanels({
   const maxCuratedTracks = live.maxCuratedTracks;
   const settings = live.settings ?? settingsProp;
   const autoInterrupted = live.autoInterrupted ?? autoInterruptedProp;
+  const quizStarted = live.quizStarted ?? quizStartedProp;
   const leaderboardRevealStep =
     live.leaderboardRevealStep ?? leaderboardRevealStepProp;
   const presentAtEnd = presentsLeaderboardAtEnd(settings);
@@ -637,6 +643,7 @@ export function QuizPlayPanels({
             lastfmUsername={settings.lastfmUsername}
             disabled={isFinished}
             autoInterrupted={autoInterrupted}
+            quizStarted={quizStarted}
             emptyStreakThreshold={settings.autoInterruptAfterEmptyRounds}
             planId={planId}
             isAnonymous={isAnonymous}
@@ -670,6 +677,7 @@ export function QuizPlayPanels({
             joinCode={joinCode}
             disabled={isFinished}
             autoInterrupted={autoInterrupted}
+            quizStarted={quizStarted}
             emptyStreakThreshold={settings.autoInterruptAfterEmptyRounds}
             planId={planId}
             isAnonymous={isAnonymous}
@@ -931,11 +939,13 @@ export function QuizPlayPanels({
             <h2 className="text-lg font-semibold">Waiting for the host</h2>
             <p className="text-sm text-muted-foreground">
               {isLive
-                ? currentRoundNumber > 0
-                  ? "Round results are on the board. The next song in Spotify will open a new round."
-                  : isLastfmLive
-                    ? "Live mode is on — this page updates when Spotify scrobbles the next song to Last.fm."
-                    : "Auto Spotify is on — this page updates when the host starts playing a song."
+                ? !quizStarted
+                  ? "Pre-rounds are open for practice. The host will start the quiz when everyone is ready."
+                  : currentRoundNumber > 0
+                    ? "Round results are on the board. The next song in Spotify will open a new round."
+                    : isLastfmLive
+                      ? "Live mode is on — this page updates when Spotify scrobbles the next song to Last.fm."
+                      : "Auto Spotify is on — this page updates when the host starts playing a song."
                 : currentRoundNumber > 0
                   ? `Round ${currentRoundNumber} is done. Hang tight — the host will start the next round.`
                   : "The quiz is live. This page updates automatically when the host starts a round."}
@@ -1081,10 +1091,21 @@ export function QuizPlayPanels({
         <section className="space-y-4 rounded-2xl border border-primary/30 bg-primary/5 p-6">
           <div className="space-y-1">
             <p className="text-xs font-medium uppercase tracking-wide text-primary">
-              Live round
+              {activeRound.is_pre_round || (isLive && !quizStarted)
+                ? "Pre-round"
+                : "Live round"}
             </p>
             <h2 className="text-lg font-semibold">
-              Round {activeRound.round_number} · Guess the…
+              {activeRound.round_label ||
+                formatRoundLabel({
+                  isPreRound:
+                    Boolean(activeRound.is_pre_round) ||
+                    (isLive && !quizStarted),
+                  displayRoundNumber:
+                    activeRound.display_round_number ||
+                    activeRound.round_number,
+                })}{" "}
+              · Guess the…
             </h2>
           </div>
           {settings.showTitleArtist ? (
@@ -1240,7 +1261,16 @@ export function QuizPlayPanels({
       {showResultCard && displayResultRound ? (
         <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
           <h2 className="text-lg font-semibold">
-            Round {displayResultRound.round_number} results
+            {displayResultRound.round_label ||
+              formatRoundLabel({
+                isPreRound:
+                  Boolean(displayResultRound.is_pre_round) ||
+                  (isLive && !quizStarted),
+                displayRoundNumber:
+                  displayResultRound.display_round_number ||
+                  displayResultRound.round_number,
+              })}{" "}
+            results
             {activeRound ? (
               <span className="ml-2 text-sm font-normal text-muted-foreground">
                 (previous)
@@ -1377,7 +1407,14 @@ export function QuizPlayPanels({
                   >
                     <p className="min-w-0 flex-1 truncate">
                       <span className="text-muted-foreground tabular-nums">
-                        {round.round_number}
+                        {round.round_label ||
+                          formatRoundLabel({
+                            isPreRound:
+                              Boolean(round.is_pre_round) ||
+                              (isLive && !quizStarted),
+                            displayRoundNumber:
+                              round.display_round_number || round.round_number,
+                          })}
                       </span>
                       {" · "}
                       <span className="font-medium">{round.track_name}</span>

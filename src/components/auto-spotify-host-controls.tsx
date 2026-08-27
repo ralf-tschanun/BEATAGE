@@ -6,6 +6,7 @@ import {
   interruptAutoSpotifyQuizAction,
   resumeAutoSpotifyQuizAction,
   skipSpotifyNextAction,
+  startOfficialQuizAction,
   syncAutoSpotifyRoundAction,
 } from "@/app/actions/quiz-round";
 import { QuizPlanLimitPrompt } from "@/components/quiz-plan-limit-prompt";
@@ -38,6 +39,8 @@ type AutoSpotifyHostControlsProps = {
   disabled?: boolean;
   /** Server-side pause (manual or after consecutive empty rounds). */
   autoInterrupted?: boolean;
+  /** False while the quiz is still in pre-round warm-up. */
+  quizStarted?: boolean;
   emptyStreakThreshold?: number;
   planId?: PlanId;
   isAnonymous?: boolean;
@@ -75,6 +78,7 @@ export function AutoSpotifyHostControls({
   joinCode,
   disabled = false,
   autoInterrupted = false,
+  quizStarted = true,
   emptyStreakThreshold = 3,
   planId = "free",
   isAnonymous = false,
@@ -101,6 +105,12 @@ export function AutoSpotifyHostControls({
   );
   const [pendingReveal, setPendingReveal] = useState(false);
   const [endQuizConfirmOpen, setEndQuizConfirmOpen] = useState(false);
+  const [localQuizStarted, setLocalQuizStarted] = useState(quizStarted);
+  const localQuizStartedRef = useRef(quizStarted);
+  useEffect(() => {
+    setLocalQuizStarted(quizStarted);
+    localQuizStartedRef.current = quizStarted;
+  }, [quizStarted]);
   /** True while Automatic mode is counting down before opening the round. */
   const [awaitingAutoOpen, setAwaitingAutoOpen] = useState(false);
   /** Optimistic: disable Close immediately on click until hasActiveRound clears. */
@@ -184,7 +194,7 @@ export function AutoSpotifyHostControls({
           setAwaitingAutoOpen(false);
           setCloseInFlight(false);
           setStatus(
-            `Round open — ${result.trackTitle ?? "track"}` +
+            `${localQuizStartedRef.current ? "Round" : "Pre Round"} open — ${result.trackTitle ?? "track"}` +
               (result.trackArtist ? ` — ${result.trackArtist}` : ""),
           );
         } else if (result.closedRound && result.nothingPlaying) {
@@ -523,6 +533,38 @@ export function AutoSpotifyHostControls({
     }
   }
 
+  async function onStartQuizNow() {
+    if (localQuizStarted || hostBusy) return;
+    clearDebounce();
+    pendingSpotifyIdRef.current = null;
+    setPendingReveal(false);
+    setAwaitingAutoOpen(false);
+    setBusy(true);
+    setError(null);
+    setStatus("Starting quiz…");
+    try {
+      const result = await startOfficialQuizAction(quizId, joinCode);
+      if (result.error) {
+        setError(result.error);
+        setStatus("Could not start the quiz");
+        return;
+      }
+      setLocalQuizStarted(true);
+      localQuizStartedRef.current = true;
+      const trackId = nowPlaying?.spotifyTrackId ?? lastSpotifyIdRef.current;
+      if (trackId) {
+        deferredTrackIdRef.current = trackId;
+      }
+      setStatus("Quiz started — next song opens Round 1");
+      router.refresh();
+    } catch {
+      setError("Could not start the quiz.");
+      setStatus("Could not start the quiz");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onInterruptOrContinue() {
     if (autoInterrupted) {
       setBusy(true);
@@ -633,6 +675,12 @@ export function AutoSpotifyHostControls({
       <div>
         <h2 className="text-lg font-semibold">Auto Spotify</h2>
         <p className="text-sm text-muted-foreground">{status}</p>
+        {!localQuizStarted ? (
+          <p className="mt-1 text-sm text-muted-foreground">
+            Pre-rounds are running so everyone can practice. Scores are saved but
+            do not count on the leaderboard until you start the quiz.
+          </p>
+        ) : null}
       </div>
 
       {atRoundLimit ? (
@@ -646,6 +694,19 @@ export function AutoSpotifyHostControls({
           isAnonymous={isAnonymous}
           unlocked={unlocked}
         />
+      ) : null}
+
+      {!localQuizStarted ? (
+        <Button
+          type="button"
+          className="w-full"
+          disabled={hostBusy || disabled}
+          onClick={() => {
+            void onStartQuizNow();
+          }}
+        >
+          Start Quiz Now
+        </Button>
       ) : null}
 
       <div className="border-t border-border/60" />

@@ -87,7 +87,43 @@ export type QuizSettingsRuntime = {
   autoInterrupted?: boolean;
   /** Host-controlled end presentation progress (0 = not started). */
   leaderboardRevealStep?: number;
+  /**
+   * Live quizzes only: false until the host clicks Start Quiz Now.
+   * While false, new rounds are pre-rounds (practice). Undefined = already started
+   * (backwards compatible with quizzes created before this flag existed).
+   */
+  quizStarted?: boolean;
+  /**
+   * After Start Quiz Now: highest round_number that was a pre-round.
+   * Rounds with round_number <= cutoff stay labeled as Pre Round and stay
+   * out of the official leaderboard. 0 = no pre-rounds were played.
+   */
+  preRoundCutoff?: number;
 };
+
+/** Label for a round in host / participant UI. */
+export function formatRoundLabel(opts: {
+  isPreRound: boolean;
+  displayRoundNumber: number;
+}): string {
+  const n = Math.max(1, Math.round(opts.displayRoundNumber));
+  return opts.isPreRound ? `Pre Round ${n}` : `Round ${n}`;
+}
+
+/** Whether a round counts as warm-up (not official quiz scoring). */
+export function isPreRoundNumber(
+  roundNumber: number,
+  runtime: Pick<QuizSettingsRuntime, "quizStarted" | "preRoundCutoff">,
+): boolean {
+  // Explicit false only — missing/undefined means legacy quiz (already started).
+  if (runtime.quizStarted === false) return true;
+  const cutoff =
+    typeof runtime.preRoundCutoff === "number" &&
+    Number.isFinite(runtime.preRoundCutoff)
+      ? Math.max(0, Math.round(runtime.preRoundCutoff))
+      : 0;
+  return cutoff > 0 && roundNumber <= cutoff;
+}
 
 /** Wizard / rules labels for end-of-quiz leaderboard presentation modes. */
 export const QUIZ_LEADERBOARD_REVEAL_OPTIONS: Record<

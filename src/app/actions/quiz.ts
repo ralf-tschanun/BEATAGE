@@ -13,6 +13,7 @@ import {
   type ChartCountryCode,
   type ScoringModeId,
 } from "@/lib/quiz-settings";
+import { mergeQuizSettingsForStorage } from "@/lib/quiz-scoring";
 import { effectiveQuizTitle } from "@/lib/create-quiz-wizard";
 import { normalizeLastfmUsername } from "@/lib/lastfm";
 import {
@@ -311,6 +312,11 @@ export async function createQuizAction(
     return { error: "Enter your Last.fm username for live Spotify quizzes." };
   }
 
+  // Live quizzes start in pre-round mode until the host clicks Start Quiz Now.
+  const settingsForStore = isLive
+    ? mergeQuizSettingsForStorage(settings, { quizStarted: false })
+    : settings;
+
   try {
     const { supabase, user } = await ensureAnonymousSession();
     const { data: profile } = await supabase
@@ -341,7 +347,7 @@ export async function createQuizAction(
       p_host_name: hostName,
       p_description: description || null,
       p_source: pSource,
-      p_settings: settings,
+      p_settings: settingsForStore,
       p_chart_countries: settings.chartCountries,
       p_requires_unlock: requiresUnlock,
     });
