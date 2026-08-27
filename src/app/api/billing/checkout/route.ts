@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOptionalUser } from "@/lib/supabase/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getRequestSiteUrl } from "@/lib/site-url";
 import {
   createPolarClient,
@@ -19,7 +20,7 @@ export async function GET(request: NextRequest) {
   }
 
   const continuePath = `${request.nextUrl.pathname}${request.nextUrl.search}`;
-  const { supabase, user } = await getOptionalUser();
+  const { user } = await getOptionalUser();
 
   // Polar checkout needs a real email account. Guests create/sign in first, then
   // continue here (same user id after guest conversion keeps unlock ownership).
@@ -46,11 +47,26 @@ export async function GET(request: NextRequest) {
     if (!quizId) {
       return NextResponse.redirect(`${siteUrl}/?billing=invalid`);
     }
-    const { data: quiz } = await supabase
-      .from("beatage_quizzes")
-      .select("id, host_user_id, join_code, unlocked_at")
-      .eq("id", quizId)
-      .maybeSingle();
+    // Use service role: user-scoped RLS on beatage_quizzes often returns null
+    // even for the host (same issue the quiz page works around with admin).
+    let quiz: {
+      id: string;
+      host_user_id: string;
+      join_code: string;
+      unlocked_at: string | null;
+    } | null = null;
+    try {
+      const admin = createAdminClient();
+      const { data } = await admin
+        .from("beatage_quizzes")
+        .select("id, host_user_id, join_code, unlocked_at")
+        .eq("id", quizId)
+        .maybeSingle();
+      quiz = data;
+    } catch (error) {
+      console.error("[billing/checkout] admin quiz lookup failed", error);
+      return NextResponse.redirect(`${siteUrl}/?billing=error`);
+    }
     if (!quiz || quiz.host_user_id !== user.id) {
       return NextResponse.redirect(`${siteUrl}/?billing=invalid`);
     }
@@ -72,18 +88,38 @@ export async function GET(request: NextRequest) {
     undefined;
 
   try {
-    const checkout = await polar.checkouts.create({
-      products: [productId],
-      successUrl,
-      returnUrl: siteUrl,
-      externalCustomerId: user.id,
-      customerEmail,
-      metadata: {
-        supabase_user_id: user.id,
-        sku,
-        ...(sku === "quiz_unlock" ? { quiz_id: quizId } : {}),
-      },
-    });
+    const createCheckout = (email?: string) =>
+      polar.checkouts.create({
+        products: [productId],
+        successUrl,
+        returnUrl: siteUrl,
+        externalCustomerId: user.id,
+        ...(email ? { customerEmail: email } : {}),
+        metadata: {
+          supabase_user_id: user.id,
+          sku,
+          ...(sku === "quiz_unlock" ? { quiz_id: quizId } : {}),
+        },
+      });
+
+    let checkout;
+    try {
+      checkout = await createCheckout(customerEmail);
+    } catch (firstError) {
+      // Polar rejects emails whose domain has no DNS (common with test addresses).
+      // Retry without prefill so checkout can still open.
+      const message =
+        firstError instanceof Error ? firstError.message : String(firstError);
+      if (customerEmail && /valid email|domain name/i.test(message)) {
+        console.warn(
+          "[billing/checkout] Polar rejected customer_email; retrying without it",
+          customerEmail,
+        );
+        checkout = await createCheckout(undefined);
+      } else {
+        throw firstError;
+      }
+    }
 
     if (!checkout.url) {
       return NextResponse.redirect(`${siteUrl}/?billing=unavailable`);
