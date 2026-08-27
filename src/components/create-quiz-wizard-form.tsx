@@ -50,6 +50,7 @@ import {
   hasMeaningfulQuizWizardDraft,
   loadQuizWizardState,
   loadRememberedLastfmUsername,
+  quizWizardSettingsSummary,
   quizWizardStepTitle,
   quickLiveQuizWizardState,
   saveQuizWizardState,
@@ -571,6 +572,7 @@ export function CreateQuizWizardForm({
         hasSession={hasSession}
         isAnonymous={isAnonymous}
         pending={pending}
+        settingsSummary={quizWizardSettingsSummary(wizard)}
         onCreateWithPlanLimit={() => submitCreate(false)}
         onUnlockAndCreate={() => submitCreate(true)}
       />

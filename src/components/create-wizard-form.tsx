@@ -2862,6 +2862,7 @@ export function CreateWizardForm({
         hasSession={hasSession}
         isAnonymous={isAnonymous}
         pending={pending}
+        settingsSummary={wizardSettingsSummary(wizard)}
         onCreateWithPlanLimit={() => {
           submitWithState(wizardRef.current);
         }}

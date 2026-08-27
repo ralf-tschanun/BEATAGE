@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChangePlanForm } from "@/components/change-plan-form";
 import { Button } from "@/components/ui/button";
 import {
@@ -201,6 +201,8 @@ type CreateParticipantLimitDialogProps = {
   hasSession: boolean;
   isAnonymous?: boolean;
   pending?: boolean;
+  /** Compact summary of the contest options about to be created. */
+  settingsSummary?: string | null;
   onCreateWithPlanLimit: () => void;
   onUnlockAndCreate: () => void;
 };
@@ -215,14 +217,20 @@ export function CreateParticipantLimitDialog({
   hasSession,
   isAnonymous = false,
   pending = false,
+  settingsSummary = null,
   onCreateWithPlanLimit,
   onUnlockAndCreate,
 }: CreateParticipantLimitDialogProps) {
   const [planOpen, setPlanOpen] = useState(false);
+  const createButtonRef = useRef<HTMLButtonElement>(null);
+  const summary = settingsSummary?.trim() || null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent
+        className="sm:max-w-md"
+        initialFocus={createButtonRef}
+      >
         <DialogHeader className="text-center sm:text-center">
           <DialogTitle>Participant limit on {planLabel}</DialogTitle>
           <DialogDescription className="text-center">
@@ -251,6 +259,7 @@ export function CreateParticipantLimitDialog({
 
         <DialogFooter className="flex-col items-stretch gap-2 sm:flex-col sm:items-stretch">
           <Button
+            ref={createButtonRef}
             type="button"
             disabled={pending}
             onClick={onCreateWithPlanLimit}
@@ -259,6 +268,14 @@ export function CreateParticipantLimitDialog({
               ? "Creating…"
               : `Create with max. ${maxMembers} participants`}
           </Button>
+          {summary ? (
+            <p
+              className="max-h-24 overflow-y-auto text-left text-xs leading-relaxed text-muted-foreground"
+              tabIndex={-1}
+            >
+              {summary}
+            </p>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
