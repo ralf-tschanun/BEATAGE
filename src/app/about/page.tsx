@@ -23,6 +23,16 @@ export default function AboutPage() {
           guess the release year. Same guest-first flow as our other apps — create
           a quiz, invite friends, score years off, and present the winner.
         </p>
+        <p className="mt-4 text-muted-foreground">
+          Learn more:{" "}
+          <Link
+            href="/music-quiz-release-year"
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            Music quiz — guess the release year
+          </Link>
+          .
+        </p>
         <Link href="/" className="mt-8 inline-block text-sm underline-offset-2 hover:underline">
           ← Back to home
         </Link>

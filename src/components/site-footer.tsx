@@ -9,6 +9,12 @@ export function SiteFooter() {
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-6 py-10 sm:flex-row sm:items-center sm:justify-between">
         <nav className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <Link
+            href="/music-quiz-release-year"
+            className="text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Music quiz
+          </Link>
+          <Link
             href="/help"
             className="text-muted-foreground transition-colors hover:text-foreground"
           >

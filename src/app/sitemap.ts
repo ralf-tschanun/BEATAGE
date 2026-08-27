@@ -7,6 +7,7 @@ const PUBLIC_PATHS: Array<{
   priority: number;
 }> = [
   { path: "/", changeFrequency: "weekly", priority: 1 },
+  { path: "/music-quiz-release-year", changeFrequency: "monthly", priority: 0.95 },
   { path: "/create", changeFrequency: "monthly", priority: 0.9 },
   { path: "/join", changeFrequency: "monthly", priority: 0.8 },
   { path: "/help", changeFrequency: "monthly", priority: 0.7 },
