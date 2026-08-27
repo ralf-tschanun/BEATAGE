@@ -8,7 +8,7 @@ import { safeNextPath } from "@/lib/site-url";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type BillingAccountPageProps = {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; auth?: string }>;
 };
 
 function parseUnlockQuizId(nextPath: string): string | null {
@@ -29,8 +29,9 @@ function parseUnlockQuizId(nextPath: string): string | null {
 export default async function BillingAccountPage({
   searchParams,
 }: BillingAccountPageProps) {
-  const { next: rawNext } = await searchParams;
+  const { next: rawNext, auth } = await searchParams;
   const nextPath = safeNextPath(rawNext);
+  const authLinkError = auth === "error";
   const { plan, identity, canCreate, hosted } = await getQuizDashboardData();
   const unlockQuizId = parseUnlockQuizId(nextPath === "/" ? "" : nextPath);
 
@@ -126,6 +127,7 @@ export default async function BillingAccountPage({
             displayName={identity?.displayName}
             nextPath={nextPath === "/" ? undefined : nextPath}
             preferSignup={Boolean(identity?.isAnonymous)}
+            authLinkError={authLinkError}
           />
         </div>
       </main>

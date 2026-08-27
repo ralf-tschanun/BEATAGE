@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState, type FormEvent } from "rea
 import { useRouter } from "next/navigation";
 import {
   requestPasswordResetAction,
+  resendConfirmationEmailAction,
   saveAccountAction,
   signInWithPasswordAction,
   signOutAction,
@@ -26,6 +27,9 @@ const initialState: AuthActionState = null;
 
 const ACCOUNT_NOTICE_KEY = "beatage:account-notice";
 
+const AUTH_LINK_ERROR_MESSAGE =
+  "That confirmation link is invalid or expired. Enter your email below and resend a new confirmation email.";
+
 type AccountAuthFormProps = {
   hasSession: boolean;
   isAnonymous: boolean;
@@ -38,6 +42,8 @@ type AccountAuthFormProps = {
    * still offering sign-in to an existing account.
    */
   preferSignup?: boolean;
+  /** From /?auth=error or /billing/account?auth=error after a failed confirm link. */
+  authLinkError?: boolean;
 };
 
 function readStoredNotice(): string | null {
@@ -59,11 +65,59 @@ function writeStoredNotice(message: string | null) {
   }
 }
 
+/** Compact banner for home when a confirmation link fails. */
+export function AuthLinkErrorBanner() {
+  const [email, setEmail] = useState("");
+  const [resendState, resendAction, resendPending] = useActionState(
+    resendConfirmationEmailAction,
+    initialState,
+  );
+
+  return (
+    <div
+      className="mx-auto w-full max-w-5xl space-y-3 px-6 pt-4"
+      role="alert"
+    >
+      <p className="text-sm text-destructive">{AUTH_LINK_ERROR_MESSAGE}</p>
+      <form action={resendAction} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <div className="min-w-0 flex-1 space-y-1">
+          <Label htmlFor="auth-link-error-email">Email</Label>
+          <Input
+            id="auth-link-error-email"
+            name="email"
+            type="email"
+            autoComplete="email"
+            required
+            placeholder="you@email.com"
+            disabled={resendPending}
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </div>
+        <Button type="submit" size="sm" disabled={resendPending} className="sm:mb-0.5">
+          {resendPending ? "Sending…" : "Resend confirmation email"}
+        </Button>
+      </form>
+      {resendState?.error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {resendState.error}
+        </p>
+      ) : null}
+      {resendState?.success ? (
+        <p className="text-sm text-foreground" role="status">
+          {resendState.success}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function AccountAuthForm({
   hasSession,
   isAnonymous,
   nextPath,
   preferSignup = false,
+  authLinkError = false,
 }: AccountAuthFormProps) {
   const router = useRouter();
   const [mode, setMode] = useState<"signin" | "reset">("signin");
@@ -82,6 +136,10 @@ export function AccountAuthForm({
     requestPasswordResetAction,
     initialState,
   );
+  const [resendState, resendAction, resendPending] = useActionState(
+    resendConfirmationEmailAction,
+    initialState,
+  );
 
   const [mismatch, setMismatch] = useState(false);
   const [accountNotice, setAccountNotice] = useState<string | null>(null);
@@ -93,11 +151,14 @@ export function AccountAuthForm({
   const signupEmailRef = useRef(signupEmail);
   signupEmailRef.current = signupEmail;
 
-  const pending = savePending || signInPending || resetPending;
+  const pending = savePending || signInPending || resetPending || resendPending;
   const state = mode === "reset" ? resetState : signInState;
   const checkoutGate = Boolean(nextPath) || preferSignup;
   const needsEmailConfirmation = Boolean(
     saveState?.needsEmailConfirmation ||
+      signInState?.needsEmailConfirmation ||
+      resendState?.needsEmailConfirmation ||
+      authLinkError ||
       (accountNotice && /confirm your email/i.test(accountNotice)),
   );
 
@@ -106,6 +167,12 @@ export function AccountAuthForm({
     const stored = readStoredNotice();
     if (stored) setAccountNotice(stored);
   }, []);
+
+  useEffect(() => {
+    if (!authLinkError) return;
+    writeStoredNotice(AUTH_LINK_ERROR_MESSAGE);
+    setAccountNotice(AUTH_LINK_ERROR_MESSAGE);
+  }, [authLinkError]);
 
   useEffect(() => {
     if (!saveState?.success) return;
@@ -176,6 +243,39 @@ export function AccountAuthForm({
     }
   }
 
+  const resendBlock =
+    needsEmailConfirmation && mode === "signin" ? (
+      <div className="space-y-2 rounded-2xl border border-border/60 bg-muted/40 px-3 py-3">
+        <p className="text-sm text-foreground">
+          Didn’t get the email, or the link expired? Resend a new confirmation
+          link to the address above.
+        </p>
+        <form action={resendAction}>
+          {nextPath ? <input type="hidden" name="next" value={nextPath} /> : null}
+          <input type="hidden" name="email" value={signInEmail} />
+          <Button
+            type="submit"
+            size="sm"
+            variant="outline"
+            disabled={pending || !signInEmail.trim()}
+            className="w-full"
+          >
+            {resendPending ? "Sending…" : "Resend confirmation email"}
+          </Button>
+        </form>
+        {resendState?.error ? (
+          <p className="text-sm text-destructive" role="alert">
+            {resendState.error}
+          </p>
+        ) : null}
+        {resendState?.success ? (
+          <p className="text-sm text-foreground" role="status">
+            {resendState.success}
+          </p>
+        ) : null}
+      </div>
+    ) : null;
+
   const noticeBlock = accountNotice ? (
     <p
       className={
@@ -212,6 +312,36 @@ export function AccountAuthForm({
                 {accountNotice ?? saveState?.success}
               </DialogDescription>
             </DialogHeader>
+            {needsEmailConfirmation ? (
+              <form action={resendAction} className="space-y-2">
+                {nextPath ? (
+                  <input type="hidden" name="next" value={nextPath} />
+                ) : null}
+                <input
+                  type="hidden"
+                  name="email"
+                  value={signInEmail || signupEmail}
+                />
+                <Button
+                  type="submit"
+                  variant="outline"
+                  disabled={pending || !(signInEmail || signupEmail).trim()}
+                  className="w-full"
+                >
+                  {resendPending ? "Sending…" : "Resend confirmation email"}
+                </Button>
+                {resendState?.error ? (
+                  <p className="text-sm text-destructive" role="alert">
+                    {resendState.error}
+                  </p>
+                ) : null}
+                {resendState?.success ? (
+                  <p className="text-sm text-foreground" role="status">
+                    {resendState.success}
+                  </p>
+                ) : null}
+              </form>
+            ) : null}
             <DialogFooter className="flex-col gap-2 sm:flex-col sm:items-stretch">
               <Button type="button" onClick={dismissSignupSuccess}>
                 {needsEmailConfirmation ? "Back to sign in" : "Continue"}
@@ -309,13 +439,18 @@ export function AccountAuthForm({
             />
           </div>
         ) : null}
-        <Button type="submit" size="sm" disabled={pending} className="w-full">
-          {pending
-            ? mode === "reset"
+        <Button
+          type="submit"
+          size="sm"
+          disabled={signInPending || resetPending || savePending}
+          className="w-full"
+        >
+          {mode === "reset"
+            ? resetPending
               ? "Sending…"
-              : "Signing in…"
-            : mode === "reset"
-              ? "Send reset link"
+              : "Send reset link"
+            : signInPending
+              ? "Signing in…"
               : "Sign in"}
         </Button>
       </form>
@@ -329,6 +464,7 @@ export function AccountAuthForm({
           {state.success}
         </p>
       ) : null}
+      {resendBlock}
       <div className="flex flex-col items-stretch gap-2">
         {mode === "signin" ? (
           <>

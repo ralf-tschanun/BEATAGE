@@ -1,3 +1,4 @@
+import { AuthLinkErrorBanner } from "@/components/account-auth-form";
 import { QuizList } from "@/components/quiz-list";
 import { HomeHero } from "@/components/home-hero";
 import { SiteFooter } from "@/components/site-footer";
@@ -6,11 +7,16 @@ import { getQuizDashboardData } from "@/lib/quizzes/dashboard";
 import type { PlanId } from "@/lib/quiz-plans";
 
 type HomePageProps = {
-  searchParams: Promise<{ billing?: string; removed?: string; deleted?: string }>;
+  searchParams: Promise<{
+    billing?: string;
+    removed?: string;
+    deleted?: string;
+    auth?: string;
+  }>;
 };
 
 export default async function HomePage({ searchParams }: HomePageProps) {
-  const { billing, removed, deleted } = await searchParams;
+  const { billing, removed, deleted, auth } = await searchParams;
   const { hosted, joined, plan, canCreate, identity, activeHostedCount, supabaseReachable } =
     await getQuizDashboardData();
 
@@ -26,6 +32,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
           restart <code className="text-xs">npm run dev</code> and hard-refresh.
         </p>
       ) : null}
+      {auth === "error" ? <AuthLinkErrorBanner /> : null}
       {removed === "1" ? (
         <p className="mx-auto w-full max-w-5xl px-6 pt-4 text-sm text-foreground">
           That quiz is no longer available.

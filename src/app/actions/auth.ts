@@ -87,13 +87,13 @@ function mapAuthError(message: string): string {
     return `Could not send email (${message}). Check Resend Enable Sending and Supabase SMTP.`;
   }
   if (normalized.includes("email not confirmed")) {
-    return "Please confirm your email first. Check your inbox for the confirmation link.";
+    return "Please confirm your email first. Check your inbox, or resend the confirmation email below.";
   }
   if (
     normalized.includes("password") &&
     (normalized.includes("verif") || normalized.includes("confirm"))
   ) {
-    return "Please confirm your email first, then sign in. Check your inbox for the confirmation link.";
+    return "Please confirm your email first, then sign in. Check your inbox, or resend the confirmation email below.";
   }
   if (normalized.includes("rate") || normalized.includes("too many")) {
     return "Too many attempts. Wait a minute and try again.";
@@ -249,7 +249,11 @@ export async function signInWithPasswordAction(
     });
 
     if (error) {
-      return { error: mapAuthError(error.message) };
+      const needsEmailConfirmation = /email not confirmed/i.test(error.message);
+      return {
+        error: mapAuthError(error.message),
+        needsEmailConfirmation: needsEmailConfirmation || undefined,
+      };
     }
 
     const signedInUserId = signedIn.user?.id;
@@ -301,6 +305,61 @@ export async function requestPasswordResetAction(
   } catch (error) {
     const message = error instanceof Error ? error.message : "Something went wrong.";
     return { error: mapAuthError(message) };
+  }
+}
+
+/** Resend signup / email-change confirmation (shared auth with MyContest). */
+export async function resendConfirmationEmailAction(
+  _prev: AuthActionState,
+  formData: FormData,
+): Promise<AuthActionState> {
+  const email = parseEmail(formData);
+  if (!email) {
+    return { error: "Enter a valid email address." };
+  }
+
+  const next = safeNextPath(String(formData.get("next") ?? ""));
+  const emailRedirectTo = authRedirectTo(next);
+
+  try {
+    const { supabase } = await getOptionalUser();
+
+    // Normal signUp uses type "signup"; guest→email via updateUser uses "email_change".
+    const signupResend = await supabase.auth.resend({
+      type: "signup",
+      email,
+      options: { emailRedirectTo },
+    });
+    if (!signupResend.error) {
+      return {
+        success:
+          "Confirmation email sent. Check your inbox for the link, then sign in.",
+        needsEmailConfirmation: true,
+      };
+    }
+
+    const changeResend = await supabase.auth.resend({
+      type: "email_change",
+      email,
+      options: { emailRedirectTo },
+    });
+    if (!changeResend.error) {
+      return {
+        success:
+          "Confirmation email sent. Check your inbox for the link, then sign in.",
+        needsEmailConfirmation: true,
+      };
+    }
+
+    return {
+      error: mapAuthError(
+        signupResend.error.message || changeResend.error.message,
+      ),
+      needsEmailConfirmation: true,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Something went wrong.";
+    return { error: mapAuthError(message), needsEmailConfirmation: true };
   }
 }
 
