@@ -6,7 +6,10 @@ import {
   addCuratedTrackAction,
   advanceLeaderboardRevealAction,
   closeRoundAction,
+  excludeRoundAction,
   finishQuizAction,
+  includeRoundAction,
+  skipRoundAction,
   startRoundAction,
   submitGuessAction,
   type QuizRoundActionState,
@@ -26,6 +29,14 @@ import { SongPreviewPlayer } from "@/components/song-preview-player";
 import { SpotifyTrackLink } from "@/components/spotify-track-link";
 import { useFlipList } from "@/components/use-flip-list";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CaretDownIcon, CheckIcon, XIcon } from "@phosphor-icons/react";
@@ -37,9 +48,12 @@ import { podiumRankClass, podiumRowClass } from "@/lib/result-podium-styles";
 import {
   applyQuizLeaderboardReveal,
   DEFAULT_QUIZ_SETTINGS,
+  formatRoundLabel,
   isLiveQuizSource,
+  isInactivityQuizInterrupt,
   isQuizLeaderboardRevealComplete,
   presentsLeaderboardAtEnd,
+  roundOutcomeLabel,
   scoringCombinesChart,
   scoringLowWins,
   scoringUnitLabel,
@@ -222,6 +236,9 @@ type QuizPlayPanelsProps = {
   maxMembers?: number | null;
   settings?: BeatageQuizSettings;
   autoInterrupted?: boolean;
+  autoEmptyStreak?: number;
+  /** False while live quiz is still in pre-round warm-up. */
+  quizStarted?: boolean;
   /** Host-controlled end presentation progress (0 = not started). */
   leaderboardRevealStep?: number;
   /** Guest sessions need an email account before Polar unlock checkout. */
@@ -255,6 +272,8 @@ export function QuizPlayPanels({
   maxMembers: maxMembersProp = null,
   settings: settingsProp = DEFAULT_QUIZ_SETTINGS,
   autoInterrupted: autoInterruptedProp = false,
+  autoEmptyStreak: autoEmptyStreakProp = 0,
+  quizStarted: quizStartedProp = true,
   leaderboardRevealStep: leaderboardRevealStepProp = 0,
   isAnonymous = false,
   currentUserId = null,
@@ -269,6 +288,15 @@ export function QuizPlayPanels({
   const [guessState, setGuessState] = useState<QuizRoundActionState>(initial);
   const [guessBusy, setGuessBusy] = useState(false);
   const [closeState, closeAction, closePending] = useActionState(closeRoundAction, initial);
+  const [skipState, skipAction, skipPending] = useActionState(skipRoundAction, initial);
+  const [excludeState, excludeAction, excludePending] = useActionState(
+    excludeRoundAction,
+    initial,
+  );
+  const [includeState, includeAction, includePending] = useActionState(
+    includeRoundAction,
+    initial,
+  );
   const [finishState, finishAction, finishPending] = useActionState(finishQuizAction, initial);
   const [revealState, setRevealState] = useState<QuizRoundActionState>(initial);
   const [revealBusy, setRevealBusy] = useState(false);
@@ -287,6 +315,13 @@ export function QuizPlayPanels({
   }, [showAddTrack, focusById]);
 
   const [expandedPastRoundId, setExpandedPastRoundId] = useState<string | null>(
+    null,
+  );
+  const [skipConfirmOpen, setSkipConfirmOpen] = useState(false);
+  const [excludeConfirmRoundId, setExcludeConfirmRoundId] = useState<string | null>(
+    null,
+  );
+  const [includeConfirmRoundId, setIncludeConfirmRoundId] = useState<string | null>(
     null,
   );
 
@@ -311,6 +346,8 @@ export function QuizPlayPanels({
     maxCuratedTracks: maxCuratedTracksProp,
     settings: settingsProp,
     autoInterrupted: autoInterruptedProp,
+    autoEmptyStreak: autoEmptyStreakProp,
+    quizStarted: quizStartedProp,
     leaderboardRevealStep: leaderboardRevealStepProp,
   }));
 
@@ -330,6 +367,8 @@ export function QuizPlayPanels({
   const maxCuratedTracks = live.maxCuratedTracks;
   const settings = live.settings ?? settingsProp;
   const autoInterrupted = live.autoInterrupted ?? autoInterruptedProp;
+  const autoEmptyStreak = live.autoEmptyStreak ?? autoEmptyStreakProp;
+  const quizStarted = live.quizStarted ?? quizStartedProp;
   const leaderboardRevealStep =
     live.leaderboardRevealStep ?? leaderboardRevealStepProp;
   const presentAtEnd = presentsLeaderboardAtEnd(settings);
@@ -443,6 +482,12 @@ export function QuizPlayPanels({
   const historyRounds = pastRounds.filter(
     (round) => !showResultCard || round.id !== displayResultRound?.id,
   );
+  const excludeConfirmRound = excludeConfirmRoundId
+    ? historyRounds.find((round) => round.id === excludeConfirmRoundId) ?? null
+    : null;
+  const includeConfirmRound = includeConfirmRoundId
+    ? historyRounds.find((round) => round.id === includeConfirmRoundId) ?? null
+    : null;
 
   useEffect(() => {
     return subscribeQuizPlay(quizId, (patch) => {
@@ -626,6 +671,15 @@ export function QuizPlayPanels({
   const quizComplete = isFinished || allTracksPlayed;
   const canFinish = isHost && !isFinished && !activeRound;
   const waitingForHost = !isHost && !activeRound && !quizComplete && !isFinished;
+  const inactivityPaused = isInactivityQuizInterrupt(
+    autoInterrupted,
+    autoEmptyStreak,
+    settings.autoInterruptAfterEmptyRounds,
+  );
+  const inactivityRoundCount = Math.max(
+    autoEmptyStreak,
+    settings.autoInterruptAfterEmptyRounds,
+  );
 
   return (
     <div className="space-y-8">
@@ -637,6 +691,8 @@ export function QuizPlayPanels({
             lastfmUsername={settings.lastfmUsername}
             disabled={isFinished}
             autoInterrupted={autoInterrupted}
+            autoEmptyStreak={autoEmptyStreak}
+            quizStarted={quizStarted}
             emptyStreakThreshold={settings.autoInterruptAfterEmptyRounds}
             planId={planId}
             isAnonymous={isAnonymous}
@@ -670,6 +726,8 @@ export function QuizPlayPanels({
             joinCode={joinCode}
             disabled={isFinished}
             autoInterrupted={autoInterrupted}
+            autoEmptyStreak={autoEmptyStreak}
+            quizStarted={quizStarted}
             emptyStreakThreshold={settings.autoInterruptAfterEmptyRounds}
             planId={planId}
             isAnonymous={isAnonymous}
@@ -819,7 +877,12 @@ export function QuizPlayPanels({
                 <input type="hidden" name="joinCode" value={joinCode} />
                 <Button
                   type="submit"
-                  variant={allTracksPlayed ? "default" : "secondary"}
+                  variant={allTracksPlayed ? "default" : "outline"}
+                  className={
+                    allTracksPlayed
+                      ? undefined
+                      : "text-destructive hover:text-destructive"
+                  }
                   disabled={finishPending}
                 >
                   {finishPending
@@ -926,19 +989,35 @@ export function QuizPlayPanels({
       ) : null}
 
       {waitingForHost ? (
-        <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
+        <section
+          className={cn(
+            "space-y-4 rounded-2xl border p-6",
+            inactivityPaused
+              ? "border-amber-500/30 bg-amber-500/5"
+              : "border-border/60 bg-card",
+          )}
+        >
           <div className="space-y-1">
             <h2 className="text-lg font-semibold">Waiting for the host</h2>
-            <p className="text-sm text-muted-foreground">
-              {isLive
-                ? currentRoundNumber > 0
-                  ? "Round results are on the board. The next song in Spotify will open a new round."
-                  : isLastfmLive
-                    ? "Live mode is on — this page updates when Spotify scrobbles the next song to Last.fm."
-                    : "Auto Spotify is on — this page updates when the host starts playing a song."
-                : currentRoundNumber > 0
-                  ? `Round ${currentRoundNumber} is done. Hang tight — the host will start the next round.`
-                  : "The quiz is live. This page updates automatically when the host starts a round."}
+            <p
+              className={cn(
+                "text-sm",
+                inactivityPaused ? "text-foreground" : "text-muted-foreground",
+              )}
+            >
+              {inactivityPaused
+                ? `The quiz was paused because no one guessed for ${inactivityRoundCount} song${inactivityRoundCount === 1 ? "" : "s"} in a row. The host will resume when everyone is ready.`
+                : isLive
+                  ? !quizStarted
+                    ? "Pre-rounds are open for practice. The host will start the quiz when everyone is ready."
+                    : currentRoundNumber > 0
+                      ? "Round results are on the board. The next song in Spotify will open a new round."
+                      : isLastfmLive
+                        ? "Live mode is on — this page updates when Spotify scrobbles the next song to Last.fm."
+                        : "Auto Spotify is on — this page updates when the host starts playing a song."
+                  : currentRoundNumber > 0
+                    ? `Round ${currentRoundNumber} is done. Hang tight — the host will start the next round.`
+                    : "The quiz is live. This page updates automatically when the host starts a round."}
             </p>
           </div>
         </section>
@@ -1081,10 +1160,21 @@ export function QuizPlayPanels({
         <section className="space-y-4 rounded-2xl border border-primary/30 bg-primary/5 p-6">
           <div className="space-y-1">
             <p className="text-xs font-medium uppercase tracking-wide text-primary">
-              Live round
+              {activeRound.is_pre_round || (isLive && !quizStarted)
+                ? "Pre-round"
+                : "Live round"}
             </p>
             <h2 className="text-lg font-semibold">
-              Round {activeRound.round_number} · Guess the…
+              {activeRound.round_label ||
+                formatRoundLabel({
+                  isPreRound:
+                    Boolean(activeRound.is_pre_round) ||
+                    (isLive && !quizStarted),
+                  displayRoundNumber:
+                    activeRound.display_round_number ||
+                    activeRound.round_number,
+                })}{" "}
+              · Guess the…
             </h2>
           </div>
           {settings.showTitleArtist ? (
@@ -1193,16 +1283,78 @@ export function QuizPlayPanels({
           </form>
 
           {isHost && !isLive ? (
-            <form action={closeAction}>
-              <input type="hidden" name="roundId" value={activeRound.id} />
-              <input type="hidden" name="joinCode" value={joinCode} />
-              <Button type="submit" variant="secondary" disabled={closePending}>
-                {closePending ? "Closing…" : "Close round & reveal"}
-              </Button>
+            <div className="space-y-3 border-t border-border/60 pt-4">
+              <form action={closeAction}>
+                <input type="hidden" name="roundId" value={activeRound.id} />
+                <input type="hidden" name="joinCode" value={joinCode} />
+                <Button
+                  type="submit"
+                  size="lg"
+                  className="w-full"
+                  disabled={closePending || skipPending}
+                >
+                  {closePending ? "Closing…" : "Close round & reveal"}
+                </Button>
+                <p className="mt-2 text-center text-xs text-muted-foreground">
+                  Score this round and show the correct year to everyone.
+                </p>
+              </form>
+
+              <div className="rounded-xl border border-border/50 bg-muted/25 p-3">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Other actions
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full text-destructive hover:text-destructive"
+                  disabled={skipPending || closePending}
+                  onClick={() => setSkipConfirmOpen(true)}
+                >
+                  Skip this song
+                </Button>
+              </div>
+
               {closeState?.error ? (
-                <p className="mt-2 text-sm text-destructive">{closeState.error}</p>
+                <p className="text-sm text-destructive">{closeState.error}</p>
               ) : null}
-            </form>
+              {skipState?.error ? (
+                <p className="text-sm text-destructive">{skipState.error}</p>
+              ) : null}
+
+              <Dialog open={skipConfirmOpen} onOpenChange={setSkipConfirmOpen}>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Skip this song?</DialogTitle>
+                    <DialogDescription>
+                      All guesses for this round are discarded. The round will not
+                      be scored and the same round number continues with the next
+                      song.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <form
+                    action={skipAction}
+                    onSubmit={() => setSkipConfirmOpen(false)}
+                  >
+                    <input type="hidden" name="roundId" value={activeRound.id} />
+                    <input type="hidden" name="joinCode" value={joinCode} />
+                    <DialogFooter>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={skipPending}
+                        onClick={() => setSkipConfirmOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="submit" variant="destructive" disabled={skipPending}>
+                        {skipPending ? "Skipping…" : "Yes, skip this song"}
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            </div>
           ) : null}
 
           {isHost ? (
@@ -1240,7 +1392,16 @@ export function QuizPlayPanels({
       {showResultCard && displayResultRound ? (
         <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
           <h2 className="text-lg font-semibold">
-            Round {displayResultRound.round_number} results
+            {displayResultRound.round_label ||
+              formatRoundLabel({
+                isPreRound:
+                  Boolean(displayResultRound.is_pre_round) ||
+                  (isLive && !quizStarted),
+                displayRoundNumber:
+                  displayResultRound.display_round_number ||
+                  displayResultRound.round_number,
+              })}{" "}
+            results
             {activeRound ? (
               <span className="ml-2 text-sm font-normal text-muted-foreground">
                 (previous)
@@ -1357,57 +1518,119 @@ export function QuizPlayPanels({
             {historyRounds.map((round) => {
               const expanded =
                 settings.showResultDetails && expandedPastRoundId === round.id;
-              const canExpand = settings.showResultDetails;
+              const canExpand =
+                settings.showResultDetails && round.status !== "skipped";
+              const outcome = roundOutcomeLabel(round.status);
+              const isExcluded = round.status === "excluded";
+              const isSkipped = round.status === "skipped";
               return (
                 <li key={round.id} className="space-y-2 py-2">
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex w-full min-w-0 items-center gap-2 text-left",
-                      canExpand && "cursor-pointer",
-                    )}
-                    disabled={!canExpand}
-                    aria-expanded={canExpand ? expanded : undefined}
-                    onClick={() => {
-                      if (!canExpand) return;
-                      setExpandedPastRoundId((id) =>
-                        id === round.id ? null : round.id,
-                      );
-                    }}
-                  >
-                    <p className="min-w-0 flex-1 truncate">
-                      <span className="text-muted-foreground tabular-nums">
-                        {round.round_number}
-                      </span>
-                      {" · "}
-                      <span className="font-medium">{round.track_name}</span>
-                      {round.artist_name ? ` — ${round.artist_name}` : ""}
-                    </p>
-                    <p className="flex shrink-0 items-center gap-1 font-medium tabular-nums text-emerald-700">
-                      {settings.showResultDetails
-                        ? isHost || settings.showCorrectAnswer
-                          ? (round.correct_release_year ?? "—")
-                          : "—"
-                        : `${round.my_points ?? 0} ${scoreUnit}`}
-                      {canExpand ? (
-                        <CaretDownIcon
-                          className={cn(
-                            "size-4 text-muted-foreground transition-transform",
-                            expanded && "rotate-180",
-                          )}
-                          aria-hidden
-                        />
-                      ) : null}
-                    </p>
-                  </button>
+                  <div className="flex min-w-0 items-start gap-2">
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex min-w-0 flex-1 items-center gap-2 text-left",
+                        canExpand && "cursor-pointer",
+                      )}
+                      disabled={!canExpand}
+                      aria-expanded={canExpand ? expanded : undefined}
+                      onClick={() => {
+                        if (!canExpand) return;
+                        setExpandedPastRoundId((id) =>
+                          id === round.id ? null : round.id,
+                        );
+                      }}
+                    >
+                      <p
+                        className={cn(
+                          "min-w-0 flex-1 truncate",
+                          isExcluded && "text-muted-foreground line-through",
+                        )}
+                      >
+                        <span className="text-muted-foreground tabular-nums">
+                          {isSkipped
+                            ? "Skipped"
+                            : round.round_label ||
+                              formatRoundLabel({
+                                isPreRound:
+                                  Boolean(round.is_pre_round) ||
+                                  (isLive && !quizStarted),
+                                displayRoundNumber:
+                                  round.display_round_number || round.round_number,
+                              })}
+                        </span>
+                        {outcome && !isSkipped ? (
+                          <span className="ml-2 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-900">
+                            {outcome}
+                          </span>
+                        ) : null}
+                        {" · "}
+                        <span className="font-medium">{round.track_name}</span>
+                        {round.artist_name ? ` — ${round.artist_name}` : ""}
+                      </p>
+                      <p
+                        className={cn(
+                          "flex shrink-0 items-center gap-1 font-medium tabular-nums",
+                          isExcluded
+                            ? "text-muted-foreground line-through"
+                            : isSkipped
+                              ? "text-muted-foreground"
+                              : "text-emerald-700",
+                        )}
+                      >
+                        {isSkipped
+                          ? "—"
+                          : settings.showResultDetails
+                            ? isHost || settings.showCorrectAnswer
+                              ? (round.correct_release_year ?? "—")
+                              : "—"
+                            : `${round.my_points ?? 0} ${scoreUnit}`}
+                        {canExpand ? (
+                          <CaretDownIcon
+                            className={cn(
+                              "size-4 text-muted-foreground transition-transform",
+                              expanded && "rotate-180",
+                            )}
+                            aria-hidden
+                          />
+                        ) : null}
+                      </p>
+                    </button>
+                  </div>
                   {expanded ? (
                     <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
-                      <RoundCorrectYear
-                        round={round}
-                        show={isHost || settings.showCorrectAnswer}
-                        showChartOne={chartComboEnabled}
-                        chartCountries={settings.chartCountries}
-                      />
+                      <div className="flex items-start justify-between gap-3">
+                        <RoundCorrectYear
+                          round={round}
+                          show={isHost || settings.showCorrectAnswer}
+                          showChartOne={chartComboEnabled}
+                          chartCountries={settings.chartCountries}
+                        />
+                        {isHost && round.status === "revealed" ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 shrink-0 px-2 text-xs font-normal text-muted-foreground/50 hover:bg-destructive/5 hover:text-destructive/75"
+                            disabled={excludePending || includePending}
+                            onClick={() => setExcludeConfirmRoundId(round.id)}
+                          >
+                            Exclude
+                          </Button>
+                        ) : null}
+                        {isHost && round.status === "excluded" ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 shrink-0 px-2 text-xs font-normal text-muted-foreground/50 hover:bg-muted/50 hover:text-muted-foreground"
+                            disabled={excludePending || includePending}
+                            onClick={() => setIncludeConfirmRoundId(round.id)}
+                          >
+                            Include
+                          </Button>
+                        ) : null}
+                      </div>
                       <RoundGuessesList
                         guesses={round.guesses}
                         showChartGuess={chartComboEnabled}
@@ -1428,6 +1651,113 @@ export function QuizPlayPanels({
               );
             })}
           </ul>
+          {excludeState?.error || includeState?.error ? (
+            <p className="pt-2 text-sm text-destructive" role="alert">
+              {excludeState?.error ?? includeState?.error}
+            </p>
+          ) : null}
+
+          <Dialog
+            open={excludeConfirmRoundId != null}
+            onOpenChange={(open) => {
+              if (!open) setExcludeConfirmRoundId(null);
+            }}
+          >
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Exclude this round from scoring?</DialogTitle>
+                <DialogDescription>
+                  {excludeConfirmRound ? (
+                    <>
+                      <span className="font-medium text-foreground">
+                        {excludeConfirmRound.track_name}
+                        {excludeConfirmRound.artist_name
+                          ? ` — ${excludeConfirmRound.artist_name}`
+                          : ""}
+                      </span>{" "}
+                      will stay visible in the history, but its points are removed
+                      from the leaderboard for everyone. You can include it again
+                      later.
+                    </>
+                  ) : (
+                    "This round will be removed from the leaderboard for everyone."
+                  )}
+                </DialogDescription>
+              </DialogHeader>
+              {excludeConfirmRound ? (
+                <form
+                  action={excludeAction}
+                  onSubmit={() => setExcludeConfirmRoundId(null)}
+                >
+                  <input type="hidden" name="roundId" value={excludeConfirmRound.id} />
+                  <input type="hidden" name="joinCode" value={joinCode} />
+                  <DialogFooter>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={excludePending}
+                      onClick={() => setExcludeConfirmRoundId(null)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="submit" variant="destructive" disabled={excludePending}>
+                      {excludePending ? "Excluding…" : "Yes, exclude round"}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              ) : null}
+            </DialogContent>
+          </Dialog>
+
+          <Dialog
+            open={includeConfirmRoundId != null}
+            onOpenChange={(open) => {
+              if (!open) setIncludeConfirmRoundId(null);
+            }}
+          >
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Include this round in scoring again?</DialogTitle>
+                <DialogDescription>
+                  {includeConfirmRound ? (
+                    <>
+                      <span className="font-medium text-foreground">
+                        {includeConfirmRound.track_name}
+                        {includeConfirmRound.artist_name
+                          ? ` — ${includeConfirmRound.artist_name}`
+                          : ""}
+                      </span>{" "}
+                      will count toward the leaderboard again for everyone.
+                    </>
+                  ) : (
+                    "This round will count toward the leaderboard again for everyone."
+                  )}
+                </DialogDescription>
+              </DialogHeader>
+              {includeConfirmRound ? (
+                <form
+                  action={includeAction}
+                  onSubmit={() => setIncludeConfirmRoundId(null)}
+                >
+                  <input type="hidden" name="roundId" value={includeConfirmRound.id} />
+                  <input type="hidden" name="joinCode" value={joinCode} />
+                  <DialogFooter>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={includePending}
+                      onClick={() => setIncludeConfirmRoundId(null)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={includePending}>
+                      {includePending ? "Including…" : "Yes, include round"}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              ) : null}
+            </DialogContent>
+          </Dialog>
         </CollapsibleCard>
       ) : null}
     </div>

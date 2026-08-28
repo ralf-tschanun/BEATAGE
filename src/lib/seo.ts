@@ -7,12 +7,15 @@ export const SITE_DESCRIPTION =
 
 export const SITE_KEYWORDS = [
   "music quiz",
+  "music quiz release year",
+  "music quiz release date",
   "release year quiz",
   "guess the year",
   "Spotify quiz",
+  "Spotify release year quiz",
   "party game",
-  "BEATAGE",
   "music trivia",
+  "BEATAGE",
 ] as const;
 
 /** JSON-LD WebApplication payload for the public site. */

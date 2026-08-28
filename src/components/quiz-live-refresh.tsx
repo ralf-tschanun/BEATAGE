@@ -46,6 +46,9 @@ export type QuizPlaySnapshot = {
   maxCuratedTracks: number | null;
   settings: BeatageQuizSettings;
   autoInterrupted: boolean;
+  autoEmptyStreak: number;
+  /** False while live quiz is still in pre-round warm-up. */
+  quizStarted: boolean;
   leaderboardRevealStep: number;
 };
 
@@ -142,6 +145,8 @@ async function fetchQuizPlaySnapshot(
         : state.maxCuratedTracks,
     settings: state.settings ?? { ...DEFAULT_QUIZ_SETTINGS },
     autoInterrupted: Boolean(state.autoInterrupted),
+    autoEmptyStreak: state.autoEmptyStreak ?? 0,
+    quizStarted: state.quizStarted !== false,
     leaderboardRevealStep: state.leaderboardRevealStep ?? 0,
   };
 }
@@ -159,8 +164,10 @@ function snapshotStructuralFingerprint(snapshot: QuizPlaySnapshot): string {
     snapshot.quizStatus,
     snapshot.maxCuratedTracks ?? "inf",
     snapshot.currentRoundNumber,
+    snapshot.quizStarted ? "1" : "0",
     snapshot.activeRound?.id ?? "",
     snapshot.activeRound?.status ?? "",
+    snapshot.activeRound?.is_pre_round ? "pre" : "off",
     snapshot.resultRound?.id ?? "",
     snapshot.resultRound?.status ?? "",
     snapshot.pastRounds.map((r) => r.id).join(","),
@@ -183,6 +190,7 @@ function snapshotStructuralFingerprint(snapshot: QuizPlaySnapshot): string {
     snapshot.trackCount,
     snapshot.tracks.map((t) => t.id).join(","),
     snapshot.autoInterrupted ? "1" : "0",
+    String(snapshot.autoEmptyStreak ?? 0),
     snapshot.settings.showTitleArtist ? "1" : "0",
     snapshot.settings.showCorrectAnswer ? "1" : "0",
     snapshot.settings.showOverallResults ? "1" : "0",

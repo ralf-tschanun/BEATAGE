@@ -234,6 +234,7 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
             initialHasActiveRound={Boolean(playState?.activeRound)}
             initialCurrentRoundNumber={playState?.currentRoundNumber ?? 0}
             initialAutoInterrupted={playState?.autoInterrupted ?? false}
+            initialQuizStarted={playState?.quizStarted !== false}
             initialOverallReveal={settings.overallReveal}
             initialLeaderboardRevealStep={playState?.leaderboardRevealStep ?? 0}
             initialLeaderboardCount={playState?.leaderboard?.length ?? 0}
@@ -264,6 +265,8 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
           maxMembers={quiz.max_members}
           settings={settings}
           autoInterrupted={playState?.autoInterrupted ?? false}
+          autoEmptyStreak={playState?.autoEmptyStreak ?? 0}
+          quizStarted={playState?.quizStarted !== false}
           leaderboardRevealStep={playState?.leaderboardRevealStep ?? 0}
           isAnonymous={Boolean(identity?.isAnonymous)}
           currentUserId={user.id}

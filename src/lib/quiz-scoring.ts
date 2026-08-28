@@ -209,6 +209,19 @@ export function readQuizSettingsRuntime(raw: unknown): QuizSettingsRuntime {
       Number.isFinite(row.leaderboardRevealStep)
         ? Math.max(0, Math.round(row.leaderboardRevealStep))
         : 0,
+    // Missing flag = already started (legacy quizzes). New live quizzes set false on create.
+    quizStarted:
+      typeof row.quizStarted === "boolean"
+        ? row.quizStarted
+        : row.quizStarted === "false"
+          ? false
+          : row.quizStarted === "true"
+            ? true
+            : true,
+    preRoundCutoff:
+      typeof row.preRoundCutoff === "number" && Number.isFinite(row.preRoundCutoff)
+        ? Math.max(0, Math.round(row.preRoundCutoff))
+        : 0,
   };
 }
 
@@ -222,6 +235,13 @@ export function mergeQuizSettingsForStorage(
     autoEmptyStreak: runtime.autoEmptyStreak ?? 0,
     autoInterrupted: Boolean(runtime.autoInterrupted),
     leaderboardRevealStep: runtime.leaderboardRevealStep ?? 0,
+    quizStarted:
+      typeof runtime.quizStarted === "boolean" ? runtime.quizStarted : true,
+    preRoundCutoff:
+      typeof runtime.preRoundCutoff === "number" &&
+      Number.isFinite(runtime.preRoundCutoff)
+        ? Math.max(0, Math.round(runtime.preRoundCutoff))
+        : 0,
   };
 }
 

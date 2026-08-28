@@ -48,6 +48,16 @@ export default function HelpPage() {
               Closer guesses score fewer years off; the host can present a
               leaderboard at the end.
             </p>
+            <p>
+              New here? Read the overview:{" "}
+              <Link
+                href="/music-quiz-release-year"
+                className="font-medium text-foreground underline underline-offset-2 hover:text-foreground/80"
+              >
+                Music quiz — guess the release year
+              </Link>
+              .
+            </p>
           </HelpSection>
 
           <HelpSection title="Host: keep the quiz page open">

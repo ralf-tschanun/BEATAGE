@@ -27,7 +27,8 @@ export default async function JoinByCodePage({ params }: JoinPageProps) {
   });
 
   if (error || !preview) {
-    redirect("/?removed=1");
+    // Wrong / expired invite: stay in the join flow with a clear message (no 404).
+    redirect("/join?invalid=1");
   }
 
   const quiz = preview as QuizPreview;

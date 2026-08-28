@@ -42,6 +42,8 @@ export type QuizPhaseInput = {
   overallReveal: OverallReveal;
   leaderboardRevealStep: number;
   leaderboardCount: number;
+  /** False while live quiz is still in pre-round warm-up. */
+  quizStarted?: boolean;
 };
 
 export type QuizPhaseDisplay = {
@@ -80,12 +82,22 @@ export function deriveQuizPhaseDisplay(input: QuizPhaseInput): QuizPhaseDisplay 
     return { label: "Interrupted", tone: "interrupted" };
   }
 
+  const isLive =
+    input.quizSource === "spotify_live" || input.quizSource === "lastfm_live";
+  const inPreMode = isLive && input.quizStarted === false;
+
   if (input.hasActiveRound) {
-    return { label: "Guessing", tone: "guessing" };
+    return {
+      label: inPreMode ? "Pre-round" : "Guessing",
+      tone: "guessing",
+    };
   }
 
   if (input.currentRoundNumber > 0 || input.quizStatus === "playing") {
-    return { label: "Round closed", tone: "round_closed" };
+    return {
+      label: inPreMode ? "Pre-round closed" : "Round closed",
+      tone: "round_closed",
+    };
   }
 
   return { label: "Waiting for host", tone: "waiting" };

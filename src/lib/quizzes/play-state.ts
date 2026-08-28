@@ -6,7 +6,12 @@ import {
   resolveQuizSettings,
 } from "@/lib/quiz-scoring";
 import type { BeatageQuizSettings } from "@/lib/quiz-settings";
-import { DEFAULT_QUIZ_SETTINGS, scoringLowWins } from "@/lib/quiz-settings";
+import {
+  DEFAULT_QUIZ_SETTINGS,
+  formatRoundLabel,
+  isPreRoundNumber,
+  scoringLowWins,
+} from "@/lib/quiz-settings";
 import {
   backfillMissingReleaseYearsForQuiz,
   getQuizCuratedTrackLimit,
@@ -29,6 +34,12 @@ export type CuratedTrackRow = {
 export type RoundRow = {
   id: string;
   round_number: number;
+  /** 1-based index within pre-rounds or within official rounds. */
+  display_round_number: number;
+  /** Warm-up round before the host starts the official quiz. */
+  is_pre_round: boolean;
+  /** Ready-to-render label, e.g. "Pre Round 1" / "Round 2". */
+  round_label: string;
   status: string;
   track_name: string | null;
   artist_name: string | null;
@@ -78,6 +89,48 @@ export type PastRoundRow = RoundRow & {
 const ROUND_CORE_COLUMNS =
   "id, round_number, status, track_name, artist_name, correct_release_year, original_release_year, spotify_track_id, chart_was_number_one";
 
+function assignDisplayRoundNumbers(
+  rounds: Array<{ round_number: number; status: string }>,
+  runtime: { quizStarted?: boolean; preRoundCutoff?: number },
+): Array<{
+  round_number: number;
+  display_round_number: number;
+  is_pre_round: boolean;
+}> {
+  const byNumber = [...rounds].sort((a, b) => a.round_number - b.round_number);
+  let preCount = 0;
+  let officialCount = 0;
+  const displayByNumber = new Map<
+    number,
+    { display: number; isPre: boolean }
+  >();
+  for (const round of byNumber) {
+    // Skipped rounds do not consume an official/pre display slot.
+    if (round.status === "skipped") continue;
+    const isPre = isPreRoundNumber(round.round_number, runtime);
+    if (isPre) {
+      preCount += 1;
+      displayByNumber.set(round.round_number, {
+        display: preCount,
+        isPre: true,
+      });
+    } else {
+      officialCount += 1;
+      displayByNumber.set(round.round_number, {
+        display: officialCount,
+        isPre: false,
+      });
+    }
+  }
+  return rounds.map((round) => {
+    const meta = displayByNumber.get(round.round_number);
+    return {
+      round_number: round.round_number,
+      is_pre_round: meta?.isPre ?? false,
+      display_round_number: meta?.display ?? round.round_number,
+    };
+  });
+}
 function emptyPlayState(joinCode: string) {
   return {
     joinCode,
@@ -97,6 +150,8 @@ function emptyPlayState(joinCode: string) {
     maxCuratedTracks: DEFAULT_MAX_CURATED_TRACKS as number | null,
     settings: { ...DEFAULT_QUIZ_SETTINGS } as BeatageQuizSettings,
     autoInterrupted: false,
+    autoEmptyStreak: 0,
+    quizStarted: true,
     leaderboardRevealStep: 0,
   };
 }
@@ -151,6 +206,7 @@ export async function getQuizPlayState(
     tracksResult,
     { data: activeRound },
     { data: revealedRoundsRaw },
+    { data: allRoundMetaRaw },
     { data: members },
   ] = await Promise.all([
     needFullTracks
@@ -175,9 +231,14 @@ export async function getQuizPlayState(
       .from("beatage_rounds")
       .select(ROUND_CORE_COLUMNS)
       .eq("quiz_id", quizId)
-      .eq("status", "revealed")
+      .in("status", ["revealed", "excluded", "skipped"])
       .order("round_number", { ascending: false })
       .limit(30),
+    admin
+      .from("beatage_rounds")
+      .select("round_number, status")
+      .eq("quiz_id", quizId)
+      .order("round_number", { ascending: true }),
     admin
       .from("beatage_quiz_members")
       .select("user_id, display_name")
@@ -265,7 +326,10 @@ export async function getQuizPlayState(
   };
 
   const toRoundRow = (
-    round: RoundCore,
+    round: RoundCore & {
+      display_round_number: number;
+      is_pre_round: boolean;
+    },
     opts: {
       hideYears: boolean;
       previewUrl?: string | null;
@@ -274,6 +338,12 @@ export async function getQuizPlayState(
   ): RoundRow => ({
     id: round.id,
     round_number: round.round_number,
+    display_round_number: round.display_round_number,
+    is_pre_round: round.is_pre_round,
+    round_label: formatRoundLabel({
+      isPreRound: round.is_pre_round,
+      displayRoundNumber: round.display_round_number,
+    }),
     status: round.status,
     track_name: round.track_name,
     artist_name: round.artist_name,
@@ -290,19 +360,53 @@ export async function getQuizPlayState(
         : null,
   });
 
+  const historyListRaw = (revealedRoundsRaw ?? []) as RoundCore[];
+  const allRoundMeta = assignDisplayRoundNumbers(
+    ((allRoundMetaRaw ?? []) as Array<{ round_number: number; status: string }>),
+    runtime,
+  );
+  const displayMetaByRoundNumber = new Map(
+    allRoundMeta.map((r) => [
+      r.round_number,
+      {
+        display_round_number: r.display_round_number,
+        is_pre_round: r.is_pre_round,
+      },
+    ]),
+  );
+  const withDisplay = (round: RoundCore) => {
+    // Always recompute from runtime — do not trust a stale meta false value.
+    const isPre = isPreRoundNumber(round.round_number, runtime);
+    const meta = displayMetaByRoundNumber.get(round.round_number);
+    return {
+      ...round,
+      display_round_number:
+        meta?.display_round_number ??
+        (isPre
+          ? allRoundMeta.filter(
+              (r) => r.is_pre_round && r.round_number <= round.round_number,
+            ).length || 1
+          : allRoundMeta.filter(
+              (r) => !r.is_pre_round && r.round_number <= round.round_number,
+            ).length || 1),
+      is_pre_round: isPre,
+    };
+  };
+
   const activeRoundPublic: RoundRow | null = activeRound
-    ? toRoundRow(activeRound as RoundCore, { hideYears: true })
+    ? toRoundRow(withDisplay(activeRound as RoundCore), { hideYears: true })
     : null;
 
-  const revealedList = (revealedRoundsRaw ?? []) as RoundCore[];
-
-  // Preview audio only for the latest revealed round (results card).
+  const revealedList = historyListRaw.map(withDisplay);
+  const scoringRounds = revealedList.filter((r) => r.status === "revealed");
+  const latestScoringRound = scoringRounds[0] ?? null;
+  // Preview audio only for the latest scored round (results card).
   let latestPreviewUrl: string | null = null;
-  if (revealedList[0]) {
+  if (latestScoringRound) {
     const { data: media } = await admin
       .from("beatage_rounds")
       .select("preview_url")
-      .eq("id", revealedList[0].id)
+      .eq("id", latestScoringRound.id)
       .maybeSingle();
     latestPreviewUrl =
       typeof (media as { preview_url?: string | null } | null)?.preview_url ===
@@ -311,8 +415,8 @@ export async function getQuizPlayState(
         : null;
   }
 
-  const resultRoundPublic: RoundRow | null = revealedList[0]
-    ? toRoundRow(revealedList[0], {
+  const resultRoundPublic: RoundRow | null = latestScoringRound
+    ? toRoundRow(latestScoringRound, {
         hideYears: hideCorrectForViewer,
         previewUrl: latestPreviewUrl,
       })
@@ -387,13 +491,18 @@ export async function getQuizPlayState(
     }
   }
 
-  const revealedRoundIds = revealedList.map((r) => r.id);
+  const historyRoundIds = revealedList.map((r) => r.id);
+  const officialScoringIds = new Set(
+    scoringRounds.filter((r) => !r.is_pre_round).map((r) => r.id),
+  );
   const pastGuessesByRound = new Map<string, GuessRow[]>();
   const myPointsByRound = new Map<string, number>();
   const totals = new Map<string, number>();
   const lastRoundPts = new Map<string, number>();
   const lastSubmittedByUserId: Record<string, string> = {};
-  const latestRevealedId = revealedList[0]?.id ?? null;
+  // Official leaderboard "last round" = latest non-pre scored round.
+  const latestOfficialScoringId =
+    scoringRounds.find((r) => !r.is_pre_round)?.id ?? null;
 
   // Seed last-submit from the open/result round guesses (already loaded).
   for (const g of roundGuesses) {
@@ -404,14 +513,14 @@ export async function getQuizPlayState(
     }
   }
 
-  if (revealedRoundIds.length > 0) {
+  if (historyRoundIds.length > 0) {
     // One query drives past-round details + leaderboard (was previously two).
     const { data: pastGuesses } = await admin
       .from("beatage_guesses")
       .select(
         "round_id, user_id, guessed_year, guessed_was_number_one, points, points_total, submitted_at",
       )
-      .in("round_id", revealedRoundIds)
+      .in("round_id", historyRoundIds)
       .order("submitted_at", { ascending: false });
 
     for (const g of (pastGuesses ?? []) as Array<{
@@ -427,9 +536,12 @@ export async function getQuizPlayState(
       if (g.user_id === user.id) {
         myPointsByRound.set(g.round_id, pts);
       }
-      totals.set(g.user_id, (totals.get(g.user_id) ?? 0) + pts);
-      if (latestRevealedId && g.round_id === latestRevealedId) {
-        lastRoundPts.set(g.user_id, pts);
+      // Pre-round scores are saved and shown in results, but do not count on the leaderboard.
+      if (officialScoringIds.has(g.round_id)) {
+        totals.set(g.user_id, (totals.get(g.user_id) ?? 0) + pts);
+        if (latestOfficialScoringId && g.round_id === latestOfficialScoringId) {
+          lastRoundPts.set(g.user_id, pts);
+        }
       }
       if (g.submitted_at) {
         const prev = lastSubmittedByUserId[g.user_id];
@@ -472,24 +584,33 @@ export async function getQuizPlayState(
 
   const pastRounds: PastRoundRow[] = revealedList.map((round, index) => {
     const hideYears = hideCorrectForViewer || !settings.showResultDetails;
+    const isSkipped = round.status === "skipped";
+    const isExcluded = round.status === "excluded";
     const base = toRoundRow(round, {
-      hideYears,
-      // Media only on the latest revealed round (also exposed as resultRound).
-      previewUrl: index === 0 ? latestPreviewUrl : null,
+      hideYears: hideYears || isSkipped,
+      // Media only on the latest scored round (also exposed as resultRound).
+      previewUrl:
+        latestScoringRound && round.id === latestScoringRound.id
+          ? latestPreviewUrl
+          : null,
     });
     return {
       ...base,
-      my_points: myPointsByRound.has(round.id)
-        ? (myPointsByRound.get(round.id) as number)
-        : null,
-      guesses: settings.showResultDetails
-        ? (pastGuessesByRound.get(round.id) ?? [])
-        : [],
+      my_points:
+        isSkipped
+          ? null
+          : myPointsByRound.has(round.id)
+            ? (myPointsByRound.get(round.id) as number)
+            : null,
+      guesses:
+        isSkipped || !settings.showResultDetails
+          ? []
+          : (pastGuessesByRound.get(round.id) ?? []),
     };
   });
 
   let leaderboard: LeaderboardRow[] = [];
-  if (revealedRoundIds.length > 0) {
+  if (officialScoringIds.size > 0) {
     leaderboard = [...totals.entries()]
       .map(([userId, total_points]) => ({
         user_id: userId,
@@ -523,6 +644,8 @@ export async function getQuizPlayState(
     maxCuratedTracks,
     settings,
     autoInterrupted: Boolean(runtime.autoInterrupted),
+    autoEmptyStreak: runtime.autoEmptyStreak ?? 0,
+    quizStarted: runtime.quizStarted !== false,
     leaderboardRevealStep: runtime.leaderboardRevealStep ?? 0,
   };
 }

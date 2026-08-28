@@ -5,11 +5,14 @@ import { useRouter } from "next/navigation";
 import {
   interruptAutoSpotifyQuizAction,
   resumeAutoSpotifyQuizAction,
+  skipActiveRoundAction,
+  startOfficialQuizAction,
   syncLastfmLiveRoundAction,
   updateLastfmUsernameAction,
 } from "@/app/actions/quiz-round";
 import { QuizPlanLimitPrompt } from "@/components/quiz-plan-limit-prompt";
 import { LiveHostScreenLockField } from "@/components/live-host-screen-lock-field";
+import { LiveQuizInactivityNotice } from "@/components/live-quiz-inactivity-notice";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -47,6 +50,9 @@ type AutoLastfmHostControlsProps = {
   lastfmUsername: string;
   disabled?: boolean;
   autoInterrupted?: boolean;
+  autoEmptyStreak?: number;
+  /** False while the quiz is still in pre-round warm-up. */
+  quizStarted?: boolean;
   emptyStreakThreshold?: number;
   planId?: PlanId;
   isAnonymous?: boolean;
@@ -97,6 +103,8 @@ export function AutoLastfmHostControls({
   lastfmUsername: initialUsername,
   disabled = false,
   autoInterrupted = false,
+  autoEmptyStreak = 0,
+  quizStarted = true,
   emptyStreakThreshold = 3,
   planId = "free",
   isAnonymous = false,
@@ -124,6 +132,14 @@ export function AutoLastfmHostControls({
   );
   const [pendingReveal, setPendingReveal] = useState(false);
   const [endQuizConfirmOpen, setEndQuizConfirmOpen] = useState(false);
+  const [skipConfirmOpen, setSkipConfirmOpen] = useState(false);
+  const [inactivityNotifySignal, setInactivityNotifySignal] = useState(0);
+  const [localQuizStarted, setLocalQuizStarted] = useState(quizStarted);
+  const localQuizStartedRef = useRef(quizStarted);
+  useEffect(() => {
+    setLocalQuizStarted(quizStarted);
+    localQuizStartedRef.current = quizStarted;
+  }, [quizStarted]);
   /** True while Automatic mode is counting down before opening the round. */
   const [awaitingAutoOpen, setAwaitingAutoOpen] = useState(false);
   /** Optimistic: disable Close immediately on click until hasActiveRound clears. */
@@ -245,8 +261,12 @@ export function AutoLastfmHostControls({
           const key = lastKeyRef.current;
           if (key) deferredKeyRef.current = key;
           autoInterruptedRef.current = true;
+          const streak = result.emptyStreak ?? 0;
+          if (streak >= emptyStreakThreshold) {
+            setInactivityNotifySignal((n) => n + 1);
+          }
           setStatus(
-            `Interrupted — ${emptyStreakRef.current} songs in a row had no guesses.`,
+            `Interrupted — ${Math.max(streak, emptyStreakThreshold)} songs in a row had no guesses.`,
           );
           router.refresh();
           return result;
@@ -256,7 +276,7 @@ export function AutoLastfmHostControls({
           setAwaitingAutoOpen(false);
           setCloseInFlight(false);
           setStatus(
-            `Round open: ${result.trackTitle} — ${result.trackArtist ?? ""}`,
+            `${localQuizStartedRef.current ? "Round" : "Pre Round"} open: ${result.trackTitle} — ${result.trackArtist ?? ""}`,
           );
           router.refresh();
         } else if (result.closedRound && result.nothingPlaying) {
@@ -618,6 +638,30 @@ export function AutoLastfmHostControls({
     }
   }
 
+  async function onSkipThisSong() {
+    if (!hasActiveRound) return;
+    clearDebounce();
+    pendingKeyRef.current = null;
+    setPendingReveal(false);
+    setAwaitingAutoOpen(false);
+    deferCurrentTrack();
+    setBusy(true);
+    reportError(null);
+    try {
+      setStatus("Skipping song…");
+      const result = await skipActiveRoundAction(quizId, joinCode);
+      if (result.error) {
+        reportError(result.error);
+        return;
+      }
+      lastKeyRef.current = null;
+      setStatus("Skipped — waiting for next song…");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onCloseThisRound() {
     clearDebounce();
     pendingKeyRef.current = null;
@@ -637,6 +681,35 @@ export function AutoLastfmHostControls({
       } else {
         setStatus("Round closed — results are on the board");
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onStartQuizNow() {
+    if (localQuizStarted || hostBusy) return;
+    clearDebounce();
+    pendingKeyRef.current = null;
+    setPendingReveal(false);
+    setAwaitingAutoOpen(false);
+    setBusy(true);
+    reportError(null);
+    setStatus("Starting quiz…");
+    try {
+      const result = await startOfficialQuizAction(quizId, joinCode);
+      if (result.error) {
+        reportError(result.error);
+        setStatus("Could not start the quiz");
+        return;
+      }
+      setLocalQuizStarted(true);
+      localQuizStartedRef.current = true;
+      deferCurrentTrack();
+      setStatus("Quiz started — next song opens Round 1");
+      router.refresh();
+    } catch {
+      reportError("Could not start the quiz.");
+      setStatus("Could not start the quiz");
     } finally {
       setBusy(false);
     }
@@ -731,6 +804,12 @@ export function AutoLastfmHostControls({
 
   const hostBusy = disabled || busy;
   /** Only while a round is open for guesses — not during listen/reveal wait. */
+  const canSkipThisSong =
+    hasActiveRound &&
+    !pendingReveal &&
+    !awaitingAutoOpen &&
+    !autoInterrupted &&
+    !hostBusy;
   const canCloseThisRound =
     hasActiveRound &&
     !pendingReveal &&
@@ -791,6 +870,12 @@ export function AutoLastfmHostControls({
       <div>
         <h2 className="text-lg font-semibold">Live Spotify (Last.fm)</h2>
         <p className="text-sm text-muted-foreground">{status}</p>
+        {!localQuizStarted ? (
+          <p className="mt-1 text-sm text-muted-foreground">
+            Pre-rounds are running so everyone can practice. Scores are saved but
+            do not count on the leaderboard until you start the quiz.
+          </p>
+        ) : null}
       </div>
 
       {atRoundLimit ? (
@@ -804,6 +889,19 @@ export function AutoLastfmHostControls({
           isAnonymous={isAnonymous}
           unlocked={unlocked}
         />
+      ) : null}
+
+      {!localQuizStarted ? (
+        <Button
+          type="button"
+          className="w-full"
+          disabled={hostBusy || disabled}
+          onClick={() => {
+            void onStartQuizNow();
+          }}
+        >
+          Start Quiz Now
+        </Button>
       ) : null}
 
       <div className="border-t border-border/60" />
@@ -890,46 +988,76 @@ export function AutoLastfmHostControls({
 
       <div className="border-t border-border/60" />
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full"
-          disabled={!canCloseThisRound}
-          onClick={() => {
-            void onCloseThisRound();
-          }}
-        >
-          Close this round
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full"
-          disabled={
-            hostBusy || (autoInterrupted ? atRoundLimit : false)
-          }
-          onClick={() => {
-            void onInterruptOrContinue();
-          }}
-        >
-          {autoInterrupted ? "Resume this Quiz" : "Pause this Quiz"}
-        </Button>
+      <div className="space-y-3">
+        <div className="space-y-2">
+          <Button
+            type="button"
+            size="lg"
+            className="w-full"
+            disabled={!canCloseThisRound}
+            onClick={() => {
+              void onCloseThisRound();
+            }}
+          >
+            Close this round
+          </Button>
+          <p className="text-center text-xs text-muted-foreground">
+            Reveal results and score this round.
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-border/50 bg-muted/25 p-3 space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Other actions
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full text-destructive hover:text-destructive"
+            disabled={!canSkipThisSong}
+            onClick={() => setSkipConfirmOpen(true)}
+          >
+            Skip this song
+          </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={
+                hostBusy || (autoInterrupted ? atRoundLimit : false)
+              }
+              onClick={() => {
+                void onInterruptOrContinue();
+              }}
+            >
+              {autoInterrupted ? "Resume" : "Pause"}
+            </Button>
+            {canFinish && finishAction ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full text-destructive hover:text-destructive"
+                disabled={finishPending || disabled}
+                onClick={() => setEndQuizConfirmOpen(true)}
+              >
+                {finishPending ? "Ending…" : "End quiz"}
+              </Button>
+            ) : (
+              <span aria-hidden className="block" />
+            )}
+          </div>
+        </div>
       </div>
 
-      {canFinish && finishAction ? (
-        <Button
-          type="button"
-          variant="secondary"
-          className="w-full"
-          disabled={finishPending || disabled}
-          onClick={() => setEndQuizConfirmOpen(true)}
-        >
-          {finishPending ? "Ending…" : "End this Quiz"}
-        </Button>
-      ) : null}
-
       <LiveHostScreenLockField id="lastfm-screen-lock" disabled={disabled} />
+
+      <LiveQuizInactivityNotice
+        autoInterrupted={autoInterrupted}
+        autoEmptyStreak={autoEmptyStreak}
+        emptyStreakThreshold={emptyStreakThreshold}
+        notifySignal={inactivityNotifySignal}
+      />
 
       {error ? (
         <p className="text-sm text-destructive" role="alert">
@@ -941,6 +1069,39 @@ export function AutoLastfmHostControls({
           {finishError}
         </p>
       ) : null}
+
+      <Dialog open={skipConfirmOpen} onOpenChange={setSkipConfirmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Skip this song?</DialogTitle>
+            <DialogDescription>
+              All guesses for this round are discarded. The round will not be scored
+              and the same round number continues with the next song.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setSkipConfirmOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={!canSkipThisSong || busy}
+              onClick={() => {
+                setSkipConfirmOpen(false);
+                void onSkipThisSong();
+              }}
+            >
+              Yes, skip this song
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={endQuizConfirmOpen} onOpenChange={setEndQuizConfirmOpen}>
         <DialogContent className="sm:max-w-md">

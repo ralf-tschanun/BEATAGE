@@ -23,6 +23,7 @@ type QuizStatusBadgesProps = {
   initialHasActiveRound: boolean;
   initialCurrentRoundNumber: number;
   initialAutoInterrupted: boolean;
+  initialQuizStarted?: boolean;
   initialOverallReveal: OverallReveal;
   initialLeaderboardRevealStep: number;
   initialLeaderboardCount: number;
@@ -35,6 +36,7 @@ export function QuizStatusBadges({
   initialHasActiveRound,
   initialCurrentRoundNumber,
   initialAutoInterrupted,
+  initialQuizStarted = true,
   initialOverallReveal,
   initialLeaderboardRevealStep,
   initialLeaderboardCount,
@@ -48,6 +50,7 @@ export function QuizStatusBadges({
     overallReveal: initialOverallReveal,
     leaderboardRevealStep: initialLeaderboardRevealStep,
     leaderboardCount: initialLeaderboardCount,
+    quizStarted: initialQuizStarted,
   });
 
   useEffect(() => {
@@ -60,12 +63,14 @@ export function QuizStatusBadges({
       overallReveal: initialOverallReveal,
       leaderboardRevealStep: initialLeaderboardRevealStep,
       leaderboardCount: initialLeaderboardCount,
+      quizStarted: initialQuizStarted,
     });
   }, [
     initialQuizStatus,
     initialHasActiveRound,
     initialCurrentRoundNumber,
     initialAutoInterrupted,
+    initialQuizStarted,
     quizSource,
     initialOverallReveal,
     initialLeaderboardRevealStep,
@@ -85,6 +90,7 @@ export function QuizStatusBadges({
         overallReveal: snapshot.settings.overallReveal,
         leaderboardRevealStep: snapshot.leaderboardRevealStep,
         leaderboardCount: snapshot.leaderboard.length,
+        quizStarted: snapshot.quizStarted !== false,
       });
     });
   }, [quizId, quizSource]);

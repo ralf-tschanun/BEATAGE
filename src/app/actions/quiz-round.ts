@@ -4,8 +4,12 @@ import { revalidatePath } from "next/cache";
 import { addCuratedTrackToQuiz } from "@/lib/quiz-tracks";
 import {
   closeRoundForHost,
+  excludeRoundFromScoringForHost,
   finishQuizForHost,
   advanceLeaderboardRevealForHost,
+  includeRoundInScoringForHost,
+  skipRoundForHost,
+  startOfficialQuizForHost,
   startRoundForHost,
   submitGuessForMember,
 } from "@/lib/quiz-play";
@@ -14,6 +18,7 @@ import {
   readQuizSettingsRuntime,
   resolveQuizSettings,
 } from "@/lib/quiz-scoring";
+import { isPreRoundNumber } from "@/lib/quiz-settings";
 import { ensureAnonymousSession } from "@/lib/supabase/auth";
 import { getQuizPlayState } from "@/lib/quizzes/play-state";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -53,6 +58,12 @@ function mapError(message: string): string {
   }
   if (message.includes("NO_TRACK_AVAILABLE")) return "Add curated tracks before starting.";
   if (message.includes("ROUND_NOT_ACTIVE")) return "This round is not open for guesses.";
+  if (message.includes("ROUND_NOT_SCORABLE")) {
+    return "Only completed rounds can be excluded from scoring.";
+  }
+  if (message.includes("ROUND_NOT_EXCLUDED")) {
+    return "This round is not excluded from scoring.";
+  }
   if (message.includes("INVALID_YEAR")) {
     return `Enter a valid year between 1900 and ${new Date().getFullYear()}.`;
   }
@@ -65,6 +76,9 @@ function mapError(message: string): string {
   }
   if (message.includes("QUIZ_EXPIRED")) return "This quiz has expired.";
   if (message.includes("QUIZ_NOT_JOINABLE")) return "This quiz cannot be changed right now.";
+  if (message.includes("NOT_LIVE_QUIZ")) {
+    return "Start Quiz Now is only available for live quizzes.";
+  }
   return message || "Something went wrong.";
 }
 
@@ -81,6 +95,25 @@ async function applyEmptyRoundStreak(
 ): Promise<{ interrupted: boolean; emptyStreak: number }> {
   const settings = resolveQuizSettings(rawSettings);
   const runtime = readQuizSettingsRuntime(rawSettings);
+
+  // Pre-rounds are practice — do not count toward the empty-streak interrupt.
+  const { data: closedRound } = await admin
+    .from("beatage_rounds")
+    .select("round_number")
+    .eq("id", closedRoundId)
+    .maybeSingle();
+  const closedRoundNumber =
+    typeof (closedRound as { round_number?: number } | null)?.round_number ===
+    "number"
+      ? (closedRound as { round_number: number }).round_number
+      : 0;
+  if (isPreRoundNumber(closedRoundNumber, runtime)) {
+    return {
+      interrupted: Boolean(runtime.autoInterrupted),
+      emptyStreak: runtime.autoEmptyStreak ?? 0,
+    };
+  }
+
   const { count } = await admin
     .from("beatage_guesses")
     .select("id", { count: "exact", head: true })
@@ -153,6 +186,24 @@ export async function fetchQuizPlaySnapshotAction(quizId: string, joinCode: stri
   await ensureAnonymousSession();
   // Live polls must not re-run Spotify/iTunes backfill on every snapshot.
   return getQuizPlayState(id, code, { backfillReleaseYears: false });
+}
+
+/** Host ends pre-round warm-up; next detected song opens Round 1. */
+export async function startOfficialQuizAction(
+  quizId: string,
+  joinCode: string,
+): Promise<{ ok?: boolean; error?: string; closedRound?: boolean }> {
+  const id = quizId.trim();
+  const code = joinCode.trim().toUpperCase();
+  if (!id) return { error: "Missing quiz id." };
+
+  const { user } = await ensureAnonymousSession();
+  const result = await startOfficialQuizForHost(id, user.id);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
+  revalidatePath(`/q/${code}`);
+  return { ok: true, closedRound: result.closedRound };
 }
 
 export async function addCuratedTrackAction(
@@ -285,6 +336,120 @@ export async function closeRoundAction(
 
   revalidatePath(`/q/${joinCode}`);
   return okResult();
+}
+
+export async function skipRoundAction(
+  _prev: QuizRoundActionState,
+  formData: FormData,
+): Promise<QuizRoundActionState> {
+  const roundId = String(formData.get("roundId") ?? "").trim();
+  const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
+
+  if (!roundId) {
+    return { error: "Missing round id." };
+  }
+
+  const { user } = await ensureAnonymousSession();
+  const result = await skipRoundForHost(roundId, user.id);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
+
+  revalidatePath(`/q/${joinCode}`);
+  return okResult();
+}
+
+export async function excludeRoundAction(
+  _prev: QuizRoundActionState,
+  formData: FormData,
+): Promise<QuizRoundActionState> {
+  const roundId = String(formData.get("roundId") ?? "").trim();
+  const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
+
+  if (!roundId) {
+    return { error: "Missing round id." };
+  }
+
+  const { user } = await ensureAnonymousSession();
+  const result = await excludeRoundFromScoringForHost(roundId, user.id);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
+
+  revalidatePath(`/q/${joinCode}`);
+  return okResult();
+}
+
+export async function includeRoundAction(
+  _prev: QuizRoundActionState,
+  formData: FormData,
+): Promise<QuizRoundActionState> {
+  const roundId = String(formData.get("roundId") ?? "").trim();
+  const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
+
+  if (!roundId) {
+    return { error: "Missing round id." };
+  }
+
+  const { user } = await ensureAnonymousSession();
+  const result = await includeRoundInScoringForHost(roundId, user.id);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
+
+  revalidatePath(`/q/${joinCode}`);
+  return okResult();
+}
+
+/** Skip the active round (live host controls with defer / player advance). */
+export async function skipActiveRoundAction(
+  quizId: string,
+  joinCode: string,
+  opts?: { advanceSpotify?: boolean },
+): Promise<AutoSpotifySyncState> {
+  const id = quizId.trim();
+  const code = joinCode.trim().toUpperCase();
+  if (!id) return { error: "Missing quiz id." };
+
+  const { user } = await ensureAnonymousSession();
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const admin = createAdminClient();
+
+  const { data: quizRow } = await admin
+    .from("beatage_quizzes")
+    .select("host_user_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!quizRow || quizRow.host_user_id !== user.id) {
+    return { error: mapError("NOT_HOST") };
+  }
+
+  const { data: active } = await admin
+    .from("beatage_rounds")
+    .select("id")
+    .eq("quiz_id", id)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (!active?.id) {
+    return { error: "This round is not open for guesses." };
+  }
+
+  const skipped = await skipRoundForHost(active.id, user.id);
+  if (skipped.error) {
+    return { error: mapError(skipped.error) };
+  }
+
+  if (opts?.advanceSpotify) {
+    const { skipToNextSpotifyTrackForUser } = await import("@/lib/spotify-connect");
+    const advanced = await skipToNextSpotifyTrackForUser();
+    if (!advanced.ok) {
+      return { error: advanced.message, code: advanced.code };
+    }
+  }
+
+  revalidatePath(`/q/${code}`);
+  return { ok: true, closedRound: true };
 }
 
 export async function finishQuizAction(

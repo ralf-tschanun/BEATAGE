@@ -13,6 +13,7 @@ import {
 import {
   nextQuizLeaderboardRevealStep,
   isQuizLeaderboardRevealComplete,
+  isPreRoundNumber,
   presentsLeaderboardAtEnd,
   primaryYearScoringMode,
 } from "@/lib/quiz-settings";
@@ -74,7 +75,7 @@ export async function startRoundForHost(
 
     const { data: quiz, error: quizError } = await admin
       .from("beatage_quizzes")
-      .select("current_round_number, status, settings, chart_countries")
+      .select("current_round_number, status, settings, chart_countries, source")
       .eq("id", quizId)
       .maybeSingle();
 
@@ -90,6 +91,7 @@ export async function startRoundForHost(
     }
 
     const settings = resolveQuizSettings(quiz.settings);
+    const runtime = readQuizSettingsRuntime(quiz.settings);
     const chartCountries =
       settings.chartCountries.length > 0
         ? settings.chartCountries
@@ -98,9 +100,14 @@ export async function startRoundForHost(
     const currentRoundNumber =
       typeof quiz.current_round_number === "number" ? quiz.current_round_number : 0;
 
-    // Plan / unlock round cap (also applies to live Spotify / Last.fm quizzes).
+    const source =
+      typeof quiz.source === "string" ? quiz.source : settings.source;
+    const isLive = source === "spotify_live" || source === "lastfm_live";
+    const isPreRound = isLive && runtime.quizStarted === false;
+
+    // Plan / unlock round cap — official rounds only (pre-rounds do not consume the cap).
     const roundLimit = await getQuizCuratedTrackLimit(quizId);
-    if (roundLimit != null && currentRoundNumber >= roundLimit) {
+    if (!isPreRound && roundLimit != null && currentRoundNumber >= roundLimit) {
       return { error: `ROUND_LIMIT:${roundLimit}` };
     }
 
@@ -143,7 +150,17 @@ export async function startRoundForHost(
       track = data;
     }
 
-    const roundNumber = currentRoundNumber + 1;
+    // Always allocate the next unique round_number (pre + official share the sequence).
+    const { data: maxRoundRow } = await admin
+      .from("beatage_rounds")
+      .select("round_number")
+      .eq("quiz_id", quizId)
+      .order("round_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const maxRoundNumber =
+      typeof maxRoundRow?.round_number === "number" ? maxRoundRow.round_number : 0;
+    const roundNumber = maxRoundNumber + 1;
     const now = new Date().toISOString();
 
     const needsChartFlag = settings.scoringModes.includes("chart_was_one");
@@ -177,11 +194,14 @@ export async function startRoundForHost(
       return { error: insertError.message };
     }
 
+    // Official rounds bump current_round_number; pre-rounds leave the official counter alone.
     const { error: updateError } = await admin
       .from("beatage_quizzes")
       .update({
         status: "playing",
-        current_round_number: roundNumber,
+        ...(isPreRound
+          ? {}
+          : { current_round_number: currentRoundNumber + 1 }),
         last_activity_at: now,
       })
       .eq("id", quizId);
@@ -193,6 +213,94 @@ export async function startRoundForHost(
     return {};
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to start round.";
+    return { error: message };
+  }
+}
+
+/** Host ends pre-round mode: close any active warm-up round and start counting official rounds. */
+export async function startOfficialQuizForHost(
+  quizId: string,
+  userId: string,
+): Promise<{ error?: string; closedRound?: boolean }> {
+  try {
+    await assertQuizHost(quizId, userId);
+    const admin = createAdminClient();
+
+    const { data: quiz, error: quizError } = await admin
+      .from("beatage_quizzes")
+      .select("status, settings, source")
+      .eq("id", quizId)
+      .maybeSingle();
+
+    if (quizError || !quiz) {
+      return { error: "QUIZ_NOT_FOUND" };
+    }
+    if (quiz.status === "finished" || quiz.status === "expired") {
+      return { error: "QUIZ_FINISHED" };
+    }
+
+    const source =
+      typeof quiz.source === "string" ? quiz.source : "curated";
+    if (source !== "spotify_live" && source !== "lastfm_live") {
+      return { error: "NOT_LIVE_QUIZ" };
+    }
+
+    const settings = resolveQuizSettings(quiz.settings);
+    const runtime = readQuizSettingsRuntime(quiz.settings);
+    if (runtime.quizStarted !== false) {
+      return {};
+    }
+
+    let closedRound = false;
+    const { data: active } = await admin
+      .from("beatage_rounds")
+      .select("id")
+      .eq("quiz_id", quizId)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (active?.id) {
+      const closed = await closeRoundForHost(active.id, userId);
+      if (closed.error) {
+        return { error: closed.error };
+      }
+      closedRound = true;
+    }
+
+    const { data: maxRoundRow } = await admin
+      .from("beatage_rounds")
+      .select("round_number")
+      .eq("quiz_id", quizId)
+      .order("round_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const preRoundCutoff =
+      typeof maxRoundRow?.round_number === "number"
+        ? maxRoundRow.round_number
+        : 0;
+
+    const { error: updateError } = await admin
+      .from("beatage_quizzes")
+      .update({
+        settings: mergeQuizSettingsForStorage(settings, {
+          ...runtime,
+          quizStarted: true,
+          preRoundCutoff,
+          autoEmptyStreak: 0,
+          autoInterrupted: false,
+        }),
+        last_activity_at: new Date().toISOString(),
+      })
+      .eq("id", quizId);
+
+    if (updateError) {
+      return { error: updateError.message };
+    }
+
+    return { closedRound };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to start quiz.";
     return { error: message };
   }
 }
@@ -619,6 +727,185 @@ export async function advanceLeaderboardRevealForHost(
       error instanceof Error
         ? error.message
         : "Failed to advance leaderboard reveal.";
+    return { error: message };
+  }
+}
+
+/**
+ * Host skips the active round: discard guesses, do not score, do not consume an
+ * official round slot (current_round_number is rolled back when applicable).
+ */
+export async function skipRoundForHost(
+  roundId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  try {
+    const admin = createAdminClient();
+    const { data: round, error: roundError } = await admin
+      .from("beatage_rounds")
+      .select("id, quiz_id, status, round_number")
+      .eq("id", roundId)
+      .maybeSingle();
+
+    if (roundError || !round) {
+      return { error: "ROUND_NOT_FOUND" };
+    }
+
+    await assertQuizHost(round.quiz_id, userId);
+
+    if (round.status !== "active") {
+      return { error: "ROUND_NOT_ACTIVE" };
+    }
+
+    const { data: quizRow } = await admin
+      .from("beatage_quizzes")
+      .select("current_round_number, settings")
+      .eq("id", round.quiz_id)
+      .maybeSingle();
+
+    const runtime = readQuizSettingsRuntime(quizRow?.settings);
+    const isPre = isPreRoundNumber(
+      round.round_number as number,
+      runtime,
+    );
+
+    const { error: deleteGuessesError } = await admin
+      .from("beatage_guesses")
+      .delete()
+      .eq("round_id", roundId);
+    if (deleteGuessesError) {
+      return { error: deleteGuessesError.message };
+    }
+
+    const now = new Date().toISOString();
+    const { error: skipError } = await admin
+      .from("beatage_rounds")
+      .update({
+        status: "skipped",
+        revealed_at: now,
+        guess_closes_at: now,
+      })
+      .eq("id", roundId);
+
+    if (skipError) {
+      return { error: skipError.message };
+    }
+
+    const currentRoundNumber =
+      typeof quizRow?.current_round_number === "number"
+        ? quizRow.current_round_number
+        : 0;
+    const nextCurrentRoundNumber =
+      !isPre && currentRoundNumber > 0
+        ? currentRoundNumber - 1
+        : currentRoundNumber;
+
+    const { error: quizUpdateError } = await admin
+      .from("beatage_quizzes")
+      .update({
+        current_round_number: nextCurrentRoundNumber,
+        last_activity_at: now,
+      })
+      .eq("id", round.quiz_id);
+
+    if (quizUpdateError) {
+      return { error: quizUpdateError.message };
+    }
+
+    return {};
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to skip round.";
+    return { error: message };
+  }
+}
+
+/** Host excludes a revealed round from leaderboard scoring (toggle back via include). */
+export async function excludeRoundFromScoringForHost(
+  roundId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  try {
+    const admin = createAdminClient();
+    const { data: round, error: roundError } = await admin
+      .from("beatage_rounds")
+      .select("id, quiz_id, status")
+      .eq("id", roundId)
+      .maybeSingle();
+
+    if (roundError || !round) {
+      return { error: "ROUND_NOT_FOUND" };
+    }
+
+    await assertQuizHost(round.quiz_id, userId);
+
+    if (round.status !== "revealed") {
+      return { error: "ROUND_NOT_SCORABLE" };
+    }
+
+    const { error } = await admin
+      .from("beatage_rounds")
+      .update({ status: "excluded" })
+      .eq("id", roundId);
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    await admin
+      .from("beatage_quizzes")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("id", round.quiz_id);
+
+    return {};
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to exclude round.";
+    return { error: message };
+  }
+}
+
+/** Host restores a previously excluded round to scoring. */
+export async function includeRoundInScoringForHost(
+  roundId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  try {
+    const admin = createAdminClient();
+    const { data: round, error: roundError } = await admin
+      .from("beatage_rounds")
+      .select("id, quiz_id, status")
+      .eq("id", roundId)
+      .maybeSingle();
+
+    if (roundError || !round) {
+      return { error: "ROUND_NOT_FOUND" };
+    }
+
+    await assertQuizHost(round.quiz_id, userId);
+
+    if (round.status !== "excluded") {
+      return { error: "ROUND_NOT_EXCLUDED" };
+    }
+
+    const { error } = await admin
+      .from("beatage_rounds")
+      .update({ status: "revealed" })
+      .eq("id", roundId);
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    await admin
+      .from("beatage_quizzes")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("id", round.quiz_id);
+
+    return {};
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to include round.";
     return { error: message };
   }
 }
