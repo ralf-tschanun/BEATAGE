@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { AuthLinkErrorBanner } from "@/components/account-auth-form";
 import { QuizList } from "@/components/quiz-list";
 import { HomeHero } from "@/components/home-hero";
@@ -6,6 +5,7 @@ import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { getQuizDashboardData } from "@/lib/quizzes/dashboard";
 import type { PlanId } from "@/lib/quiz-plans";
+import { SISTER_SITE_LANDING, SISTER_SITE_NAME } from "@/lib/site-url";
 
 type HomePageProps = {
   searchParams: Promise<{
@@ -102,13 +102,13 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         </div>
 
         <p className="px-6 text-center text-sm text-muted-foreground">
-          Looking for a music quiz about release years?{" "}
-          <Link
-            href="/music-quiz-release-year"
+          Looking for an online song contest?{" "}
+          <a
+            href={SISTER_SITE_LANDING}
             className="font-medium text-foreground underline-offset-2 hover:underline"
           >
-            Guess the release year →
-          </Link>
+            Nominate, vote, reveal winners on {SISTER_SITE_NAME} →
+          </a>
         </p>
       </main>
 

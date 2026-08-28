@@ -1,6 +1,11 @@
 /** Public custom domain — never use *.vercel.app for OAuth / redirects. */
 export const CANONICAL_SITE_URL = "https://beatage.gosmooth.eu";
 
+/** Sister product on gosmooth.eu — homepage cross-promo only (not auth). */
+export const SISTER_SITE_NAME = "MyContest";
+export const SISTER_SITE_URL = "https://mycontest.gosmooth.eu";
+export const SISTER_SITE_LANDING = `${SISTER_SITE_URL}/online-song-contest`;
+
 type RequestLike = {
   headers: Headers;
 };
