@@ -90,7 +90,7 @@ const ROUND_CORE_COLUMNS =
   "id, round_number, status, track_name, artist_name, correct_release_year, original_release_year, spotify_track_id, chart_was_number_one";
 
 function assignDisplayRoundNumbers(
-  rounds: Array<{ round_number: number }>,
+  rounds: Array<{ round_number: number; status: string }>,
   runtime: { quizStarted?: boolean; preRoundCutoff?: number },
 ): Array<{
   round_number: number;
@@ -105,6 +105,8 @@ function assignDisplayRoundNumbers(
     { display: number; isPre: boolean }
   >();
   for (const round of byNumber) {
+    // Skipped rounds do not consume an official/pre display slot.
+    if (round.status === "skipped") continue;
     const isPre = isPreRoundNumber(round.round_number, runtime);
     if (isPre) {
       preCount += 1;
@@ -148,6 +150,7 @@ function emptyPlayState(joinCode: string) {
     maxCuratedTracks: DEFAULT_MAX_CURATED_TRACKS as number | null,
     settings: { ...DEFAULT_QUIZ_SETTINGS } as BeatageQuizSettings,
     autoInterrupted: false,
+    autoEmptyStreak: 0,
     quizStarted: true,
     leaderboardRevealStep: 0,
   };
@@ -228,12 +231,12 @@ export async function getQuizPlayState(
       .from("beatage_rounds")
       .select(ROUND_CORE_COLUMNS)
       .eq("quiz_id", quizId)
-      .eq("status", "revealed")
+      .in("status", ["revealed", "excluded", "skipped"])
       .order("round_number", { ascending: false })
       .limit(30),
     admin
       .from("beatage_rounds")
-      .select("round_number")
+      .select("round_number, status")
       .eq("quiz_id", quizId)
       .order("round_number", { ascending: true }),
     admin
@@ -357,9 +360,9 @@ export async function getQuizPlayState(
         : null,
   });
 
-  const revealedListRaw = (revealedRoundsRaw ?? []) as RoundCore[];
+  const historyListRaw = (revealedRoundsRaw ?? []) as RoundCore[];
   const allRoundMeta = assignDisplayRoundNumbers(
-    ((allRoundMetaRaw ?? []) as Array<{ round_number: number }>),
+    ((allRoundMetaRaw ?? []) as Array<{ round_number: number; status: string }>),
     runtime,
   );
   const displayMetaByRoundNumber = new Map(
@@ -394,14 +397,16 @@ export async function getQuizPlayState(
     ? toRoundRow(withDisplay(activeRound as RoundCore), { hideYears: true })
     : null;
 
-  const revealedList = revealedListRaw.map(withDisplay);
-  // Preview audio only for the latest revealed round (results card).
+  const revealedList = historyListRaw.map(withDisplay);
+  const scoringRounds = revealedList.filter((r) => r.status === "revealed");
+  const latestScoringRound = scoringRounds[0] ?? null;
+  // Preview audio only for the latest scored round (results card).
   let latestPreviewUrl: string | null = null;
-  if (revealedList[0]) {
+  if (latestScoringRound) {
     const { data: media } = await admin
       .from("beatage_rounds")
       .select("preview_url")
-      .eq("id", revealedList[0].id)
+      .eq("id", latestScoringRound.id)
       .maybeSingle();
     latestPreviewUrl =
       typeof (media as { preview_url?: string | null } | null)?.preview_url ===
@@ -410,8 +415,8 @@ export async function getQuizPlayState(
         : null;
   }
 
-  const resultRoundPublic: RoundRow | null = revealedList[0]
-    ? toRoundRow(revealedList[0], {
+  const resultRoundPublic: RoundRow | null = latestScoringRound
+    ? toRoundRow(latestScoringRound, {
         hideYears: hideCorrectForViewer,
         previewUrl: latestPreviewUrl,
       })
@@ -486,18 +491,18 @@ export async function getQuizPlayState(
     }
   }
 
-  const revealedRoundIds = revealedList.map((r) => r.id);
-  const officialRevealedIds = new Set(
-    revealedList.filter((r) => !r.is_pre_round).map((r) => r.id),
+  const historyRoundIds = revealedList.map((r) => r.id);
+  const officialScoringIds = new Set(
+    scoringRounds.filter((r) => !r.is_pre_round).map((r) => r.id),
   );
   const pastGuessesByRound = new Map<string, GuessRow[]>();
   const myPointsByRound = new Map<string, number>();
   const totals = new Map<string, number>();
   const lastRoundPts = new Map<string, number>();
   const lastSubmittedByUserId: Record<string, string> = {};
-  // Official leaderboard "last round" = latest non-pre revealed round.
-  const latestOfficialRevealedId =
-    revealedList.find((r) => !r.is_pre_round)?.id ?? null;
+  // Official leaderboard "last round" = latest non-pre scored round.
+  const latestOfficialScoringId =
+    scoringRounds.find((r) => !r.is_pre_round)?.id ?? null;
 
   // Seed last-submit from the open/result round guesses (already loaded).
   for (const g of roundGuesses) {
@@ -508,14 +513,14 @@ export async function getQuizPlayState(
     }
   }
 
-  if (revealedRoundIds.length > 0) {
+  if (historyRoundIds.length > 0) {
     // One query drives past-round details + leaderboard (was previously two).
     const { data: pastGuesses } = await admin
       .from("beatage_guesses")
       .select(
         "round_id, user_id, guessed_year, guessed_was_number_one, points, points_total, submitted_at",
       )
-      .in("round_id", revealedRoundIds)
+      .in("round_id", historyRoundIds)
       .order("submitted_at", { ascending: false });
 
     for (const g of (pastGuesses ?? []) as Array<{
@@ -532,9 +537,9 @@ export async function getQuizPlayState(
         myPointsByRound.set(g.round_id, pts);
       }
       // Pre-round scores are saved and shown in results, but do not count on the leaderboard.
-      if (officialRevealedIds.has(g.round_id)) {
+      if (officialScoringIds.has(g.round_id)) {
         totals.set(g.user_id, (totals.get(g.user_id) ?? 0) + pts);
-        if (latestOfficialRevealedId && g.round_id === latestOfficialRevealedId) {
+        if (latestOfficialScoringId && g.round_id === latestOfficialScoringId) {
           lastRoundPts.set(g.user_id, pts);
         }
       }
@@ -579,24 +584,33 @@ export async function getQuizPlayState(
 
   const pastRounds: PastRoundRow[] = revealedList.map((round, index) => {
     const hideYears = hideCorrectForViewer || !settings.showResultDetails;
+    const isSkipped = round.status === "skipped";
+    const isExcluded = round.status === "excluded";
     const base = toRoundRow(round, {
-      hideYears,
-      // Media only on the latest revealed round (also exposed as resultRound).
-      previewUrl: index === 0 ? latestPreviewUrl : null,
+      hideYears: hideYears || isSkipped,
+      // Media only on the latest scored round (also exposed as resultRound).
+      previewUrl:
+        latestScoringRound && round.id === latestScoringRound.id
+          ? latestPreviewUrl
+          : null,
     });
     return {
       ...base,
-      my_points: myPointsByRound.has(round.id)
-        ? (myPointsByRound.get(round.id) as number)
-        : null,
-      guesses: settings.showResultDetails
-        ? (pastGuessesByRound.get(round.id) ?? [])
-        : [],
+      my_points:
+        isSkipped
+          ? null
+          : myPointsByRound.has(round.id)
+            ? (myPointsByRound.get(round.id) as number)
+            : null,
+      guesses:
+        isSkipped || !settings.showResultDetails
+          ? []
+          : (pastGuessesByRound.get(round.id) ?? []),
     };
   });
 
   let leaderboard: LeaderboardRow[] = [];
-  if (officialRevealedIds.size > 0) {
+  if (officialScoringIds.size > 0) {
     leaderboard = [...totals.entries()]
       .map(([userId, total_points]) => ({
         user_id: userId,
@@ -630,6 +644,7 @@ export async function getQuizPlayState(
     maxCuratedTracks,
     settings,
     autoInterrupted: Boolean(runtime.autoInterrupted),
+    autoEmptyStreak: runtime.autoEmptyStreak ?? 0,
     quizStarted: runtime.quizStarted !== false,
     leaderboardRevealStep: runtime.leaderboardRevealStep ?? 0,
   };

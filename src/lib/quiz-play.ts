@@ -13,6 +13,7 @@ import {
 import {
   nextQuizLeaderboardRevealStep,
   isQuizLeaderboardRevealComplete,
+  isPreRoundNumber,
   presentsLeaderboardAtEnd,
   primaryYearScoringMode,
 } from "@/lib/quiz-settings";
@@ -726,6 +727,185 @@ export async function advanceLeaderboardRevealForHost(
       error instanceof Error
         ? error.message
         : "Failed to advance leaderboard reveal.";
+    return { error: message };
+  }
+}
+
+/**
+ * Host skips the active round: discard guesses, do not score, do not consume an
+ * official round slot (current_round_number is rolled back when applicable).
+ */
+export async function skipRoundForHost(
+  roundId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  try {
+    const admin = createAdminClient();
+    const { data: round, error: roundError } = await admin
+      .from("beatage_rounds")
+      .select("id, quiz_id, status, round_number")
+      .eq("id", roundId)
+      .maybeSingle();
+
+    if (roundError || !round) {
+      return { error: "ROUND_NOT_FOUND" };
+    }
+
+    await assertQuizHost(round.quiz_id, userId);
+
+    if (round.status !== "active") {
+      return { error: "ROUND_NOT_ACTIVE" };
+    }
+
+    const { data: quizRow } = await admin
+      .from("beatage_quizzes")
+      .select("current_round_number, settings")
+      .eq("id", round.quiz_id)
+      .maybeSingle();
+
+    const runtime = readQuizSettingsRuntime(quizRow?.settings);
+    const isPre = isPreRoundNumber(
+      round.round_number as number,
+      runtime,
+    );
+
+    const { error: deleteGuessesError } = await admin
+      .from("beatage_guesses")
+      .delete()
+      .eq("round_id", roundId);
+    if (deleteGuessesError) {
+      return { error: deleteGuessesError.message };
+    }
+
+    const now = new Date().toISOString();
+    const { error: skipError } = await admin
+      .from("beatage_rounds")
+      .update({
+        status: "skipped",
+        revealed_at: now,
+        guess_closes_at: now,
+      })
+      .eq("id", roundId);
+
+    if (skipError) {
+      return { error: skipError.message };
+    }
+
+    const currentRoundNumber =
+      typeof quizRow?.current_round_number === "number"
+        ? quizRow.current_round_number
+        : 0;
+    const nextCurrentRoundNumber =
+      !isPre && currentRoundNumber > 0
+        ? currentRoundNumber - 1
+        : currentRoundNumber;
+
+    const { error: quizUpdateError } = await admin
+      .from("beatage_quizzes")
+      .update({
+        current_round_number: nextCurrentRoundNumber,
+        last_activity_at: now,
+      })
+      .eq("id", round.quiz_id);
+
+    if (quizUpdateError) {
+      return { error: quizUpdateError.message };
+    }
+
+    return {};
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to skip round.";
+    return { error: message };
+  }
+}
+
+/** Host excludes a revealed round from leaderboard scoring (toggle back via include). */
+export async function excludeRoundFromScoringForHost(
+  roundId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  try {
+    const admin = createAdminClient();
+    const { data: round, error: roundError } = await admin
+      .from("beatage_rounds")
+      .select("id, quiz_id, status")
+      .eq("id", roundId)
+      .maybeSingle();
+
+    if (roundError || !round) {
+      return { error: "ROUND_NOT_FOUND" };
+    }
+
+    await assertQuizHost(round.quiz_id, userId);
+
+    if (round.status !== "revealed") {
+      return { error: "ROUND_NOT_SCORABLE" };
+    }
+
+    const { error } = await admin
+      .from("beatage_rounds")
+      .update({ status: "excluded" })
+      .eq("id", roundId);
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    await admin
+      .from("beatage_quizzes")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("id", round.quiz_id);
+
+    return {};
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to exclude round.";
+    return { error: message };
+  }
+}
+
+/** Host restores a previously excluded round to scoring. */
+export async function includeRoundInScoringForHost(
+  roundId: string,
+  userId: string,
+): Promise<{ error?: string }> {
+  try {
+    const admin = createAdminClient();
+    const { data: round, error: roundError } = await admin
+      .from("beatage_rounds")
+      .select("id, quiz_id, status")
+      .eq("id", roundId)
+      .maybeSingle();
+
+    if (roundError || !round) {
+      return { error: "ROUND_NOT_FOUND" };
+    }
+
+    await assertQuizHost(round.quiz_id, userId);
+
+    if (round.status !== "excluded") {
+      return { error: "ROUND_NOT_EXCLUDED" };
+    }
+
+    const { error } = await admin
+      .from("beatage_rounds")
+      .update({ status: "revealed" })
+      .eq("id", roundId);
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    await admin
+      .from("beatage_quizzes")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("id", round.quiz_id);
+
+    return {};
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to include round.";
     return { error: message };
   }
 }

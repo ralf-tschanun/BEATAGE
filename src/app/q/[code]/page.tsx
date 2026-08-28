@@ -265,6 +265,7 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
           maxMembers={quiz.max_members}
           settings={settings}
           autoInterrupted={playState?.autoInterrupted ?? false}
+          autoEmptyStreak={playState?.autoEmptyStreak ?? 0}
           quizStarted={playState?.quizStarted !== false}
           leaderboardRevealStep={playState?.leaderboardRevealStep ?? 0}
           isAnonymous={Boolean(identity?.isAnonymous)}

@@ -110,6 +110,25 @@ export function formatRoundLabel(opts: {
   return opts.isPreRound ? `Pre Round ${n}` : `Round ${n}`;
 }
 
+/** Short badge for non-standard round outcomes in history lists. */
+export function roundOutcomeLabel(status: string): string | null {
+  if (status === "skipped") return "Skipped";
+  if (status === "excluded") return "Excluded";
+  return null;
+}
+
+/** True when the live quiz was auto-paused after consecutive empty rounds. */
+export function isInactivityQuizInterrupt(
+  autoInterrupted: boolean,
+  autoEmptyStreak: number,
+  emptyStreakThreshold: number,
+): boolean {
+  return (
+    autoInterrupted &&
+    autoEmptyStreak >= Math.max(1, Math.round(emptyStreakThreshold))
+  );
+}
+
 /** Whether a round counts as warm-up (not official quiz scoring). */
 export function isPreRoundNumber(
   roundNumber: number,

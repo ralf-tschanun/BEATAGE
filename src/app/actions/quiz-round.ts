@@ -4,8 +4,11 @@ import { revalidatePath } from "next/cache";
 import { addCuratedTrackToQuiz } from "@/lib/quiz-tracks";
 import {
   closeRoundForHost,
+  excludeRoundFromScoringForHost,
   finishQuizForHost,
   advanceLeaderboardRevealForHost,
+  includeRoundInScoringForHost,
+  skipRoundForHost,
   startOfficialQuizForHost,
   startRoundForHost,
   submitGuessForMember,
@@ -55,6 +58,12 @@ function mapError(message: string): string {
   }
   if (message.includes("NO_TRACK_AVAILABLE")) return "Add curated tracks before starting.";
   if (message.includes("ROUND_NOT_ACTIVE")) return "This round is not open for guesses.";
+  if (message.includes("ROUND_NOT_SCORABLE")) {
+    return "Only completed rounds can be excluded from scoring.";
+  }
+  if (message.includes("ROUND_NOT_EXCLUDED")) {
+    return "This round is not excluded from scoring.";
+  }
   if (message.includes("INVALID_YEAR")) {
     return `Enter a valid year between 1900 and ${new Date().getFullYear()}.`;
   }
@@ -327,6 +336,120 @@ export async function closeRoundAction(
 
   revalidatePath(`/q/${joinCode}`);
   return okResult();
+}
+
+export async function skipRoundAction(
+  _prev: QuizRoundActionState,
+  formData: FormData,
+): Promise<QuizRoundActionState> {
+  const roundId = String(formData.get("roundId") ?? "").trim();
+  const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
+
+  if (!roundId) {
+    return { error: "Missing round id." };
+  }
+
+  const { user } = await ensureAnonymousSession();
+  const result = await skipRoundForHost(roundId, user.id);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
+
+  revalidatePath(`/q/${joinCode}`);
+  return okResult();
+}
+
+export async function excludeRoundAction(
+  _prev: QuizRoundActionState,
+  formData: FormData,
+): Promise<QuizRoundActionState> {
+  const roundId = String(formData.get("roundId") ?? "").trim();
+  const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
+
+  if (!roundId) {
+    return { error: "Missing round id." };
+  }
+
+  const { user } = await ensureAnonymousSession();
+  const result = await excludeRoundFromScoringForHost(roundId, user.id);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
+
+  revalidatePath(`/q/${joinCode}`);
+  return okResult();
+}
+
+export async function includeRoundAction(
+  _prev: QuizRoundActionState,
+  formData: FormData,
+): Promise<QuizRoundActionState> {
+  const roundId = String(formData.get("roundId") ?? "").trim();
+  const joinCode = String(formData.get("joinCode") ?? "").trim().toUpperCase();
+
+  if (!roundId) {
+    return { error: "Missing round id." };
+  }
+
+  const { user } = await ensureAnonymousSession();
+  const result = await includeRoundInScoringForHost(roundId, user.id);
+  if (result.error) {
+    return { error: mapError(result.error) };
+  }
+
+  revalidatePath(`/q/${joinCode}`);
+  return okResult();
+}
+
+/** Skip the active round (live host controls with defer / player advance). */
+export async function skipActiveRoundAction(
+  quizId: string,
+  joinCode: string,
+  opts?: { advanceSpotify?: boolean },
+): Promise<AutoSpotifySyncState> {
+  const id = quizId.trim();
+  const code = joinCode.trim().toUpperCase();
+  if (!id) return { error: "Missing quiz id." };
+
+  const { user } = await ensureAnonymousSession();
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const admin = createAdminClient();
+
+  const { data: quizRow } = await admin
+    .from("beatage_quizzes")
+    .select("host_user_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!quizRow || quizRow.host_user_id !== user.id) {
+    return { error: mapError("NOT_HOST") };
+  }
+
+  const { data: active } = await admin
+    .from("beatage_rounds")
+    .select("id")
+    .eq("quiz_id", id)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (!active?.id) {
+    return { error: "This round is not open for guesses." };
+  }
+
+  const skipped = await skipRoundForHost(active.id, user.id);
+  if (skipped.error) {
+    return { error: mapError(skipped.error) };
+  }
+
+  if (opts?.advanceSpotify) {
+    const { skipToNextSpotifyTrackForUser } = await import("@/lib/spotify-connect");
+    const advanced = await skipToNextSpotifyTrackForUser();
+    if (!advanced.ok) {
+      return { error: advanced.message, code: advanced.code };
+    }
+  }
+
+  revalidatePath(`/q/${code}`);
+  return { ok: true, closedRound: true };
 }
 
 export async function finishQuizAction(
