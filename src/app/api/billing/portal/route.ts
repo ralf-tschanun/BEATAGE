@@ -1,19 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CustomerPortal } from "@polar-sh/nextjs";
 import { getOptionalUser } from "@/lib/supabase/auth";
-import { getRequestSiteUrl, getSiteUrl } from "@/lib/site-url";
-import { isPolarConfigured, polarServer } from "@/lib/polar";
-
-const portal = CustomerPortal({
-  accessToken: process.env.POLAR_ACCESS_TOKEN ?? "",
-  server: polarServer(),
-  returnUrl: getSiteUrl(),
-  getExternalCustomerId: async () => {
-    const { user } = await getOptionalUser();
-    if (!user || user.is_anonymous) return "";
-    return user.id;
-  },
-});
+import { createAdminClient } from "@/lib/supabase/admin";
+import { createCustomerPortalUrl } from "@/lib/billing-portal";
+import { getRequestSiteUrl } from "@/lib/site-url";
+import { createPolarClient, isPolarConfigured } from "@/lib/polar";
 
 export async function GET(request: NextRequest) {
   const siteUrl = getRequestSiteUrl(request);
@@ -28,5 +18,29 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  return portal(request);
+  let polarCustomerId: string | null = null;
+  try {
+    const admin = createAdminClient();
+    const { data: profile } = await admin
+      .from("beatage_profiles")
+      .select("polar_customer_id")
+      .eq("id", user.id)
+      .maybeSingle();
+    polarCustomerId = profile?.polar_customer_id ?? null;
+  } catch (error) {
+    console.error("[billing/portal] profile lookup failed", error);
+  }
+
+  try {
+    const polar = createPolarClient();
+    const portalUrl = await createCustomerPortalUrl(polar, {
+      userId: user.id,
+      polarCustomerId,
+      returnUrl: siteUrl,
+    });
+    return NextResponse.redirect(portalUrl);
+  } catch (error) {
+    console.error("[billing/portal] portal session failed", error);
+    return NextResponse.redirect(`${siteUrl}/?billing=portal_error`);
+  }
 }

@@ -56,6 +56,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
                 ? "Billing is not configured on this server yet."
                 : billing === "error"
                   ? "Checkout could not start. Please try again in a moment."
+                : billing === "portal_error"
+                  ? "Billing portal could not open. If you subscribed recently, wait a minute and try again — or email us from Contact and we will cancel for you."
                 : billing === "invalid"
                   ? "That checkout link is not valid."
                   : null}

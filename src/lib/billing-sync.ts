@@ -114,7 +114,7 @@ export async function unlockQuizFromOrder(order: PolarOrder) {
     await applyPlan({
       userId,
       plan,
-      polarCustomerId: polarCustomerId || "unknown",
+      polarCustomerId: polarCustomerId || "",
       source: "order.paid",
     });
     return;
