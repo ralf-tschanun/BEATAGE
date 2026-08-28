@@ -47,7 +47,12 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       ) : null}
 
       {billing ? (
-        <p className="mx-auto w-full max-w-5xl px-6 pt-4 text-sm text-foreground">
+        <p
+          className={`mx-auto w-full max-w-5xl px-6 pt-4 text-sm ${
+            billing === "portal_error" ? "text-destructive" : "text-foreground"
+          }`}
+          role={billing === "portal_error" ? "alert" : undefined}
+        >
           {billing === "success"
             ? "Thanks. Your plan updates in a few seconds — refresh if it still looks unchanged."
             : billing === "account"
@@ -57,7 +62,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
                 : billing === "error"
                   ? "Checkout could not start. Please try again in a moment."
                 : billing === "portal_error"
-                  ? "Billing portal could not open. If you subscribed recently, wait a minute and try again — or email us from Contact and we will cancel for you."
+                  ? "Billing portal could not open. Make sure you subscribed with the same email you use here, then try again — or contact us and we will cancel for you."
                 : billing === "invalid"
                   ? "That checkout link is not valid."
                   : null}
