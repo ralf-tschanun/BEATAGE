@@ -12,6 +12,14 @@ import {
 import { useCollapsibleSection } from "@/lib/collapsible-sections";
 import { cn } from "@/lib/utils";
 
+/**
+ * One yellow 1px frame on the card’s own rounded edge.
+ * Inset so it covers the silver hairline; ring color replaces the default
+ * foreground ring (including dark:ring-foreground/10).
+ */
+export const ACTIVE_PANEL_CARD_CLASS =
+  "shadow-none ring-1 ring-inset ring-yellow-400 dark:ring-yellow-400";
+
 type CollapsibleCardProps = {
   /** Stable id used for global open/closed persistence (when persist). */
   sectionId: string;

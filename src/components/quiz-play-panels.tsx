@@ -23,7 +23,7 @@ import {
 } from "@/components/quiz-live-refresh";
 import { AutoLastfmHostControls } from "@/components/auto-lastfm-host-controls";
 import { AutoSpotifyHostControls } from "@/components/auto-spotify-host-controls";
-import { CollapsibleCard } from "@/components/collapsible-card";
+import { CollapsibleCard, ACTIVE_PANEL_CARD_CLASS } from "@/components/collapsible-card";
 import { SongPickFields } from "@/components/song-pick-fields";
 import { SongPreviewPlayer } from "@/components/song-preview-player";
 import { SpotifyTrackLink } from "@/components/spotify-track-link";
@@ -74,9 +74,6 @@ const initial: QuizRoundActionState = null;
 
 /** How long the correct-answer card stays up after a round is revealed (incl. overlap with the next guess). */
 const RESULT_HOLD_MS = 10_000;
-
-/** Thin yellow frame so the host can see which control panel is currently active. */
-const HOST_ACTIVE_CARD_CLASS = "ring-1 ring-yellow-400 dark:ring-yellow-400";
 
 /** Host open-in-Spotify: prefer track id, else search by title + artist. */
 function spotifyOpenForHostTrack(opts: {
@@ -691,6 +688,11 @@ export function QuizPlayPanels({
     : playControlsActive
       ? "play"
       : "done";
+  /** Client (and host) current end-game stage — not live rounds. */
+  const presentationStageActive =
+    showLeaderboardPresentation && !presentationComplete;
+  const finishedStageActive =
+    !isHost && isFinished && !presentationStageActive;
 
   return (
     <div className="space-y-8">
@@ -700,7 +702,7 @@ export function QuizPlayPanels({
           persist={false}
           resetKey={hostControlResetKey}
           defaultOpen={playControlsActive}
-          className={cn(playControlsActive && HOST_ACTIVE_CARD_CLASS)}
+          className={cn(playControlsActive && ACTIVE_PANEL_CARD_CLASS)}
           title="Live Spotify (Last.fm)"
           description={
             isFinished
@@ -750,7 +752,7 @@ export function QuizPlayPanels({
           persist={false}
           resetKey={hostControlResetKey}
           defaultOpen={playControlsActive}
-          className={cn(playControlsActive && HOST_ACTIVE_CARD_CLASS)}
+          className={cn(playControlsActive && ACTIVE_PANEL_CARD_CLASS)}
           title="Auto Spotify"
           description={
             isFinished
@@ -799,7 +801,7 @@ export function QuizPlayPanels({
           persist={false}
           resetKey={hostControlResetKey}
           defaultOpen={playControlsActive}
-          className={cn(playControlsActive && HOST_ACTIVE_CARD_CLASS)}
+          className={cn(playControlsActive && ACTIVE_PANEL_CARD_CLASS)}
           title="Host controls"
           description={
             <>
@@ -1039,10 +1041,9 @@ export function QuizPlayPanels({
       {waitingForHost ? (
         <section
           className={cn(
-            "space-y-4 rounded-2xl border p-6",
-            inactivityPaused
-              ? "border-amber-500/30 bg-amber-500/5"
-              : "border-border/60 bg-card",
+            "space-y-4 rounded-2xl p-6",
+            inactivityPaused ? "bg-amber-500/5" : "bg-card",
+            ACTIVE_PANEL_CARD_CLASS,
           )}
         >
           <div className="space-y-1">
@@ -1074,7 +1075,14 @@ export function QuizPlayPanels({
       {isFinished || showLeaderboardPresentation ? (
         <div className="space-y-8">
           {isFinished ? (
-            <section className="space-y-2 rounded-2xl border border-border/60 bg-card p-6">
+            <section
+              className={cn(
+                "space-y-2 rounded-2xl bg-card p-6",
+                finishedStageActive
+                  ? ACTIVE_PANEL_CARD_CLASS
+                  : "border border-border/60",
+              )}
+            >
               <h2 className="text-lg font-semibold">Quiz finished</h2>
               <p className="text-sm text-muted-foreground">
                 {presentAtEnd
@@ -1094,7 +1102,7 @@ export function QuizPlayPanels({
               resetKey={isHost ? hostControlResetKey : undefined}
               defaultOpen={isHost ? presentationActive || isFinished : true}
               className={cn(
-                isHost && presentationActive && HOST_ACTIVE_CARD_CLASS,
+                presentationStageActive && ACTIVE_PANEL_CARD_CLASS,
                 "scroll-mt-20",
               )}
               title="Leaderboard presentation"
@@ -1196,7 +1204,14 @@ export function QuizPlayPanels({
           ) : null}
         </div>
       ) : allTracksPlayed ? (
-        <section className="space-y-2 rounded-2xl border border-border/60 bg-card p-6">
+        <section
+          className={cn(
+            "space-y-2 rounded-2xl bg-card p-6",
+            !isHost
+              ? ACTIVE_PANEL_CARD_CLASS
+              : "border border-border/60",
+          )}
+        >
           <h2 className="text-lg font-semibold">All tracks played</h2>
           <p className="text-sm text-muted-foreground">
             {isHost
