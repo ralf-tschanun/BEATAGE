@@ -12,12 +12,13 @@ type HomePageProps = {
     billing?: string;
     removed?: string;
     deleted?: string;
+    left?: string;
     auth?: string;
   }>;
 };
 
 export default async function HomePage({ searchParams }: HomePageProps) {
-  const { billing, removed, deleted, auth } = await searchParams;
+  const { billing, removed, deleted, left, auth } = await searchParams;
   const { hosted, joined, plan, canCreate, identity, activeHostedCount, supabaseReachable } =
     await getQuizDashboardData();
 
@@ -43,6 +44,12 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       {deleted === "1" ? (
         <p className="mx-auto w-full max-w-5xl px-6 pt-4 text-sm text-foreground">
           Quiz deleted.
+        </p>
+      ) : null}
+
+      {left === "1" ? (
+        <p className="mx-auto w-full max-w-5xl px-6 pt-4 text-sm text-foreground">
+          You left the quiz.
         </p>
       ) : null}
 

@@ -1,13 +1,19 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import {
   deleteQuizAction,
   leaveQuizAction,
   type QuizActionState,
 } from "@/app/actions/quiz";
-import { MedalIcon, SignOutIcon, TrashIcon, TrophyIcon } from "@phosphor-icons/react";
+import {
+  CircleNotchIcon,
+  MedalIcon,
+  SignOutIcon,
+  TrashIcon,
+  TrophyIcon,
+} from "@phosphor-icons/react";
 import { SiteSectionIcon } from "@/components/site-section-icon";
 import { SwipeToRemoveRow } from "@/components/swipe-to-remove-row";
 import { Badge } from "@/components/ui/badge";
@@ -92,6 +98,25 @@ type QuizListProps = {
   rowAction?: QuizRowAction;
 };
 
+function QuizRowLinkStatus() {
+  const { pending } = useLinkStatus();
+  return (
+    <>
+      <span
+        className={cn(
+          "absolute right-0 top-0.5 inline-flex size-4 items-center justify-center text-muted-foreground",
+          "opacity-0 transition-opacity duration-150",
+          pending && "opacity-100 delay-100",
+        )}
+        aria-hidden
+      >
+        <CircleNotchIcon className="size-4 animate-spin" />
+      </span>
+      {pending ? <span className="sr-only">Loading quiz</span> : null}
+    </>
+  );
+}
+
 function QuizRow({
   quiz,
   className,
@@ -114,9 +139,10 @@ function QuizRow({
         className,
       )}
     >
-      <div className="min-w-0 flex-1 space-y-2 sm:flex sm:items-center sm:justify-between sm:gap-3 sm:space-y-0">
+      <div className="relative min-w-0 flex-1 space-y-2 sm:flex sm:items-center sm:justify-between sm:gap-3 sm:space-y-0">
+        <QuizRowLinkStatus />
         <div className="min-w-0 space-y-1">
-          <p className="truncate font-medium">{quiz.title}</p>
+          <p className="truncate pr-6 font-medium">{quiz.title}</p>
           <p className="text-sm text-muted-foreground">
             {quizSourceLabel(quiz.source)} · code {quiz.join_code}
           </p>

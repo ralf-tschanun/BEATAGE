@@ -56,6 +56,8 @@ type AutoSpotifyHostControlsProps = {
   finishAction?: (formData: FormData) => void | Promise<void>;
   finishPending?: boolean;
   finishError?: string | null;
+  /** Skip outer card chrome when wrapped in CollapsibleCard. */
+  embedded?: boolean;
 };
 
 type NowPlayingTrack = {
@@ -94,6 +96,7 @@ export function AutoSpotifyHostControls({
   finishAction,
   finishPending = false,
   finishError = null,
+  embedded = false,
 }: AutoSpotifyHostControlsProps) {
   const router = useRouter();
   const [connected, setConnected] = useState<boolean | null>(null);
@@ -698,8 +701,16 @@ export function AutoSpotifyHostControls({
         ? `${window.location.pathname}${window.location.search}`
         : "/";
     return (
-      <section className="space-y-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
-        <h2 className="text-lg font-semibold">Auto Spotify</h2>
+      <section
+        className={
+          embedded
+            ? "space-y-3"
+            : "space-y-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4"
+        }
+      >
+        {embedded ? null : (
+          <h2 className="text-lg font-semibold">Auto Spotify</h2>
+        )}
         <p className="text-sm text-muted-foreground">
           Connect the same Spotify Premium account that is playing music on this
           computer.
@@ -716,9 +727,17 @@ export function AutoSpotifyHostControls({
   }
 
   return (
-    <section className="space-y-3 rounded-2xl border border-border/60 bg-card p-4">
+    <section
+      className={
+        embedded
+          ? "space-y-3"
+          : "space-y-3 rounded-2xl border border-border/60 bg-card p-4"
+      }
+    >
       <div>
-        <h2 className="text-lg font-semibold">Auto Spotify</h2>
+        {embedded ? null : (
+          <h2 className="text-lg font-semibold">Auto Spotify</h2>
+        )}
         <p className="text-sm text-muted-foreground">{status}</p>
         {!localQuizStarted ? (
           <p className="mt-1 text-sm text-muted-foreground">

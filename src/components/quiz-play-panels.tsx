@@ -75,6 +75,9 @@ const initial: QuizRoundActionState = null;
 /** How long the correct-answer card stays up after a round is revealed (incl. overlap with the next guess). */
 const RESULT_HOLD_MS = 10_000;
 
+/** Thin yellow frame so the host can see which control panel is currently active. */
+const HOST_ACTIVE_CARD_CLASS = "ring-1 ring-yellow-400 dark:ring-yellow-400";
+
 /** Host open-in-Spotify: prefer track id, else search by title + artist. */
 function spotifyOpenForHostTrack(opts: {
   spotifyTrackId?: string | null;
@@ -680,11 +683,32 @@ export function QuizPlayPanels({
     autoEmptyStreak,
     settings.autoInterruptAfterEmptyRounds,
   );
+  const playControlsActive = isHost && !isFinished;
+  const presentationActive =
+    isHost && showLeaderboardPresentation && !presentationComplete;
+  const hostControlResetKey = presentationActive
+    ? "presentation"
+    : playControlsActive
+      ? "play"
+      : "done";
 
   return (
     <div className="space-y-8">
       {isHost && isLastfmLive ? (
-        <section className="space-y-4">
+        <CollapsibleCard
+          sectionId={`quiz-${quizId}-live-spotify`}
+          persist={false}
+          resetKey={hostControlResetKey}
+          defaultOpen={playControlsActive}
+          className={cn(playControlsActive && HOST_ACTIVE_CARD_CLASS)}
+          title="Live Spotify (Last.fm)"
+          description={
+            isFinished
+              ? "Playback controls are off after the quiz ended."
+              : undefined
+          }
+          contentClassName="space-y-4"
+        >
           <AutoLastfmHostControls
             quizId={quizId}
             joinCode={joinCode}
@@ -704,6 +728,7 @@ export function QuizPlayPanels({
             finishAction={finishAction}
             finishPending={finishPending}
             finishError={finishState?.error ?? null}
+            embedded
           />
           {isHost && atMemberLimit && !unlocked && !isFinished ? (
             <QuizPlanLimitPrompt
@@ -716,11 +741,24 @@ export function QuizPlayPanels({
               unlocked={unlocked}
             />
           ) : null}
-        </section>
+        </CollapsibleCard>
       ) : null}
 
       {isHost && isAutoSpotify ? (
-        <section className="space-y-4">
+        <CollapsibleCard
+          sectionId={`quiz-${quizId}-auto-spotify`}
+          persist={false}
+          resetKey={hostControlResetKey}
+          defaultOpen={playControlsActive}
+          className={cn(playControlsActive && HOST_ACTIVE_CARD_CLASS)}
+          title="Auto Spotify"
+          description={
+            isFinished
+              ? "Playback controls are off after the quiz ended."
+              : undefined
+          }
+          contentClassName="space-y-4"
+        >
           <AutoSpotifyHostControls
             quizId={quizId}
             joinCode={joinCode}
@@ -739,6 +777,7 @@ export function QuizPlayPanels({
             finishAction={finishAction}
             finishPending={finishPending}
             finishError={finishState?.error ?? null}
+            embedded
           />
           {isHost && atMemberLimit && !unlocked && !isFinished ? (
             <QuizPlanLimitPrompt
@@ -751,23 +790,32 @@ export function QuizPlayPanels({
               unlocked={unlocked}
             />
           ) : null}
-        </section>
+        </CollapsibleCard>
       ) : null}
 
       {isHost && !isLive ? (
-        <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
-          <div className="space-y-1">
-            <h2 className="text-lg font-semibold">Host controls</h2>
-            <p className="text-sm text-muted-foreground">
+        <CollapsibleCard
+          sectionId={`quiz-${quizId}-host-controls`}
+          persist={false}
+          resetKey={hostControlResetKey}
+          defaultOpen={playControlsActive}
+          className={cn(playControlsActive && HOST_ACTIVE_CARD_CLASS)}
+          title="Host controls"
+          description={
+            <>
               Playlist from create · {trackCount}
               {maxCuratedTracks != null ? ` / ${maxCuratedTracks}` : ""} track
               {trackCount === 1 ? "" : "s"}
               {trackCount > 0
                 ? ` · ${remainingCount} left to play`
                 : " — add songs before starting"}
-              {memberCount > 0 ? ` · ${memberCount} player${memberCount === 1 ? "" : "s"}` : ""}
-            </p>
-          </div>
+              {memberCount > 0
+                ? ` · ${memberCount} player${memberCount === 1 ? "" : "s"}`
+                : ""}
+            </>
+          }
+          contentClassName="space-y-4"
+        >
 
           {tracks.length > 0 ? (
             <ol className="max-h-48 list-decimal space-y-1 overflow-y-auto pl-5 text-sm">
@@ -985,7 +1033,7 @@ export function QuizPlayPanels({
               ) : null}
             </form>
           ) : null}
-        </section>
+        </CollapsibleCard>
       ) : null}
 
       {waitingForHost ? (
@@ -1024,13 +1072,7 @@ export function QuizPlayPanels({
       ) : null}
 
       {isFinished || showLeaderboardPresentation ? (
-        <div
-          id={showLeaderboardPresentation ? "leaderboard-presentation" : undefined}
-          className={cn(
-            "space-y-8",
-            showLeaderboardPresentation && "scroll-mt-20",
-          )}
-        >
+        <div className="space-y-8">
           {isFinished ? (
             <section className="space-y-2 rounded-2xl border border-border/60 bg-card p-6">
               <h2 className="text-lg font-semibold">Quiz finished</h2>
@@ -1045,13 +1087,20 @@ export function QuizPlayPanels({
           ) : null}
 
           {showLeaderboardPresentation ? (
-            <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
-              <div className="space-y-1">
-                <h2 className="text-lg font-semibold">Leaderboard presentation</h2>
-                {scoringLowWins(settings) ? (
-                  <p className="text-sm text-muted-foreground">Lowest score wins.</p>
-                ) : null}
-                <p className="text-sm text-muted-foreground">
+            <CollapsibleCard
+              id="leaderboard-presentation"
+              sectionId={`quiz-${quizId}-leaderboard-presentation`}
+              persist={!isHost}
+              resetKey={isHost ? hostControlResetKey : undefined}
+              defaultOpen={isHost ? presentationActive || isFinished : true}
+              className={cn(
+                isHost && presentationActive && HOST_ACTIVE_CARD_CLASS,
+                "scroll-mt-20",
+              )}
+              title="Leaderboard presentation"
+              description={
+                <>
+                  {scoringLowWins(settings) ? "Lowest score wins. " : null}
                   {presentationComplete ? (
                     <span className="font-medium text-destructive">complete</span>
                   ) : leaderboardRevealStep > 0 ? (
@@ -1059,7 +1108,7 @@ export function QuizPlayPanels({
                       revealing…
                     </span>
                   ) : (
-                    <span className="text-muted-foreground">waiting to start</span>
+                    <span>waiting to start</span>
                   )}
                   {settings.overallReveal === "last_to_first" &&
                   leaderboard.length > 0 ? (
@@ -1070,9 +1119,10 @@ export function QuizPlayPanels({
                       {leaderboard.length}
                     </span>
                   ) : null}
-                </p>
-              </div>
-
+                </>
+              }
+              contentClassName="space-y-4"
+            >
               {isHost && !presentationComplete ? (
                 <form
                   className="flex flex-wrap items-center gap-2"
@@ -1142,7 +1192,7 @@ export function QuizPlayPanels({
                   ))}
                 </ol>
               )}
-            </section>
+            </CollapsibleCard>
           ) : null}
         </div>
       ) : allTracksPlayed ? (

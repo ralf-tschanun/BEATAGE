@@ -65,6 +65,8 @@ type AutoLastfmHostControlsProps = {
   finishAction?: (formData: FormData) => void | Promise<void>;
   finishPending?: boolean;
   finishError?: string | null;
+  /** Skip outer card chrome when wrapped in CollapsibleCard. */
+  embedded?: boolean;
 };
 
 type NowPlayingTrack = {
@@ -116,6 +118,7 @@ export function AutoLastfmHostControls({
   finishAction,
   finishPending = false,
   finishError = null,
+  embedded = false,
 }: AutoLastfmHostControlsProps) {
   const router = useRouter();
   const [username, setUsername] = useState(initialUsername);
@@ -827,8 +830,16 @@ export function AutoLastfmHostControls({
 
   if (!username.trim()) {
     return (
-      <section className="space-y-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
-        <h2 className="text-lg font-semibold">Live Spotify (Last.fm)</h2>
+      <section
+        className={
+          embedded
+            ? "space-y-3"
+            : "space-y-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4"
+        }
+      >
+        {embedded ? null : (
+          <h2 className="text-lg font-semibold">Live Spotify (Last.fm)</h2>
+        )}
         <p className="text-sm text-muted-foreground">
           Enter the Last.fm username linked to the Spotify account that is playing
           music.
@@ -866,9 +877,17 @@ export function AutoLastfmHostControls({
   }
 
   return (
-    <section className="space-y-3 rounded-2xl border border-border/60 bg-card p-4">
+    <section
+      className={
+        embedded
+          ? "space-y-3"
+          : "space-y-3 rounded-2xl border border-border/60 bg-card p-4"
+      }
+    >
       <div>
-        <h2 className="text-lg font-semibold">Live Spotify (Last.fm)</h2>
+        {embedded ? null : (
+          <h2 className="text-lg font-semibold">Live Spotify (Last.fm)</h2>
+        )}
         <p className="text-sm text-muted-foreground">{status}</p>
         {!localQuizStarted ? (
           <p className="mt-1 text-sm text-muted-foreground">

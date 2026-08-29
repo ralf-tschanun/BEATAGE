@@ -1,13 +1,13 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import {
   deleteContestAction,
   leaveContestAction,
   type ContestActionState,
 } from "@/app/actions/contest";
-import { SignOutIcon, TrashIcon } from "@phosphor-icons/react";
+import { CircleNotchIcon, SignOutIcon, TrashIcon } from "@phosphor-icons/react";
 import {
   subscribeContestCandidates,
   subscribeContestMembers,
@@ -84,6 +84,31 @@ function phaseInputFromContest(contest: DashboardContest): ContestPhaseInput {
     nominationDeadline: contest.nomination_deadline ?? null,
     votingClosesAt: contest.voting_closes_at ?? null,
   };
+}
+
+function ContestRowLinkStatus({ hasUnread }: { hasUnread: boolean }) {
+  const { pending } = useLinkStatus();
+  return (
+    <>
+      {hasUnread && !pending ? (
+        <span
+          className="absolute right-0 top-0.5 size-1.5 rounded-full bg-red-500 ring-2 ring-background"
+          aria-hidden
+        />
+      ) : null}
+      <span
+        className={cn(
+          "absolute right-0 top-0.5 inline-flex size-4 items-center justify-center text-muted-foreground",
+          "opacity-0 transition-opacity duration-150",
+          pending && "opacity-100 delay-100",
+        )}
+        aria-hidden
+      >
+        <CircleNotchIcon className="size-4 animate-spin" />
+      </span>
+      {pending ? <span className="sr-only">Loading contest</span> : null}
+    </>
+  );
 }
 
 function ContestRow({
@@ -234,13 +259,8 @@ function ContestRow({
       aria-label={hasUnread ? `${contest.title}, has updates` : undefined}
     >
       <div className="relative flex flex-col gap-1.5">
-        {hasUnread ? (
-          <span
-            className="absolute right-0 top-0.5 size-1.5 rounded-full bg-red-500 ring-2 ring-background"
-            aria-hidden
-          />
-        ) : null}
-        <p className="truncate pr-3 font-medium leading-snug">{contest.title}</p>
+        <ContestRowLinkStatus hasUnread={hasUnread} />
+        <p className="truncate pr-6 font-medium leading-snug">{contest.title}</p>
         <p
           className="truncate text-xs leading-snug text-muted-foreground"
           title={[metaLine, unlocked ? "Unlocked" : null].filter(Boolean).join(" · ")}

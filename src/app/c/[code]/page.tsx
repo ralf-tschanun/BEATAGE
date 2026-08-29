@@ -10,6 +10,7 @@ import {
 import { ContestPageHeader } from "@/components/contest-page-header";
 import { ContestParticipantTabs } from "@/components/contest-participant-tabs";
 import { ContestRulesContent } from "@/components/contest-rules-content";
+import { DeleteContestButton } from "@/components/delete-contest-button";
 import { NominateTabPanel } from "@/components/nominate-tab-panel";
 import { SiteHeader } from "@/components/site-header";
 import {
@@ -2122,6 +2123,20 @@ export default async function ContestPage({ params, searchParams }: ContestPageP
 
       {contest.description ? (
         <p className="text-sm text-muted-foreground">{contest.description}</p>
+      ) : null}
+
+      {isHost ? (
+        <CollapsibleCard
+          sectionId="danger-zone"
+          title="Danger zone"
+          description="Deleting frees your plan slot so you can create another contest."
+          defaultOpen={false}
+        >
+          <DeleteContestButton
+            contestId={contest.id}
+            contestTitle={contest.title}
+          />
+        </CollapsibleCard>
       ) : null}
 
     </main>

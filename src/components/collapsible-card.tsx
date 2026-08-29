@@ -24,6 +24,11 @@ type CollapsibleCardProps = {
    * (for phase-active sections that should start expanded).
    */
   persist?: boolean;
+  /**
+   * When this value changes, session-only cards reset to defaultOpen.
+   * Host controls use this so a newly active panel collapses the previous one.
+   */
+  resetKey?: string | number | null;
   children: ReactNode;
   contentClassName?: string;
   className?: string;
@@ -36,6 +41,7 @@ export function CollapsibleCard({
   description,
   defaultOpen = true,
   persist = true,
+  resetKey,
   children,
   contentClassName,
   className,
@@ -49,7 +55,7 @@ export function CollapsibleCard({
 
   useEffect(() => {
     if (!persist) setSessionOpen(defaultOpen);
-  }, [persist, defaultOpen]);
+  }, [persist, defaultOpen, resetKey]);
 
   const open = persist ? storedOpen : sessionOpen;
   const setOpen = persist ? setStoredOpen : setSessionOpen;

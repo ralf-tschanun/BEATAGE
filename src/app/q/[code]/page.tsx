@@ -7,6 +7,9 @@ import { QuizRulesContent } from "@/components/quiz-rules-content";
 import { QuizLiveRefresh } from "@/components/quiz-live-refresh";
 import { PlayersList } from "@/components/players-list";
 import { QuizPendingUnlockBanner } from "@/components/quiz-pending-unlock-banner";
+import { CollapsibleCard } from "@/components/collapsible-card";
+import { DeleteQuizButton } from "@/components/delete-quiz-button";
+import { LeaveQuizButton } from "@/components/leave-quiz-button";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { BRAND_NAME } from "@/lib/brand";
@@ -294,6 +297,26 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
             lastSubmittedAt: lastSubmittedByUserId[member.user_id] ?? null,
           }))}
         />
+
+        {isHost ? (
+          <CollapsibleCard
+            sectionId="danger-zone"
+            title="Danger zone"
+            description="Deleting frees your plan slot so you can create another quiz."
+            defaultOpen={false}
+          >
+            <DeleteQuizButton quizId={quiz.id} quizTitle={quiz.title} />
+          </CollapsibleCard>
+        ) : (
+          <CollapsibleCard
+            sectionId="danger-zone"
+            title="Danger zone"
+            description="Leave this quiz. You can join again later with the invite link if seats are still available."
+            defaultOpen={false}
+          >
+            <LeaveQuizButton quizId={quiz.id} quizTitle={quiz.title} />
+          </CollapsibleCard>
+        )}
 
         <p className="text-sm text-muted-foreground">
           <Link href="/" className="underline-offset-2 hover:underline">
