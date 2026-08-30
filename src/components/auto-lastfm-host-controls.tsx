@@ -183,16 +183,6 @@ export function AutoLastfmHostControls({
   }, [autoInterrupted, disabled, joinCode, quizId, username]);
 
   useEffect(() => {
-    function onVisible() {
-      if (document.visibilityState !== "visible") return;
-      // Avoid force-closing a round the server cron opened while this tab was hidden.
-      lastKeyRef.current = null;
-    }
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, []);
-
-  useEffect(() => {
     emptyStreakRef.current = emptyStreakThreshold;
   }, [emptyStreakThreshold]);
 
@@ -562,13 +552,25 @@ export function AutoLastfmHostControls({
             return;
           }
           // Advancing past the skipped song — clear the lock.
+          const hadSkipLock = deferredKeyRef.current != null;
           deferredKeyRef.current = null;
-          void patchLastfmLiveRuntimeAction(quizId, joinCode, {
-            liveDeferredTrackKey: null,
-          });
+          if (hadSkipLock) {
+            void patchLastfmLiveRuntimeAction(quizId, joinCode, {
+              liveDeferredTrackKey: null,
+            });
+          }
           if (previous) {
             setStatus("Song changed — revealing previous round…");
-            await runSyncRef.current({ forceClose: true, openNewRound: false });
+            await runSyncRef.current({
+              forceClose: true,
+              openNewRound: false,
+              nowPlaying: {
+                playing: true,
+                title: track.title,
+                artist: track.artist,
+                albumArtUrl: track.albumArtUrl ?? null,
+              },
+            });
           }
           scheduleOpenRef.current(track);
           return;

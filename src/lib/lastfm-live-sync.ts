@@ -355,11 +355,6 @@ export async function syncLastfmLiveQuiz(opts: {
   }
 
   if (!openNewRound) {
-    if (track.trackKey) {
-      await patchQuizRuntimeSettings(admin, id, rawSettings, {
-        liveDeferredTrackKey: track.trackKey,
-      });
-    }
     revalidatePath(`/q/${code}`);
     return {
       ok: true,
