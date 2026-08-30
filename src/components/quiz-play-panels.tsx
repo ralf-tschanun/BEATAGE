@@ -1600,7 +1600,7 @@ export function QuizPlayPanels({
                     <button
                       type="button"
                       className={cn(
-                        "flex min-w-0 flex-1 items-center gap-2 text-left",
+                        "flex min-w-0 flex-1 items-start gap-2 text-left",
                         canExpand && "cursor-pointer",
                       )}
                       disabled={!canExpand}
@@ -1614,7 +1614,7 @@ export function QuizPlayPanels({
                     >
                       <p
                         className={cn(
-                          "min-w-0 flex-1 truncate",
+                          "min-w-0 flex-1 break-words leading-snug",
                           isExcluded && "text-muted-foreground line-through",
                         )}
                       >
