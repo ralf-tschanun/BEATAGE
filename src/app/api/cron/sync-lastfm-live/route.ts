@@ -7,8 +7,7 @@ import {
 } from "@/lib/lastfm-live-sync";
 
 export const dynamic = "force-dynamic";
-/** Inner poll loop needs a full minute; Vercel Pro default is 10s without this. */
-export const maxDuration = 60;
+// Hobby caps maxDuration at 10s. When enabling the Pro minutely cron, set this to 60.
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -16,7 +15,9 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Follow Last.fm Now Playing for armed live quizzes while the host tab is hidden.
- * Vercel invokes this every minute; we poll Last.fm every ~7s until ~52s elapsed.
+ * Not scheduled on Hobby (minutely crons fail the deploy). Re-add to vercel.json on Pro:
+ *   { "path": "/api/cron/sync-lastfm-live", "schedule": "* * * * *" }
+ * and set maxDuration = 60. Until then the host-panel poll still runs when the tab is visible.
  * Secure with CRON_SECRET (Authorization: Bearer … or ?secret=).
  */
 export async function GET(request: NextRequest) {
