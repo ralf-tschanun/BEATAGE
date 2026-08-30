@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   interruptAutoSpotifyQuizAction,
+  patchLastfmLiveRuntimeAction,
   resumeAutoSpotifyQuizAction,
   skipActiveRoundAction,
   startOfficialQuizAction,
@@ -65,6 +66,8 @@ type AutoLastfmHostControlsProps = {
   finishAction?: (formData: FormData) => void | Promise<void>;
   finishPending?: boolean;
   finishError?: string | null;
+  liveOpenMode?: OpenMode;
+  liveDeferredTrackKey?: string | null;
   /** Skip outer card chrome when wrapped in CollapsibleCard. */
   embedded?: boolean;
 };
@@ -118,6 +121,8 @@ export function AutoLastfmHostControls({
   finishAction,
   finishPending = false,
   finishError = null,
+  liveOpenMode: initialOpenMode = "automatic",
+  liveDeferredTrackKey: initialDeferredTrackKey = null,
   embedded = false,
 }: AutoLastfmHostControlsProps) {
   const router = useRouter();
@@ -128,7 +133,7 @@ export function AutoLastfmHostControls({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [planLimitError, setPlanLimitError] = useState<string | null>(null);
-  const [openMode, setOpenMode] = useState<OpenMode>("automatic");
+  const [openMode, setOpenMode] = useState<OpenMode>(initialOpenMode);
   const [listenSeconds, setListenSeconds] = useState(DEFAULT_LISTEN_SECONDS);
   const [listenSecondsDraft, setListenSecondsDraft] = useState(
     String(DEFAULT_LISTEN_SECONDS),
@@ -149,9 +154,9 @@ export function AutoLastfmHostControls({
   const [closeInFlight, setCloseInFlight] = useState(false);
 
   const pendingKeyRef = useRef<string | null>(null);
-  const lastKeyRef = useRef<string | null>(null);
+  const lastKeyRef = useRef<string | null>(initialDeferredTrackKey);
   /** After "Close this round": keep listening but do not reopen until the song changes. */
-  const deferredKeyRef = useRef<string | null>(null);
+  const deferredKeyRef = useRef<string | null>(initialDeferredTrackKey);
   const debounceTimerRef = useRef<number | null>(null);
   const wasPlayingRef = useRef(false);
   const syncInFlightRef = useRef(false);
@@ -171,6 +176,21 @@ export function AutoLastfmHostControls({
   useEffect(() => {
     autoInterruptedRef.current = autoInterrupted;
   }, [autoInterrupted]);
+
+  useEffect(() => {
+    if (disabled || autoInterrupted || !username.trim()) return;
+    void patchLastfmLiveRuntimeAction(quizId, joinCode, { liveSyncEnabled: true });
+  }, [autoInterrupted, disabled, joinCode, quizId, username]);
+
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState !== "visible") return;
+      // Avoid force-closing a round the server cron opened while this tab was hidden.
+      lastKeyRef.current = null;
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   useEffect(() => {
     emptyStreakRef.current = emptyStreakThreshold;
@@ -543,6 +563,9 @@ export function AutoLastfmHostControls({
           }
           // Advancing past the skipped song — clear the lock.
           deferredKeyRef.current = null;
+          void patchLastfmLiveRuntimeAction(quizId, joinCode, {
+            liveDeferredTrackKey: null,
+          });
           if (previous) {
             setStatus("Song changed — revealing previous round…");
             await runSyncRef.current({ forceClose: true, openNewRound: false });
@@ -587,6 +610,9 @@ export function AutoLastfmHostControls({
     if (!key) return null;
     deferredKeyRef.current = key;
     lastKeyRef.current = key;
+    void patchLastfmLiveRuntimeAction(quizId, joinCode, {
+      liveDeferredTrackKey: key,
+    });
     return key;
   }
 
@@ -615,6 +641,7 @@ export function AutoLastfmHostControls({
     if (mode === openMode) return;
     setOpenMode(mode);
     openModeRef.current = mode;
+    void patchLastfmLiveRuntimeAction(quizId, joinCode, { liveOpenMode: mode });
 
     const track = nowPlaying;
     const pendingKey = pendingKeyRef.current;

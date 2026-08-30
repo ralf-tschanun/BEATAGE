@@ -99,6 +99,21 @@ export type QuizSettingsRuntime = {
    * out of the official leaderboard. 0 = no pre-rounds were played.
    */
   preRoundCutoff?: number;
+  /**
+   * Last.fm live: server cron may follow Now Playing while the host tab is hidden.
+   * Host Pause / End / Finish, empty-streak interrupt, silence, and the 4h cap clear this.
+   */
+  liveSyncEnabled?: boolean;
+  /** ISO time when live sync was last armed (4h server-sync cap). */
+  liveSyncArmedAt?: string | null;
+  /** ISO time since Last.fm reported nothing playing (after we have seen playback). */
+  liveSyncNotPlayingSince?: string | null;
+  /** True after Last.fm reported a now-playing track at least once this arm. */
+  liveSyncHadPlayback?: boolean;
+  /** Skip-lock so Pause / Close / Skip does not reopen the same Last.fm track. */
+  liveDeferredTrackKey?: string | null;
+  /** Host listen mode. Cron auto-opens rounds only in automatic. */
+  liveOpenMode?: "automatic" | "manual";
 };
 
 /** Label for a round in host / participant UI. */

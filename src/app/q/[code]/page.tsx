@@ -271,6 +271,10 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
           autoEmptyStreak={playState?.autoEmptyStreak ?? 0}
           quizStarted={playState?.quizStarted !== false}
           leaderboardRevealStep={playState?.leaderboardRevealStep ?? 0}
+          liveOpenMode={
+            playState?.liveOpenMode === "manual" ? "manual" : "automatic"
+          }
+          liveDeferredTrackKey={playState?.liveDeferredTrackKey ?? null}
           isAnonymous={Boolean(identity?.isAnonymous)}
           currentUserId={user.id}
           hostUserId={

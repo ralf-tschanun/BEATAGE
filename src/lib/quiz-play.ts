@@ -606,13 +606,11 @@ export async function finishQuizForHost(
     const runtime = readQuizSettingsRuntime(
       (quizSettingsRow as { settings?: unknown } | null)?.settings,
     );
-    // Reset presentation progress so finish always starts from the top.
-    const nextSettings = presentsLeaderboardAtEnd(settings)
-      ? mergeQuizSettingsForStorage(settings, {
-          ...runtime,
-          leaderboardRevealStep: 0,
-        })
-      : undefined;
+    const nextSettings = mergeQuizSettingsForStorage(settings, {
+      ...runtime,
+      liveSyncEnabled: false,
+      ...(presentsLeaderboardAtEnd(settings) ? { leaderboardRevealStep: 0 } : {}),
+    });
 
     const { error: updateError } = await admin
       .from("beatage_quizzes")

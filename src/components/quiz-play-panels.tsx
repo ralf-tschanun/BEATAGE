@@ -241,6 +241,8 @@ type QuizPlayPanelsProps = {
   quizStarted?: boolean;
   /** Host-controlled end presentation progress (0 = not started). */
   leaderboardRevealStep?: number;
+  liveOpenMode?: "automatic" | "manual";
+  liveDeferredTrackKey?: string | null;
   /** Guest sessions need an email account before Polar unlock checkout. */
   isAnonymous?: boolean;
   currentUserId?: string | null;
@@ -275,6 +277,8 @@ export function QuizPlayPanels({
   autoEmptyStreak: autoEmptyStreakProp = 0,
   quizStarted: quizStartedProp = true,
   leaderboardRevealStep: leaderboardRevealStepProp = 0,
+  liveOpenMode: liveOpenModeProp = "automatic",
+  liveDeferredTrackKey: liveDeferredTrackKeyProp = null,
   isAnonymous = false,
   currentUserId = null,
   hostUserId = null,
@@ -730,6 +734,8 @@ export function QuizPlayPanels({
             finishAction={finishAction}
             finishPending={finishPending}
             finishError={finishState?.error ?? null}
+            liveOpenMode={liveOpenModeProp}
+            liveDeferredTrackKey={liveDeferredTrackKeyProp}
             embedded
           />
           {isHost && atMemberLimit && !unlocked && !isFinished ? (

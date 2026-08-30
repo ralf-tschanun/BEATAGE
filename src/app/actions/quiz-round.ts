@@ -18,10 +18,20 @@ import {
   readQuizSettingsRuntime,
   resolveQuizSettings,
 } from "@/lib/quiz-scoring";
-import { isPreRoundNumber } from "@/lib/quiz-settings";
+import {
+  applyEmptyRoundStreak,
+  clearAutoInterrupt,
+  forceAutoInterrupted,
+  persistLastfmDeferredTrackKey,
+  patchQuizRuntimeSettings,
+} from "@/lib/quiz-live-runtime";
+import {
+  armLastfmLiveSync,
+  syncLastfmLiveQuiz,
+  type LastfmNowPlayingHint,
+} from "@/lib/lastfm-live-sync";
 import { ensureAnonymousSession } from "@/lib/supabase/auth";
 import { getQuizPlayState } from "@/lib/quizzes/play-state";
-import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type QuizRoundActionState = {
   error?: string;
@@ -84,98 +94,6 @@ function mapError(message: string): string {
 
 function okResult(): QuizRoundActionState {
   return { ok: true, syncId: crypto.randomUUID() };
-}
-
-/** After closing a round: update empty-guess streak; may set autoInterrupted. */
-async function applyEmptyRoundStreak(
-  admin: SupabaseClient,
-  quizId: string,
-  closedRoundId: string,
-  rawSettings: unknown,
-): Promise<{ interrupted: boolean; emptyStreak: number }> {
-  const settings = resolveQuizSettings(rawSettings);
-  const runtime = readQuizSettingsRuntime(rawSettings);
-
-  // Pre-rounds are practice — do not count toward the empty-streak interrupt.
-  const { data: closedRound } = await admin
-    .from("beatage_rounds")
-    .select("round_number")
-    .eq("id", closedRoundId)
-    .maybeSingle();
-  const closedRoundNumber =
-    typeof (closedRound as { round_number?: number } | null)?.round_number ===
-    "number"
-      ? (closedRound as { round_number: number }).round_number
-      : 0;
-  if (isPreRoundNumber(closedRoundNumber, runtime)) {
-    return {
-      interrupted: Boolean(runtime.autoInterrupted),
-      emptyStreak: runtime.autoEmptyStreak ?? 0,
-    };
-  }
-
-  const { count } = await admin
-    .from("beatage_guesses")
-    .select("id", { count: "exact", head: true })
-    .eq("round_id", closedRoundId)
-    .not("guessed_year", "is", null);
-
-  const guessCount = count ?? 0;
-  const emptyStreak =
-    guessCount === 0 ? (runtime.autoEmptyStreak ?? 0) + 1 : 0;
-  const threshold = settings.autoInterruptAfterEmptyRounds;
-  const interrupted =
-    Boolean(runtime.autoInterrupted) || emptyStreak >= threshold;
-
-  await admin
-    .from("beatage_quizzes")
-    .update({
-      settings: mergeQuizSettingsForStorage(settings, {
-        ...runtime,
-        autoEmptyStreak: emptyStreak,
-        autoInterrupted: interrupted,
-      }),
-    })
-    .eq("id", quizId);
-
-  return { interrupted, emptyStreak };
-}
-
-async function clearAutoInterrupt(
-  admin: SupabaseClient,
-  quizId: string,
-  rawSettings: unknown,
-) {
-  const settings = resolveQuizSettings(rawSettings);
-  const runtime = readQuizSettingsRuntime(rawSettings);
-  await admin
-    .from("beatage_quizzes")
-    .update({
-      settings: mergeQuizSettingsForStorage(settings, {
-        ...runtime,
-        autoEmptyStreak: 0,
-        autoInterrupted: false,
-      }),
-    })
-    .eq("id", quizId);
-}
-
-async function forceAutoInterrupted(
-  admin: SupabaseClient,
-  quizId: string,
-  rawSettings: unknown,
-) {
-  const settings = resolveQuizSettings(rawSettings);
-  const runtime = readQuizSettingsRuntime(rawSettings);
-  await admin
-    .from("beatage_quizzes")
-    .update({
-      settings: mergeQuizSettingsForStorage(settings, {
-        ...runtime,
-        autoInterrupted: true,
-      }),
-    })
-    .eq("id", quizId);
 }
 
 /** Client live-sync snapshot (same admin-backed loader as the quiz page). */
@@ -417,7 +335,7 @@ export async function skipActiveRoundAction(
 
   const { data: quizRow } = await admin
     .from("beatage_quizzes")
-    .select("host_user_id")
+    .select("host_user_id, settings, source")
     .eq("id", id)
     .maybeSingle();
   if (!quizRow || quizRow.host_user_id !== user.id) {
@@ -426,13 +344,23 @@ export async function skipActiveRoundAction(
 
   const { data: active } = await admin
     .from("beatage_rounds")
-    .select("id")
+    .select("id, track_name, artist_name")
     .eq("quiz_id", id)
     .eq("status", "active")
     .maybeSingle();
 
   if (!active?.id) {
     return { error: "This round is not open for guesses." };
+  }
+
+  if (quizRow.source === "lastfm_live") {
+    await persistLastfmDeferredTrackKey(
+      admin,
+      id,
+      quizRow.settings,
+      active.track_name,
+      active.artist_name,
+    );
   }
 
   const skipped = await skipRoundForHost(active.id, user.id);
@@ -510,11 +438,6 @@ export type AutoSpotifySyncState = {
   emptyStreak?: number;
 };
 
-/** Host-polled now-playing — avoids a second Last.fm fetch in the sync action. */
-export type LastfmNowPlayingHint =
-  | { playing: false }
-  | { playing: true; title: string; artist: string; albumArtUrl?: string | null };
-
 /** Host-polled now-playing — avoids a second Spotify fetch in the sync action. */
 export type SpotifyNowPlayingHint =
   | { playing: false }
@@ -527,29 +450,6 @@ export type SpotifyNowPlayingHint =
       releaseYear?: number | null;
       isPlaying?: boolean;
     };
-
-function parseLastfmNowPlayingHint(
-  hint: LastfmNowPlayingHint | undefined,
-):
-  | { playing: false }
-  | {
-      playing: true;
-      title: string;
-      artist: string;
-      albumArtUrl: string | null;
-    }
-  | null {
-  if (!hint) return null;
-  if (hint.playing === false) return { playing: false };
-  const title = hint.title.trim().slice(0, 200);
-  const artist = hint.artist.trim().slice(0, 200);
-  if (!title || !artist) return null;
-  const albumArtUrl =
-    typeof hint.albumArtUrl === "string" && hint.albumArtUrl.trim()
-      ? hint.albumArtUrl.trim().slice(0, 500)
-      : null;
-  return { playing: true, title, artist, albumArtUrl };
-}
 
 function parseSpotifyNowPlayingHint(
   hint: SpotifyNowPlayingHint | undefined,
@@ -855,7 +755,7 @@ export async function interruptAutoSpotifyQuizAction(
 
   const { data: quizRow } = await admin
     .from("beatage_quizzes")
-    .select("host_user_id, status, settings")
+    .select("host_user_id, status, settings, source")
     .eq("id", id)
     .maybeSingle();
   if (!quizRow || quizRow.host_user_id !== user.id) {
@@ -870,12 +770,27 @@ export async function interruptAutoSpotifyQuizAction(
 
   const { data: active } = await admin
     .from("beatage_rounds")
-    .select("id")
+    .select("id, track_name, artist_name")
     .eq("quiz_id", id)
     .eq("status", "active")
     .maybeSingle();
 
   if (active?.id) {
+    if (quizRow.source === "lastfm_live") {
+      await persistLastfmDeferredTrackKey(
+        admin,
+        id,
+        rawSettings,
+        active.track_name,
+        active.artist_name,
+      );
+      const { data: afterDefer } = await admin
+        .from("beatage_quizzes")
+        .select("settings")
+        .eq("id", id)
+        .maybeSingle();
+      rawSettings = afterDefer?.settings ?? rawSettings;
+    }
     const closed = await closeRoundForHost(active.id, user.id);
     if (closed.error) return { error: mapError(closed.error) };
     closedRound = true;
@@ -907,7 +822,7 @@ export async function resumeAutoSpotifyQuizAction(
   const admin = createAdminClient();
   const { data: quizRow } = await admin
     .from("beatage_quizzes")
-    .select("host_user_id, settings")
+    .select("host_user_id, settings, source")
     .eq("id", id)
     .maybeSingle();
   if (!quizRow || quizRow.host_user_id !== user.id) {
@@ -915,6 +830,16 @@ export async function resumeAutoSpotifyQuizAction(
   }
 
   await clearAutoInterrupt(admin, id, quizRow.settings);
+  if (quizRow.source === "lastfm_live") {
+    const { data: refreshed } = await admin
+      .from("beatage_quizzes")
+      .select("settings")
+      .eq("id", id)
+      .maybeSingle();
+    await armLastfmLiveSync(admin, id, refreshed?.settings ?? quizRow.settings, {
+      resetTimer: true,
+    });
+  }
   revalidatePath(`/q/${code}`);
   return { ok: true, interrupted: false, emptyStreak: 0 };
 }
@@ -957,232 +882,74 @@ export async function syncLastfmLiveRoundAction(
   const code = joinCode.trim().toUpperCase();
   if (!id) return { error: "Missing quiz id." };
 
-  const openNewRound = opts?.openNewRound !== false;
+  const { user } = await ensureAnonymousSession();
+  return syncLastfmLiveQuiz({
+    quizId: id,
+    joinCode: code,
+    hostUserId: user.id,
+    source: "host",
+    forceClose: opts?.forceClose,
+    openNewRound: opts?.openNewRound,
+    nowPlaying: opts?.nowPlaying,
+  });
+}
+
+/** Persist Last.fm live cron flags (arm, skip-lock, listen mode). */
+export async function patchLastfmLiveRuntimeAction(
+  quizId: string,
+  joinCode: string,
+  patch: {
+    liveSyncEnabled?: boolean;
+    liveDeferredTrackKey?: string | null;
+    liveOpenMode?: "automatic" | "manual";
+  },
+): Promise<AutoSpotifySyncState> {
+  const id = quizId.trim();
+  const code = joinCode.trim().toUpperCase();
+  if (!id) return { error: "Missing quiz id." };
 
   const { user } = await ensureAnonymousSession();
   const { createAdminClient } = await import("@/lib/supabase/admin");
   const admin = createAdminClient();
-
   const { data: quizRow } = await admin
     .from("beatage_quizzes")
-    .select("host_user_id, status, settings, source")
+    .select("host_user_id, settings, source, status")
     .eq("id", id)
     .maybeSingle();
   if (!quizRow || quizRow.host_user_id !== user.id) {
     return { error: mapError("NOT_HOST") };
   }
-  if (quizRow.status === "finished" || quizRow.status === "expired") {
-    return { error: mapError("QUIZ_FINISHED") };
-  }
   if (quizRow.source !== "lastfm_live") {
     return { error: "This quiz is not in Last.fm live mode." };
   }
-
-  let rawSettings = (quizRow as { settings?: unknown }).settings;
-  const runtime = readQuizSettingsRuntime(rawSettings);
-  const settings = resolveQuizSettings(rawSettings);
-  if (runtime.autoInterrupted && openNewRound) {
-    return {
-      ok: true,
-      interrupted: true,
-      emptyStreak: runtime.autoEmptyStreak ?? 0,
-      startedRound: false,
-      closedRound: false,
-    };
+  if (quizRow.status === "finished" || quizRow.status === "expired") {
+    return { error: mapError("QUIZ_FINISHED") };
   }
 
-  const { getLastfmCurrentlyPlaying, lastfmTrackKey } = await import("@/lib/lastfm");
-  const hinted = parseLastfmNowPlayingHint(opts?.nowPlaying);
-  // Close-only: no Last.fm round-trip — host already decided from the poll.
-  if (opts?.forceClose && !openNewRound && hinted?.playing !== true) {
-    const { data: active } = await admin
-      .from("beatage_rounds")
-      .select("id")
-      .eq("quiz_id", id)
-      .eq("status", "active")
-      .maybeSingle();
-    if (active?.id) {
-      const closed = await closeRoundForHost(active.id, user.id);
-      if (closed.error) return { error: mapError(closed.error) };
-      const streak = await applyEmptyRoundStreak(
-        admin,
-        id,
-        active.id,
-        rawSettings,
-      );
-      revalidatePath(`/q/${code}`);
-      return {
-        ok: true,
-        closedRound: true,
-        nothingPlaying: hinted?.playing === false,
-        interrupted: streak.interrupted,
-        emptyStreak: streak.emptyStreak,
-      };
-    }
-    return { ok: true, nothingPlaying: true };
+  if (patch.liveSyncEnabled) {
+    await armLastfmLiveSync(admin, id, quizRow.settings);
   }
-
-  let nowPlaying: Awaited<ReturnType<typeof getLastfmCurrentlyPlaying>>;
-  if (hinted) {
-    nowPlaying = hinted.playing
-      ? {
-          ok: true,
-          playing: true,
-          track: {
-            trackKey: lastfmTrackKey(hinted.title, hinted.artist),
-            title: hinted.title,
-            artist: hinted.artist,
-            albumArtUrl: hinted.albumArtUrl,
-            isPlaying: true,
-          },
-        }
-      : { ok: true, playing: false };
-  } else {
-    nowPlaying = await getLastfmCurrentlyPlaying(settings.lastfmUsername);
-  }
-  if (!nowPlaying.ok) {
-    return { error: nowPlaying.message, code: nowPlaying.code };
-  }
-  if (!nowPlaying.playing) {
-    if (opts?.forceClose) {
-      const { data: active } = await admin
-        .from("beatage_rounds")
-        .select("id")
-        .eq("quiz_id", id)
-        .eq("status", "active")
-        .maybeSingle();
-      if (active?.id) {
-        const closed = await closeRoundForHost(active.id, user.id);
-        if (closed.error) return { error: mapError(closed.error) };
-        const streak = await applyEmptyRoundStreak(
-          admin,
-          id,
-          active.id,
-          rawSettings,
-        );
-        const { data: refreshed } = await admin
-          .from("beatage_quizzes")
-          .select("settings")
-          .eq("id", id)
-          .maybeSingle();
-        rawSettings = refreshed?.settings ?? rawSettings;
-        revalidatePath(`/q/${code}`);
-        return {
-          ok: true,
-          closedRound: true,
-          nothingPlaying: true,
-          interrupted: streak.interrupted,
-          emptyStreak: streak.emptyStreak,
-        };
-      }
-    }
-    return { ok: true, nothingPlaying: true };
-  }
-
-  const track = nowPlaying.track;
-
-  const { data: active } = await admin
-    .from("beatage_rounds")
-    .select("id, track_name, artist_name")
-    .eq("quiz_id", id)
-    .eq("status", "active")
+  const { data: afterArm } = await admin
+    .from("beatage_quizzes")
+    .select("settings")
+    .eq("id", id)
     .maybeSingle();
-
-  let closedRound = false;
-  let interrupted = Boolean(runtime.autoInterrupted);
-  let emptyStreak = runtime.autoEmptyStreak ?? 0;
-  if (active?.id) {
-    const activeKey = lastfmTrackKey(
-      String(active.track_name ?? ""),
-      String(active.artist_name ?? ""),
-    );
-    const sameTrack = activeKey === track.trackKey;
-    if (!sameTrack || opts?.forceClose) {
-      const closed = await closeRoundForHost(active.id, user.id);
-      if (closed.error) return { error: mapError(closed.error) };
-      closedRound = true;
-      const streak = await applyEmptyRoundStreak(
-        admin,
-        id,
-        active.id,
-        rawSettings,
-      );
-      interrupted = streak.interrupted;
-      emptyStreak = streak.emptyStreak;
-      const { data: refreshed } = await admin
-        .from("beatage_quizzes")
-        .select("settings")
-        .eq("id", id)
-        .maybeSingle();
-      rawSettings = refreshed?.settings ?? rawSettings;
-    } else {
-      return {
-        ok: true,
-        trackTitle: track.title,
-        trackArtist: track.artist,
-        startedRound: false,
-        closedRound: false,
-      };
-    }
+  const raw = afterArm?.settings ?? quizRow.settings;
+  const runtimePatch: {
+    liveDeferredTrackKey?: string | null;
+    liveOpenMode?: "automatic" | "manual";
+  } = {};
+  if (patch.liveDeferredTrackKey !== undefined) {
+    runtimePatch.liveDeferredTrackKey = patch.liveDeferredTrackKey;
   }
-
-  if (!openNewRound) {
+  if (patch.liveOpenMode) {
+    runtimePatch.liveOpenMode = patch.liveOpenMode;
+  }
+  if (Object.keys(runtimePatch).length > 0) {
+    await patchQuizRuntimeSettings(admin, id, raw, runtimePatch);
     revalidatePath(`/q/${code}`);
-    return {
-      ok: true,
-      trackTitle: track.title,
-      trackArtist: track.artist,
-      closedRound,
-      startedRound: false,
-      interrupted,
-      emptyStreak,
-    };
   }
-
-  if (interrupted) {
-    revalidatePath(`/q/${code}`);
-    return {
-      ok: true,
-      trackTitle: track.title,
-      trackArtist: track.artist,
-      closedRound,
-      startedRound: false,
-      interrupted: true,
-      emptyStreak,
-    };
-  }
-
-  const { createClient } = await import("@/lib/supabase/server");
-  const supabase = await createClient();
-  const addResult = await addCuratedTrackToQuiz(supabase, id, {
-    title: track.title,
-    artist: track.artist,
-    albumArtUrl: track.albumArtUrl ?? undefined,
-  });
-  if (addResult.error) {
-    return { error: mapError(addResult.error) };
-  }
-  const curatedTrackId = addResult.trackId;
-  if (!curatedTrackId) {
-    return { error: "Could not save the track to this quiz." };
-  }
-
-  const started = await startRoundForHost(id, user.id, curatedTrackId);
-  if (started.error) {
-    return { error: mapError(started.error) };
-  }
-
-  revalidatePath(`/q/${code}`);
-  return {
-    ok: true,
-    trackId: curatedTrackId,
-    trackTitle: track.title,
-    trackArtist: track.artist,
-    closedRound,
-    startedRound: true,
-    interrupted: false,
-    emptyStreak,
-  };
+  return { ok: true };
 }
 
 /** Host updates the Last.fm username stored on a lastfm_live quiz. */

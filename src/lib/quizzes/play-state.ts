@@ -153,6 +153,8 @@ function emptyPlayState(joinCode: string) {
     autoEmptyStreak: 0,
     quizStarted: true,
     leaderboardRevealStep: 0,
+    liveOpenMode: "automatic" as const,
+    liveDeferredTrackKey: null as string | null,
   };
 }
 
@@ -647,5 +649,7 @@ export async function getQuizPlayState(
     autoEmptyStreak: runtime.autoEmptyStreak ?? 0,
     quizStarted: runtime.quizStarted !== false,
     leaderboardRevealStep: runtime.leaderboardRevealStep ?? 0,
+    liveOpenMode: runtime.liveOpenMode === "manual" ? "manual" : "automatic",
+    liveDeferredTrackKey: runtime.liveDeferredTrackKey ?? null,
   };
 }

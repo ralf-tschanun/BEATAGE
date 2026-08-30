@@ -1,20 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isCronAuthorized } from "@/lib/cron-auth";
 
 /**
  * Scheduled / manual cleanup: delete quizzes past expires_at.
  * Secure with CRON_SECRET (Authorization: Bearer … or ?secret=).
  */
 export async function GET(request: NextRequest) {
-  const expected = process.env.CRON_SECRET?.trim();
-  const auth = request.headers.get("authorization")?.trim() ?? "";
-  const bearer = auth.toLowerCase().startsWith("bearer ")
-    ? auth.slice(7).trim()
-    : "";
-  const querySecret = request.nextUrl.searchParams.get("secret")?.trim() ?? "";
-  const provided = bearer || querySecret;
-
-  if (!expected || provided !== expected) {
+  if (!isCronAuthorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

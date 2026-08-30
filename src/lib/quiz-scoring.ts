@@ -222,7 +222,25 @@ export function readQuizSettingsRuntime(raw: unknown): QuizSettingsRuntime {
       typeof row.preRoundCutoff === "number" && Number.isFinite(row.preRoundCutoff)
         ? Math.max(0, Math.round(row.preRoundCutoff))
         : 0,
+    liveSyncEnabled: Boolean(row.liveSyncEnabled),
+    liveSyncArmedAt: parseRuntimeIso(row.liveSyncArmedAt),
+    liveSyncNotPlayingSince: parseRuntimeIso(row.liveSyncNotPlayingSince),
+    liveSyncHadPlayback: Boolean(row.liveSyncHadPlayback),
+    liveDeferredTrackKey:
+      typeof row.liveDeferredTrackKey === "string" &&
+      row.liveDeferredTrackKey.trim()
+        ? row.liveDeferredTrackKey.trim()
+        : null,
+    liveOpenMode: row.liveOpenMode === "manual" ? "manual" : "automatic",
   };
+}
+
+function parseRuntimeIso(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const ms = Date.parse(trimmed);
+  return Number.isFinite(ms) ? trimmed : null;
 }
 
 /** Merge play settings + runtime flags for persistence on beatage_quizzes.settings. */
@@ -242,6 +260,12 @@ export function mergeQuizSettingsForStorage(
       Number.isFinite(runtime.preRoundCutoff)
         ? Math.max(0, Math.round(runtime.preRoundCutoff))
         : 0,
+    liveSyncEnabled: Boolean(runtime.liveSyncEnabled),
+    liveSyncArmedAt: runtime.liveSyncArmedAt ?? null,
+    liveSyncNotPlayingSince: runtime.liveSyncNotPlayingSince ?? null,
+    liveSyncHadPlayback: Boolean(runtime.liveSyncHadPlayback),
+    liveDeferredTrackKey: runtime.liveDeferredTrackKey ?? null,
+    liveOpenMode: runtime.liveOpenMode === "manual" ? "manual" : "automatic",
   };
 }
 
