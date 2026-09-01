@@ -46,13 +46,13 @@ function mapPlayError(message: string): string {
     const raw = message.split(":")[1];
     const n = Number(raw);
     const cap = Number.isFinite(n) && n > 0 ? n : 10;
-    return `This plan allows ${cap} songs. Upgrade or finish this quiz to continue.`;
+    return `TRACK_LIMIT:${cap}`;
   }
   if (message.includes("ROUND_LIMIT")) {
     const raw = message.split(":")[1];
     const n = Number(raw);
     const cap = Number.isFinite(n) && n > 0 ? n : 10;
-    return `This plan allows ${cap} rounds. Upgrade or finish this quiz to continue.`;
+    return `ROUND_LIMIT:${cap}`;
   }
   return message;
 }

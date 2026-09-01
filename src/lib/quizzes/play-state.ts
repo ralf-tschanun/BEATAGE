@@ -10,6 +10,7 @@ import {
   DEFAULT_QUIZ_SETTINGS,
   formatRoundLabel,
   isPreRoundNumber,
+  roundConsumesPlanCap,
   scoringLowWins,
 } from "@/lib/quiz-settings";
 import {
@@ -85,9 +86,9 @@ export type PastRoundRow = RoundRow & {
   guesses: GuessRow[];
 };
 
-/** Slim round columns — preview/art only fetched for the latest revealed round. */
+/** Slim round columns — album art stays off the list payload. */
 const ROUND_CORE_COLUMNS =
-  "id, round_number, status, track_name, artist_name, correct_release_year, original_release_year, spotify_track_id, chart_was_number_one";
+  "id, round_number, status, track_name, artist_name, correct_release_year, original_release_year, spotify_track_id, chart_was_number_one, preview_url";
 
 function assignDisplayRoundNumbers(
   rounds: Array<{ round_number: number; status: string }>,
@@ -255,7 +256,7 @@ export async function getQuizPlayState(
   );
   const hideCorrectForViewer = !settings.showCorrectAnswer && !isHostMember;
 
-  const currentRoundNumber =
+  const storedRoundNumber =
     (quizMeta as { current_round_number?: number } | null)?.current_round_number ?? 0;
   const quizStatus =
     typeof (quizMeta as { status?: string } | null)?.status === "string"
@@ -325,6 +326,7 @@ export async function getQuizPlayState(
     original_release_year: number | null;
     spotify_track_id: string | null;
     chart_was_number_one: boolean | null;
+    preview_url: string | null;
   };
 
   const toRoundRow = (
@@ -353,7 +355,10 @@ export async function getQuizPlayState(
     correct_release_year: opts.hideYears ? null : round.correct_release_year,
     original_release_year: opts.hideYears ? null : round.original_release_year,
     album_art_url: opts.albumArtUrl ?? null,
-    preview_url: opts.previewUrl ?? null,
+    preview_url:
+      opts.previewUrl !== undefined
+        ? opts.previewUrl
+        : (round.preview_url ?? null),
     spotify_track_id: round.spotify_track_id,
     chart_was_number_one: opts.hideYears
       ? null
@@ -367,6 +372,12 @@ export async function getQuizPlayState(
     ((allRoundMetaRaw ?? []) as Array<{ round_number: number; status: string }>),
     runtime,
   );
+  // Live host UI uses official rounds for the plan cap. quiz.current_round_number
+  // can be inflated by older pre-round increments and skipped warmup songs.
+  const officialRoundCount = (
+    (allRoundMetaRaw ?? []) as Array<{ round_number: number; status: string }>
+  ).filter((round) => roundConsumesPlanCap(round, runtime)).length;
+  const currentRoundNumber = isLive ? officialRoundCount : storedRoundNumber;
   const displayMetaByRoundNumber = new Map(
     allRoundMeta.map((r) => [
       r.round_number,
@@ -396,31 +407,20 @@ export async function getQuizPlayState(
   };
 
   const activeRoundPublic: RoundRow | null = activeRound
-    ? toRoundRow(withDisplay(activeRound as RoundCore), { hideYears: true })
+    ? toRoundRow(withDisplay(activeRound as RoundCore), {
+        hideYears: true,
+        // Do not expose preview audio while the round is still live.
+        previewUrl: null,
+      })
     : null;
 
   const revealedList = historyListRaw.map(withDisplay);
   const scoringRounds = revealedList.filter((r) => r.status === "revealed");
   const latestScoringRound = scoringRounds[0] ?? null;
-  // Preview audio only for the latest scored round (results card).
-  let latestPreviewUrl: string | null = null;
-  if (latestScoringRound) {
-    const { data: media } = await admin
-      .from("beatage_rounds")
-      .select("preview_url")
-      .eq("id", latestScoringRound.id)
-      .maybeSingle();
-    latestPreviewUrl =
-      typeof (media as { preview_url?: string | null } | null)?.preview_url ===
-      "string"
-        ? (media as { preview_url: string }).preview_url
-        : null;
-  }
 
   const resultRoundPublic: RoundRow | null = latestScoringRound
     ? toRoundRow(latestScoringRound, {
         hideYears: hideCorrectForViewer,
-        previewUrl: latestPreviewUrl,
       })
     : null;
 
@@ -590,11 +590,6 @@ export async function getQuizPlayState(
     const isExcluded = round.status === "excluded";
     const base = toRoundRow(round, {
       hideYears: hideYears || isSkipped,
-      // Media only on the latest scored round (also exposed as resultRound).
-      previewUrl:
-        latestScoringRound && round.id === latestScoringRound.id
-          ? latestPreviewUrl
-          : null,
     });
     return {
       ...base,

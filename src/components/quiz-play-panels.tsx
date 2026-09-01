@@ -24,6 +24,7 @@ import {
 import { AutoLastfmHostControls } from "@/components/auto-lastfm-host-controls";
 import { AutoSpotifyHostControls } from "@/components/auto-spotify-host-controls";
 import { CollapsibleCard, ACTIVE_PANEL_CARD_CLASS } from "@/components/collapsible-card";
+import { FadeMount } from "@/components/fade-mount";
 import { SongPickFields } from "@/components/song-pick-fields";
 import { SongPreviewPlayer } from "@/components/song-preview-player";
 import { SpotifyTrackLink } from "@/components/spotify-track-link";
@@ -73,7 +74,7 @@ import { useWizardInputFocus } from "@/lib/wizard-input-focus";
 const initial: QuizRoundActionState = null;
 
 /** How long the correct-answer card stays up after a round is revealed (incl. overlap with the next guess). */
-const RESULT_HOLD_MS = 10_000;
+const RESULT_HOLD_MS = 20_000;
 
 /** Host open-in-Spotify: prefer track id, else search by title + artist. */
 function spotifyOpenForHostTrack(opts: {
@@ -443,32 +444,46 @@ export function QuizPlayPanels({
   /**
    * Keep the last revealed round on screen for RESULT_HOLD_MS so players can
    * read the answer — including briefly in parallel with the next live round.
+   * After the hold (or when the quiz is already finished on load) it moves
+   * into Previous rounds so the host can still exclude it.
    */
+  const initiallyFinished =
+    quizStatusProp === "finished" || quizStatusProp === "expired";
   const [pinnedResult, setPinnedResult] = useState<{
     round: RoundRow;
     guesses: GuessRow[];
   } | null>(
-    resultRoundProp && !activeRoundProp
+    resultRoundProp && !activeRoundProp && !initiallyFinished
       ? { round: resultRoundProp, guesses: roundGuessesProp }
       : null,
   );
   const pinStartedAtRef = useRef<number | null>(
-    resultRoundProp && !activeRoundProp ? Date.now() : null,
+    resultRoundProp && !activeRoundProp && !initiallyFinished
+      ? Date.now()
+      : null,
   );
 
-  // Pin latest between-round results; hold through the start of the next round.
+  // Pin latest between-round results. A finished quiz keeps the last round
+  // in Previous rounds instead of holding the results card forever.
   useEffect(() => {
-    if (!resultRound || activeRound) return;
+    if (!resultRound || activeRound || isFinished) return;
     setPinnedResult((prev) => {
       if (prev?.round.id !== resultRound.id) {
         pinStartedAtRef.current = Date.now();
       }
       return { round: resultRound, guesses: roundGuesses };
     });
-  }, [resultRound?.id, activeRound?.id, resultRound, activeRound, roundGuesses]);
+  }, [
+    resultRound?.id,
+    activeRound?.id,
+    resultRound,
+    activeRound,
+    roundGuesses,
+    isFinished,
+  ]);
 
   useEffect(() => {
-    if (!activeRound || !pinnedResult) return;
+    if (!pinnedResult) return;
     const started = pinStartedAtRef.current ?? Date.now();
     const remaining = Math.max(0, RESULT_HOLD_MS - (Date.now() - started));
     const timer = window.setTimeout(() => {
@@ -476,7 +491,7 @@ export function QuizPlayPanels({
       pinStartedAtRef.current = null;
     }, remaining);
     return () => window.clearTimeout(timer);
-  }, [activeRound?.id, pinnedResult?.round.id]);
+  }, [pinnedResult?.round.id]);
 
   const displayResultRound = pinnedResult?.round ?? null;
   const displayResultGuesses = pinnedResult?.guesses ?? [];
@@ -1044,7 +1059,7 @@ export function QuizPlayPanels({
         </CollapsibleCard>
       ) : null}
 
-      {waitingForHost ? (
+      <FadeMount show={waitingForHost}>
         <section
           className={cn(
             "space-y-4 rounded-2xl p-6",
@@ -1076,9 +1091,9 @@ export function QuizPlayPanels({
             </p>
           </div>
         </section>
-      ) : null}
+      </FadeMount>
 
-      {isFinished || showLeaderboardPresentation ? (
+      <FadeMount show={isFinished || showLeaderboardPresentation}>
         <div className="space-y-8">
           {isFinished ? (
             <section
@@ -1209,7 +1224,9 @@ export function QuizPlayPanels({
             </CollapsibleCard>
           ) : null}
         </div>
-      ) : allTracksPlayed ? (
+      </FadeMount>
+
+      <FadeMount show={allTracksPlayed && !isFinished && !showLeaderboardPresentation}>
         <section
           className={cn(
             "space-y-2 rounded-2xl bg-card p-6",
@@ -1225,9 +1242,10 @@ export function QuizPlayPanels({
               : "Waiting for the host to finish the quiz or start another round."}
           </p>
         </section>
-      ) : null}
+      </FadeMount>
 
-      {activeRound ? (
+      <FadeMount show={Boolean(activeRound)}>
+        {activeRound ? (
         <section className="space-y-4 rounded-2xl border border-primary/30 bg-primary/5 p-6">
           <div className="space-y-1">
             <p className="text-xs font-medium uppercase tracking-wide text-primary">
@@ -1245,7 +1263,7 @@ export function QuizPlayPanels({
                     activeRound.display_round_number ||
                     activeRound.round_number,
                 })}{" "}
-              · Guess the…
+              · Guess the release year
             </h2>
           </div>
           {settings.showTitleArtist ? (
@@ -1286,7 +1304,15 @@ export function QuizPlayPanels({
                   className="w-32"
                 />
               </div>
-              <Button type="submit" disabled={guessBusy}>
+              <Button
+                type="submit"
+                disabled={guessBusy}
+                variant={
+                  (myGuessYear ?? optimisticGuessYear) != null
+                    ? "outline"
+                    : "default"
+                }
+              >
                 {guessBusy
                   ? "Saving…"
                   : (myGuessYear ?? optimisticGuessYear) != null
@@ -1329,26 +1355,47 @@ export function QuizPlayPanels({
                 </p>
               </div>
             ) : null}
+            {guessState?.error ? (
+              <p className="w-full text-sm text-destructive">{guessState.error}</p>
+            ) : null}
+            <p className="flex min-h-11 w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-xl bg-background/70 px-3 py-2 text-foreground ring-1 ring-primary/25">
+              {(myGuessYear ?? optimisticGuessYear) != null &&
+              !guessState?.error ? (
+                <CheckIcon
+                  className="size-4 shrink-0 text-primary"
+                  weight="bold"
+                  aria-hidden
+                />
+              ) : (
+                <span className="size-4 shrink-0" aria-hidden />
+              )}
+              <span className="text-sm font-medium">Your current guess</span>
+              <span
+                className={cn(
+                  "text-xl font-semibold tabular-nums tracking-tight",
+                  (myGuessYear ?? optimisticGuessYear) == null &&
+                    "text-muted-foreground",
+                )}
+              >
+                {myGuessYear ?? optimisticGuessYear ?? "—"}
+              </span>
+              {chartComboEnabled ? (
+                <span className="text-sm text-muted-foreground">
+                  {(myGuessYear ?? optimisticGuessYear) == null
+                    ? "· #1 —"
+                    : myGuessWasNumberOne == null
+                      ? "· #1 skipped"
+                      : myGuessWasNumberOne
+                        ? "· #1 yes"
+                        : "· #1 no"}
+                </span>
+              ) : null}
+            </p>
             {!isHost ? (
               <p className="w-full text-sm text-muted-foreground">
                 {settings.showTitleArtist
                   ? "Listen, then enter the release year. Updates appear live for everyone."
                   : "Listen to the track the host is playing, then enter the release year. Updates appear live for everyone."}
-              </p>
-            ) : null}
-            {guessState?.error ? (
-              <p className="w-full text-sm text-destructive">{guessState.error}</p>
-            ) : null}
-            {myGuessYear != null && !guessState?.error ? (
-              <p className="w-full text-sm text-muted-foreground">
-                Your current guess: {myGuessYear}
-                {chartComboEnabled
-                  ? myGuessWasNumberOne == null
-                    ? " · #1: skipped"
-                    : myGuessWasNumberOne
-                      ? " · #1: yes"
-                      : " · #1: no"
-                  : null}
               </p>
             ) : null}
           </form>
@@ -1458,9 +1505,11 @@ export function QuizPlayPanels({
             </div>
           ) : null}
         </section>
-      ) : null}
+        ) : null}
+      </FadeMount>
 
-      {showResultCard && displayResultRound ? (
+      <FadeMount show={Boolean(showResultCard && displayResultRound)}>
+        {displayResultRound ? (
         <section className="space-y-4 rounded-2xl border border-border/60 bg-card p-6">
           <h2 className="text-lg font-semibold">
             {displayResultRound.round_label ||
@@ -1506,12 +1555,6 @@ export function QuizPlayPanels({
                 : null}
             </span>
           </p>
-          {displayResultRound.preview_url ? (
-            <SongPreviewPlayer
-              previewUrl={displayResultRound.preview_url}
-              label={`${displayResultRound.track_name ?? "Track"} preview`}
-            />
-          ) : null}
           <RoundCorrectYear
             round={displayResultRound}
             show={isHost || settings.showCorrectAnswer}
@@ -1528,7 +1571,8 @@ export function QuizPlayPanels({
             scoreUnit={scoreUnit}
           />
         </section>
-      ) : null}
+        ) : null}
+      </FadeMount>
 
       {showRunningLeaderboard || showFinalLeaderboard ? (
         <CollapsibleCard
@@ -1716,6 +1760,9 @@ export function QuizPlayPanels({
                             : "No guesses this round."
                         }
                       />
+                      {round.preview_url ? (
+                        <SongPreviewPlayer previewUrl={round.preview_url} />
+                      ) : null}
                     </div>
                   ) : null}
                 </li>

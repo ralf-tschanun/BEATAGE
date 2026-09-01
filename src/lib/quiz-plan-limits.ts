@@ -24,6 +24,13 @@ export function parseQuizPlanLimitError(
     const cap = Number(message.match(/maximum of (\d+) songs/i)?.[1]);
     if (Number.isFinite(cap) && cap > 0) return { kind: "songs", cap };
   }
+  const allows = message.match(/allows (\d+) (rounds?|songs?)/i);
+  if (allows) {
+    const cap = Number(allows[1]);
+    if (Number.isFinite(cap) && cap > 0) {
+      return { kind: /song/i.test(allows[2]) ? "songs" : "rounds", cap };
+    }
+  }
   if (/round limit|rounds? on your plan|song limit/i.test(message)) {
     return { kind: "rounds", cap: 10 };
   }
