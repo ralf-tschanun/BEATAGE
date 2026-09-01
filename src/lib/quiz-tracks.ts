@@ -12,8 +12,12 @@ import {
   DEFAULT_MAX_CURATED_TRACKS,
   QUIZ_UNLOCK_LIMITS,
 } from "@/lib/quiz-plans";
-import { resolveQuizSettings } from "@/lib/quiz-scoring";
-import type { AnswerYearMode } from "@/lib/quiz-settings";
+import {
+  readQuizSettingsRuntime,
+  resolveQuizSettings,
+} from "@/lib/quiz-scoring";
+import type { AnswerYearMode, QuizSettingsRuntime } from "@/lib/quiz-settings";
+import { isLiveQuizSource, roundConsumesPlanCap } from "@/lib/quiz-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -62,6 +66,38 @@ export async function getQuizCuratedTrackLimit(
     return quiz.max_rounds;
   }
   return DEFAULT_MAX_CURATED_TRACKS;
+}
+
+/**
+ * Official rounds that consume the plan / unlock cap.
+ * Pre-rounds and skipped rounds do not count — including leftover warmup
+ * tracks that older builds stored as extra curated rows.
+ */
+export async function countQuizPlanConsumedRounds(
+  quizId: string,
+  runtime?: Pick<QuizSettingsRuntime, "quizStarted" | "preRoundCutoff">,
+): Promise<number> {
+  const admin = createAdminClient();
+  let resolved = runtime;
+  if (!resolved) {
+    const { data: quiz } = await admin
+      .from("beatage_quizzes")
+      .select("settings")
+      .eq("id", quizId)
+      .maybeSingle();
+    resolved = readQuizSettingsRuntime(quiz?.settings);
+  }
+  const { data: rounds, error } = await admin
+    .from("beatage_rounds")
+    .select("round_number, status")
+    .eq("quiz_id", quizId);
+  if (error) {
+    throw new Error(error.message);
+  }
+  const resolvedRuntime = resolved ?? {};
+  return (
+    (rounds ?? []) as Array<{ round_number: number; status: string }>
+  ).filter((round) => roundConsumesPlanCap(round, resolvedRuntime)).length;
 }
 
 export async function countQuizCuratedTracks(quizId: string): Promise<number> {
@@ -322,11 +358,46 @@ export async function addCuratedTrackToQuiz(
     }
   }
 
-  // Live and curated share the same plan/unlock song+round cap (max_rounds).
+  // Last.fm live has no Spotify id — reuse the same title+artist row.
+  if (!resolved.spotifyTrackId && resolved.trackName && resolved.artistName) {
+    const { data: existingByName } = await admin
+      .from("beatage_curated_tracks")
+      .select("id")
+      .eq("quiz_id", quizId)
+      .eq("track_name", resolved.trackName)
+      .eq("artist_name", resolved.artistName)
+      .limit(1)
+      .maybeSingle();
+    if (existingByName && typeof existingByName.id === "string") {
+      return { trackId: existingByName.id };
+    }
+  }
+
+  const { data: quizRow } = await admin
+    .from("beatage_quizzes")
+    .select("source, settings")
+    .eq("id", quizId)
+    .maybeSingle();
+  const isLive = isLiveQuizSource(
+    typeof quizRow?.source === "string" ? quizRow.source : null,
+  );
+
+  // Curated quizzes cap the playlist length. Live quizzes cap official
+  // rounds only — pre-rounds and skipped songs must not burn the plan.
   const limit = await getQuizCuratedTrackLimit(quizId);
-  const existing = await countQuizCuratedTracks(quizId);
-  if (limit != null && existing >= limit) {
-    return { error: `TRACK_LIMIT:${limit}` };
+  if (isLive) {
+    const consumed = await countQuizPlanConsumedRounds(
+      quizId,
+      readQuizSettingsRuntime(quizRow?.settings),
+    );
+    if (limit != null && consumed >= limit) {
+      return { error: `TRACK_LIMIT:${limit}` };
+    }
+  } else {
+    const existing = await countQuizCuratedTracks(quizId);
+    if (limit != null && existing >= limit) {
+      return { error: `TRACK_LIMIT:${limit}` };
+    }
   }
 
   // Prefer admin insert: play RPCs (003) are often not applied on the remote DB yet.

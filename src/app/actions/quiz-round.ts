@@ -106,22 +106,32 @@ export async function fetchQuizPlaySnapshotAction(quizId: string, joinCode: stri
   return getQuizPlayState(id, code, { backfillReleaseYears: false });
 }
 
-/** Host ends pre-round warm-up; next detected song opens Round 1. */
+/** Host ends pre-round warm-up; next song or the current song becomes Round 1. */
 export async function startOfficialQuizAction(
   quizId: string,
   joinCode: string,
-): Promise<{ ok?: boolean; error?: string; closedRound?: boolean }> {
+  opts?: { includeCurrentSong?: boolean; deferredTrackKey?: string | null },
+): Promise<{
+  ok?: boolean;
+  error?: string;
+  closedRound?: boolean;
+  promotedRound?: boolean;
+}> {
   const id = quizId.trim();
   const code = joinCode.trim().toUpperCase();
   if (!id) return { error: "Missing quiz id." };
 
   const { user } = await ensureAnonymousSession();
-  const result = await startOfficialQuizForHost(id, user.id);
+  const result = await startOfficialQuizForHost(id, user.id, opts);
   if (result.error) {
     return { error: mapError(result.error) };
   }
   revalidatePath(`/q/${code}`);
-  return { ok: true, closedRound: result.closedRound };
+  return {
+    ok: true,
+    closedRound: result.closedRound,
+    promotedRound: result.promotedRound,
+  };
 }
 
 export async function addCuratedTrackAction(

@@ -94,9 +94,11 @@ export type QuizSettingsRuntime = {
    */
   quizStarted?: boolean;
   /**
-   * After Start Quiz Now: highest round_number that was a pre-round.
+   * After Start Quiz Now: highest round_number that stays a pre-round.
    * Rounds with round_number <= cutoff stay labeled as Pre Round and stay
    * out of the official leaderboard. 0 = no pre-rounds were played.
+   * Starting with the current song sets this to the previous closed pre-round
+   * so the open warm-up round becomes Round 1.
    */
   preRoundCutoff?: number;
   /**
@@ -157,6 +159,15 @@ export function isPreRoundNumber(
       ? Math.max(0, Math.round(runtime.preRoundCutoff))
       : 0;
   return cutoff > 0 && roundNumber <= cutoff;
+}
+
+/** Official (non-pre, non-skipped) rounds consume the plan / unlock cap. */
+export function roundConsumesPlanCap(
+  round: { round_number: number; status: string },
+  runtime: Pick<QuizSettingsRuntime, "quizStarted" | "preRoundCutoff">,
+): boolean {
+  if (round.status === "skipped") return false;
+  return !isPreRoundNumber(round.round_number, runtime);
 }
 
 /** Wizard / rules labels for end-of-quiz leaderboard presentation modes. */

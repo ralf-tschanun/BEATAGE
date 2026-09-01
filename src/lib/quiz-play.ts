@@ -17,7 +17,10 @@ import {
   presentsLeaderboardAtEnd,
   primaryYearScoringMode,
 } from "@/lib/quiz-settings";
-import { getQuizCuratedTrackLimit } from "@/lib/quiz-tracks";
+import {
+  countQuizPlanConsumedRounds,
+  getQuizCuratedTrackLimit,
+} from "@/lib/quiz-tracks";
 
 async function assertQuizHost(quizId: string, userId: string) {
   const admin = createAdminClient();
@@ -105,9 +108,19 @@ export async function startRoundForHost(
     const isLive = source === "spotify_live" || source === "lastfm_live";
     const isPreRound = isLive && runtime.quizStarted === false;
 
-    // Plan / unlock round cap — official rounds only (pre-rounds do not consume the cap).
+    // Plan / unlock round cap — official rounds only (pre-rounds / skips do not
+    // consume the cap). Count from the rounds table so a stale
+    // current_round_number (older pre-round increments) cannot block play.
+    const consumedOfficialRounds = await countQuizPlanConsumedRounds(
+      quizId,
+      runtime,
+    );
     const roundLimit = await getQuizCuratedTrackLimit(quizId);
-    if (!isPreRound && roundLimit != null && currentRoundNumber >= roundLimit) {
+    if (
+      !isPreRound &&
+      roundLimit != null &&
+      consumedOfficialRounds >= roundLimit
+    ) {
       return { error: `ROUND_LIMIT:${roundLimit}` };
     }
 
@@ -195,13 +208,14 @@ export async function startRoundForHost(
     }
 
     // Official rounds bump current_round_number; pre-rounds leave the official counter alone.
+    // Use consumed+1 so a previously inflated counter self-heals.
     const { error: updateError } = await admin
       .from("beatage_quizzes")
       .update({
         status: "playing",
         ...(isPreRound
           ? {}
-          : { current_round_number: currentRoundNumber + 1 }),
+          : { current_round_number: consumedOfficialRounds + 1 }),
         last_activity_at: now,
       })
       .eq("id", quizId);
@@ -217,11 +231,16 @@ export async function startRoundForHost(
   }
 }
 
-/** Host ends pre-round mode: close any active warm-up round and start counting official rounds. */
+/** Host ends pre-round mode: next song opens Round 1, or the open pre-round becomes Round 1. */
 export async function startOfficialQuizForHost(
   quizId: string,
   userId: string,
-): Promise<{ error?: string; closedRound?: boolean }> {
+  opts?: {
+    includeCurrentSong?: boolean;
+    /** Last.fm skip-lock so the current track does not become Round 1. */
+    deferredTrackKey?: string | null;
+  },
+): Promise<{ error?: string; closedRound?: boolean; promotedRound?: boolean }> {
   try {
     await assertQuizHost(quizId, userId);
     const admin = createAdminClient();
@@ -251,15 +270,20 @@ export async function startOfficialQuizForHost(
       return {};
     }
 
+    const includeCurrentSong = Boolean(opts?.includeCurrentSong);
+
     let closedRound = false;
+    let promotedRound = false;
     const { data: active } = await admin
       .from("beatage_rounds")
-      .select("id")
+      .select("id, round_number")
       .eq("quiz_id", quizId)
       .eq("status", "active")
       .maybeSingle();
 
-    if (active?.id) {
+    if (includeCurrentSong && active?.id) {
+      promotedRound = true;
+    } else if (!includeCurrentSong && active?.id) {
       const closed = await closeRoundForHost(active.id, userId);
       if (closed.error) {
         return { error: closed.error };
@@ -274,10 +298,23 @@ export async function startOfficialQuizForHost(
       .order("round_number", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const preRoundCutoff =
+    const maxRoundNumber =
       typeof maxRoundRow?.round_number === "number"
         ? maxRoundRow.round_number
         : 0;
+    const activeRoundNumber =
+      typeof active?.round_number === "number" ? active.round_number : 0;
+    // Keep the open pre-round out of the cutoff so it labels and scores as Round 1.
+    const preRoundCutoff = promotedRound
+      ? Math.max(0, activeRoundNumber - 1)
+      : maxRoundNumber;
+
+    const deferredTrackKey = includeCurrentSong
+      ? null
+      : typeof opts?.deferredTrackKey === "string" &&
+          opts.deferredTrackKey.trim()
+        ? opts.deferredTrackKey.trim()
+        : runtime.liveDeferredTrackKey;
 
     const { error: updateError } = await admin
       .from("beatage_quizzes")
@@ -288,7 +325,10 @@ export async function startOfficialQuizForHost(
           preRoundCutoff,
           autoEmptyStreak: 0,
           autoInterrupted: false,
+          liveDeferredTrackKey: deferredTrackKey ?? null,
         }),
+        // Warm-up consumed 0 official rounds; this song becomes Round 1.
+        ...(promotedRound ? { current_round_number: 1 } : {}),
         last_activity_at: new Date().toISOString(),
       })
       .eq("id", quizId);
@@ -297,7 +337,7 @@ export async function startOfficialQuizForHost(
       return { error: updateError.message };
     }
 
-    return { closedRound };
+    return { closedRound, promotedRound };
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to start quiz.";
@@ -793,10 +833,9 @@ export async function skipRoundForHost(
       typeof quizRow?.current_round_number === "number"
         ? quizRow.current_round_number
         : 0;
-    const nextCurrentRoundNumber =
-      !isPre && currentRoundNumber > 0
-        ? currentRoundNumber - 1
-        : currentRoundNumber;
+    const nextCurrentRoundNumber = isPre
+      ? currentRoundNumber
+      : await countQuizPlanConsumedRounds(round.quiz_id, runtime);
 
     const { error: quizUpdateError } = await admin
       .from("beatage_quizzes")

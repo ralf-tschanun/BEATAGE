@@ -14,6 +14,7 @@ import {
 import { QuizPlanLimitPrompt } from "@/components/quiz-plan-limit-prompt";
 import { LiveHostScreenLockField } from "@/components/live-host-screen-lock-field";
 import { LiveQuizInactivityNotice } from "@/components/live-quiz-inactivity-notice";
+import { StartQuizNowDialog } from "@/components/start-quiz-now-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -141,6 +142,7 @@ export function AutoLastfmHostControls({
   const [pendingReveal, setPendingReveal] = useState(false);
   const [endQuizConfirmOpen, setEndQuizConfirmOpen] = useState(false);
   const [skipConfirmOpen, setSkipConfirmOpen] = useState(false);
+  const [startQuizConfirmOpen, setStartQuizConfirmOpen] = useState(false);
   const [inactivityNotifySignal, setInactivityNotifySignal] = useState(0);
   const [localQuizStarted, setLocalQuizStarted] = useState(quizStarted);
   const localQuizStartedRef = useRef(quizStarted);
@@ -234,7 +236,9 @@ export function AutoLastfmHostControls({
 
   const atRoundLimit =
     Boolean(planLimitError) ||
-    (roundLimit != null && currentRoundNumber >= roundLimit);
+    (roundLimit != null &&
+      currentRoundNumber >= roundLimit &&
+      !hasActiveRound);
 
   const runSync = useCallback(
     async (opts?: {
@@ -718,7 +722,7 @@ export function AutoLastfmHostControls({
     }
   }
 
-  async function onStartQuizNow() {
+  async function onStartQuizNow(includeCurrentSong: boolean) {
     if (localQuizStarted || hostBusy) return;
     clearDebounce();
     pendingKeyRef.current = null;
@@ -728,7 +732,12 @@ export function AutoLastfmHostControls({
     reportError(null);
     setStatus("Starting quiz…");
     try {
-      const result = await startOfficialQuizAction(quizId, joinCode);
+      const result = await startOfficialQuizAction(quizId, joinCode, {
+        includeCurrentSong,
+        deferredTrackKey: includeCurrentSong
+          ? null
+          : (nowPlaying?.trackKey ?? lastKeyRef.current ?? deferredKeyRef.current),
+      });
       if (result.error) {
         reportError(result.error);
         setStatus("Could not start the quiz");
@@ -736,6 +745,38 @@ export function AutoLastfmHostControls({
       }
       setLocalQuizStarted(true);
       localQuizStartedRef.current = true;
+      if (includeCurrentSong) {
+        deferredKeyRef.current = null;
+        if (result.promotedRound) {
+          setStatus("Quiz started — this song is Round 1");
+          router.refresh();
+          return;
+        }
+        if (nowPlaying) {
+          const sync = await runSync({
+            openNewRound: true,
+            manual: true,
+            nowPlaying: {
+              playing: true,
+              title: nowPlaying.title,
+              artist: nowPlaying.artist,
+              albumArtUrl: nowPlaying.albumArtUrl ?? null,
+            },
+          });
+          if (sync?.error) {
+            router.refresh();
+            return;
+          }
+          if (!sync?.startedRound) {
+            setStatus("Quiz started — this song is Round 1");
+            router.refresh();
+          }
+          return;
+        }
+        setStatus("Quiz started — waiting for a song to open Round 1");
+        router.refresh();
+        return;
+      }
       deferCurrentTrack();
       setStatus("Quiz started — next song opens Round 1");
       router.refresh();
@@ -835,6 +876,9 @@ export function AutoLastfmHostControls({
   }
 
   const hostBusy = disabled || busy;
+  const canStartWithThisSong =
+    hasActiveRound ||
+    (nowPlaying != null && deferredKeyRef.current !== nowPlaying.trackKey);
   /** Only while a round is open for guesses — not during listen/reveal wait. */
   const canSkipThisSong =
     hasActiveRound &&
@@ -945,7 +989,11 @@ export function AutoLastfmHostControls({
           className="w-full"
           disabled={hostBusy || disabled}
           onClick={() => {
-            void onStartQuizNow();
+            if (canStartWithThisSong) {
+              setStartQuizConfirmOpen(true);
+              return;
+            }
+            void onStartQuizNow(false);
           }}
         >
           Start Quiz Now
@@ -1117,6 +1165,17 @@ export function AutoLastfmHostControls({
           {finishError}
         </p>
       ) : null}
+
+      <StartQuizNowDialog
+        open={startQuizConfirmOpen}
+        onOpenChange={setStartQuizConfirmOpen}
+        pending={busy}
+        hasActiveRound={hasActiveRound}
+        canStartWithThisSong={canStartWithThisSong}
+        onChoose={(includeCurrentSong) => {
+          void onStartQuizNow(includeCurrentSong);
+        }}
+      />
 
       <Dialog open={skipConfirmOpen} onOpenChange={setSkipConfirmOpen}>
         <DialogContent className="sm:max-w-md">
