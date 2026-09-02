@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import {
   clampAutoInterruptAfterEmptyRounds,
   clampYearRangeTolerance,
@@ -466,8 +467,9 @@ export async function deleteQuizAction(
     if (stayOnPage) {
       return { success: true };
     }
-
-    return { redirectTo: "/?deleted=1" };
+    // Server redirect so /q/[code] is not re-rendered after the row is gone
+    // (that re-render would send the host to /?removed=1).
+    redirect("/?deleted=1");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Something went wrong.";
     return { error: mapQuizError(message) };
@@ -494,8 +496,7 @@ export async function leaveQuizAction(
     if (stayOnPage) {
       return { success: true };
     }
-
-    return { redirectTo: "/?left=1" };
+    redirect("/?left=1");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Something went wrong.";
     return { error: mapQuizError(message) };

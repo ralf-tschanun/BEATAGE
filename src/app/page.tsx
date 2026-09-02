@@ -1,4 +1,5 @@
 import { AuthLinkErrorBanner } from "@/components/account-auth-form";
+import { HomeStatusBanner } from "@/components/home-status-banner";
 import { QuizList } from "@/components/quiz-list";
 import { HomeHero } from "@/components/home-hero";
 import { SiteFooter } from "@/components/site-footer";
@@ -35,23 +36,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         </p>
       ) : null}
       {auth === "error" ? <AuthLinkErrorBanner /> : null}
-      {removed === "1" ? (
-        <p className="mx-auto w-full max-w-5xl px-6 pt-4 text-sm text-foreground">
-          That quiz is no longer available.
-        </p>
-      ) : null}
-
-      {deleted === "1" ? (
-        <p className="mx-auto w-full max-w-5xl px-6 pt-4 text-sm text-foreground">
-          Quiz deleted.
-        </p>
-      ) : null}
-
-      {left === "1" ? (
-        <p className="mx-auto w-full max-w-5xl px-6 pt-4 text-sm text-foreground">
-          You left the quiz.
-        </p>
-      ) : null}
+      <HomeStatusBanner removed={removed} deleted={deleted} left={left} />
 
       {billing ? (
         <p
