@@ -263,6 +263,10 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
           myGuessYear={playState?.myGuessYear ?? null}
           myGuessWasNumberOne={playState?.myGuessWasNumberOne ?? null}
           leaderboard={playState?.leaderboard ?? []}
+          roster={playState?.roster ?? []}
+          teams={playState?.teams ?? []}
+          teamsLocked={Boolean(playState?.teamsLocked)}
+          resultTeamGroups={playState?.resultTeamGroups ?? []}
           quizStatus={playState?.quizStatus ?? quiz.status}
           maxCuratedTracks={playState?.maxCuratedTracks ?? 10}
           maxMembers={quiz.max_members}
@@ -292,6 +296,8 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
           currentUserId={user.id}
           isHost={isHost}
           maxMembers={quiz.max_members}
+          teamsEnabled={Boolean(settings.teamsEnabled)}
+          teams={playState?.teams ?? []}
           members={memberRows.map((member) => ({
             id: member.id,
             userId: member.user_id,

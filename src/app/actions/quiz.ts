@@ -23,6 +23,7 @@ import {
 import {
   DEFAULT_MAX_CURATED_TRACKS,
   getQuizPlanLimits,
+  planAllowsQuizTeams,
   QUIZ_UNLOCK_LIMITS,
   type PlanId,
 } from "@/lib/quiz-plans";
@@ -72,6 +73,9 @@ function mapQuizError(message: string): string {
   if (message.includes("QUIZ_EXPIRED")) return "This quiz has expired.";
   if (message.includes("QUIZ_FULL")) {
     return "This quiz is full. Ask the host to unlock the quiz or change their plan for more players.";
+  }
+  if (message.includes("TEAMS_LOCKED")) {
+    return "This quiz has started. Joining is closed.";
   }
   if (message.includes("NOT_AUTHENTICATED") || message.toLowerCase().includes("auth session")) {
     return "Session expired. Refresh and try again.";
@@ -256,6 +260,12 @@ export async function createQuizAction(
         ),
         combinedScoring: false,
         secondaryScoringMode: null,
+        hostParticipates: Boolean(
+          parsed.hostParticipates ?? DEFAULT_QUIZ_SETTINGS.hostParticipates,
+        ),
+        teamsEnabled: Boolean(
+          parsed.teamsEnabled ?? DEFAULT_QUIZ_SETTINGS.teamsEnabled,
+        ),
         answerYearMode:
           parsed.answerYearMode === "original_recording" ||
           parsed.answerYearMode === "this_release"
@@ -312,11 +322,6 @@ export async function createQuizAction(
     return { error: "Enter your Last.fm username for live Spotify quizzes." };
   }
 
-  // Live quizzes start in pre-round mode until the host clicks Start Quiz Now.
-  const settingsForStore = isLive
-    ? mergeQuizSettingsForStorage(settings, { quizStarted: false })
-    : settings;
-
   try {
     const { supabase, user } = await ensureAnonymousSession();
     const { data: profile } = await supabase
@@ -325,6 +330,13 @@ export async function createQuizAction(
       .eq("id", user.id)
       .maybeSingle();
     const plan = getQuizPlanLimits((profile?.plan as PlanId | undefined) ?? "free");
+    if (settings.teamsEnabled && !planAllowsQuizTeams(plan.id)) {
+      settings.teamsEnabled = false;
+    }
+    // Live quizzes start in pre-round mode until the host clicks Start Quiz Now.
+    const settingsForStore = isLive
+      ? mergeQuizSettingsForStorage(settings, { quizStarted: false })
+      : settings;
     const songCap = requiresUnlock
       ? QUIZ_UNLOCK_LIMITS.maxCuratedTracks
       : plan.maxCuratedTracks;

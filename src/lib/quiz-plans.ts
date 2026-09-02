@@ -52,3 +52,8 @@ export const ACTIVE_QUIZ_STATUSES = ["draft", "open", "playing"] as const;
 export function getQuizPlanLimits(plan: PlanId = "free"): QuizPlanLimits {
   return QUIZ_PLANS[plan] ?? QUIZ_PLANS.free;
 }
+
+/** Team mode is a Plus/Pro feature (not available on Free). */
+export function planAllowsQuizTeams(plan: PlanId = "free"): boolean {
+  return plan === "plus" || plan === "pro";
+}

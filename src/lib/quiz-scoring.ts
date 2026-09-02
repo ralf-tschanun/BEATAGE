@@ -176,6 +176,9 @@ export function resolveQuizSettings(raw: unknown): BeatageQuizSettings {
         DEFAULT_QUIZ_SETTINGS.showOthersInPastResults,
     ),
     overallReveal: parseOverallReveal(partial.overallReveal),
+    teamsEnabled: Boolean(
+      partial.teamsEnabled ?? DEFAULT_QUIZ_SETTINGS.teamsEnabled,
+    ),
     autoInterruptAfterEmptyRounds: clampAutoInterruptAfterEmptyRounds(
       partial.autoInterruptAfterEmptyRounds ??
         DEFAULT_QUIZ_SETTINGS.autoInterruptAfterEmptyRounds,

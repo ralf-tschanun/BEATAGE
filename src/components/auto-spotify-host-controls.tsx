@@ -59,6 +59,8 @@ type AutoSpotifyHostControlsProps = {
   finishError?: string | null;
   /** Skip outer card chrome when wrapped in CollapsibleCard. */
   embedded?: boolean;
+  /** Team mode: block Start Quiz Now until teams are ready. */
+  officialStartBlockedReason?: string | null;
 };
 
 type NowPlayingTrack = {
@@ -98,6 +100,7 @@ export function AutoSpotifyHostControls({
   finishPending = false,
   finishError = null,
   embedded = false,
+  officialStartBlockedReason = null,
 }: AutoSpotifyHostControlsProps) {
   const router = useRouter();
   const [connected, setConnected] = useState<boolean | null>(null);
@@ -805,20 +808,28 @@ export function AutoSpotifyHostControls({
       ) : null}
 
       {!localQuizStarted ? (
-        <Button
-          type="button"
-          className="w-full"
-          disabled={hostBusy || disabled}
-          onClick={() => {
-            if (canStartWithThisSong) {
-              setStartQuizConfirmOpen(true);
-              return;
-            }
-            void onStartQuizNow(false);
-          }}
-        >
-          Start Quiz Now
-        </Button>
+        <>
+          {officialStartBlockedReason ? (
+            <p className="text-sm text-amber-800 dark:text-amber-400">
+              {officialStartBlockedReason}
+            </p>
+          ) : null}
+          <Button
+            type="button"
+            className="w-full"
+            disabled={hostBusy || disabled || Boolean(officialStartBlockedReason)}
+            onClick={() => {
+              if (officialStartBlockedReason) return;
+              if (canStartWithThisSong) {
+                setStartQuizConfirmOpen(true);
+                return;
+              }
+              void onStartQuizNow(false);
+            }}
+          >
+            Start Quiz Now
+          </Button>
+        </>
       ) : null}
 
       <div className="border-t border-border/60" />

@@ -14,6 +14,15 @@ import {
   scoringLowWins,
 } from "@/lib/quiz-settings";
 import {
+  buildTeamLeaderboard,
+  buildTeamRoundGroups,
+  quizTeamsAreLocked,
+  type QuizRosterMember,
+  type QuizTeamInfo,
+  type TeamRoundGroup,
+} from "@/lib/quiz-teams";
+import { loadQuizTeams } from "@/lib/quizzes/teams";
+import {
   backfillMissingReleaseYearsForQuiz,
   getQuizCuratedTrackLimit,
 } from "@/lib/quiz-tracks";
@@ -71,12 +80,20 @@ export type GuessRow = {
   submitted_at: string;
 };
 
+export type LeaderboardMember = {
+  user_id: string;
+  display_name: string;
+};
+
 export type LeaderboardRow = {
   user_id: string;
   display_name: string;
   total_points: number;
   /** Points earned in the most recent revealed round (0 if none). */
   last_round_points: number;
+  /** Team mode: row is a team; user_id is the team id. */
+  kind?: "player" | "team";
+  members?: LeaderboardMember[];
 };
 
 export type PastRoundRow = RoundRow & {
@@ -84,6 +101,8 @@ export type PastRoundRow = RoundRow & {
   my_points: number | null;
   /** Full guess list when showResultDetails is on. */
   guesses: GuessRow[];
+  /** Team mode: grouped results with visibility already applied. */
+  teamGroups: TeamRoundGroup[];
 };
 
 /** Slim round columns — album art stays off the list payload. */
@@ -147,6 +166,10 @@ function emptyPlayState(joinCode: string) {
     leaderboard: [] as LeaderboardRow[],
     lastSubmittedByUserId: {} as Record<string, string>,
     memberCount: 0,
+    roster: [] as QuizRosterMember[],
+    teams: [] as QuizTeamInfo[],
+    teamsLocked: false,
+    resultTeamGroups: [] as TeamRoundGroup[],
     quizStatus: "open",
     maxCuratedTracks: DEFAULT_MAX_CURATED_TRACKS as number | null,
     settings: { ...DEFAULT_QUIZ_SETTINGS } as BeatageQuizSettings,
@@ -244,7 +267,7 @@ export async function getQuizPlayState(
       .order("round_number", { ascending: true }),
     admin
       .from("beatage_quiz_members")
-      .select("user_id, display_name")
+      .select("user_id, display_name, role")
       .eq("quiz_id", quizId),
   ]);
 
@@ -452,6 +475,35 @@ export async function getQuizPlayState(
       (m) => [m.user_id, m.display_name] as const,
     ),
   );
+  const roster: QuizRosterMember[] = (
+    (members ?? []) as Array<{
+      user_id: string;
+      display_name: string;
+      role: string;
+    }>
+  ).map((m) => ({
+    user_id: m.user_id,
+    display_name: m.display_name,
+    role: m.role,
+  }));
+
+  let teams: QuizTeamInfo[] = [];
+  let teamsLocked = false;
+  if (settings.teamsEnabled) {
+    try {
+      const loaded = await loadQuizTeams(quizId);
+      teams = loaded.teams;
+      teamsLocked = loaded.locked;
+    } catch {
+      teams = [];
+      teamsLocked = quizTeamsAreLocked({
+        teamsEnabled: true,
+        source,
+        runtime,
+        hasStartedOfficialRound: false,
+      });
+    }
+  }
 
   let roundGuesses: GuessRow[] = [];
   const resultRound = resultRoundPublic;
@@ -493,11 +545,37 @@ export async function getQuizPlayState(
     }
   }
 
+  const resultTeamGroups =
+    settings.teamsEnabled && resultRound && !activeRoundPublic
+      ? buildTeamRoundGroups({
+          teams,
+          guesses: roundGuesses,
+          viewerUserId: user.id,
+          isHost: isHostMember,
+          showOthers: settings.showOthersInPastResults,
+          lowWins: scoringLowWins(settings),
+        })
+      : [];
+
+  if (
+    settings.teamsEnabled &&
+    !activeRoundPublic &&
+    !isHostMember &&
+    roundGuesses.length > 0
+  ) {
+    const ownIds = new Set(
+      teams.find((team) => team.member_user_ids.includes(user.id))
+        ?.member_user_ids ?? [user.id],
+    );
+    roundGuesses = roundGuesses.filter((g) => ownIds.has(g.user_id));
+  }
+
   const historyRoundIds = revealedList.map((r) => r.id);
   const officialScoringIds = new Set(
     scoringRounds.filter((r) => !r.is_pre_round).map((r) => r.id),
   );
   const pastGuessesByRound = new Map<string, GuessRow[]>();
+  const allPastGuessesByRound = new Map<string, GuessRow[]>();
   const myPointsByRound = new Map<string, number>();
   const totals = new Map<string, number>();
   const lastRoundPts = new Map<string, number>();
@@ -551,23 +629,38 @@ export async function getQuizPlayState(
           lastSubmittedByUserId[g.user_id] = g.submitted_at;
         }
       }
-      if (!settings.showResultDetails) continue;
-      if (
-        !isHostMember &&
-        !settings.showOthersInPastResults &&
-        g.user_id !== user.id
-      ) {
-        continue;
-      }
-      const list = pastGuessesByRound.get(g.round_id) ?? [];
-      list.push({
+      if (!settings.showResultDetails && !settings.teamsEnabled) continue;
+      const fullRow: GuessRow = {
         user_id: g.user_id,
         display_name: nameByUser.get(g.user_id) ?? "Player",
         guessed_year: g.guessed_year,
         guessed_was_number_one: g.guessed_was_number_one,
         points_total: pts,
         submitted_at: g.submitted_at ?? "",
-      });
+      };
+      if (settings.teamsEnabled) {
+        const all = allPastGuessesByRound.get(g.round_id) ?? [];
+        all.push(fullRow);
+        allPastGuessesByRound.set(g.round_id, all);
+      }
+      if (!settings.showResultDetails) continue;
+      if (
+        !isHostMember &&
+        !settings.showOthersInPastResults &&
+        g.user_id !== user.id &&
+        !(
+          settings.teamsEnabled &&
+          teams.some(
+            (team) =>
+              team.member_user_ids.includes(user.id) &&
+              team.member_user_ids.includes(g.user_id),
+          )
+        )
+      ) {
+        continue;
+      }
+      const list = pastGuessesByRound.get(g.round_id) ?? [];
+      list.push(fullRow);
       pastGuessesByRound.set(g.round_id, list);
     }
 
@@ -584,7 +677,7 @@ export async function getQuizPlayState(
     }
   }
 
-  const pastRounds: PastRoundRow[] = revealedList.map((round, index) => {
+  const pastRounds: PastRoundRow[] = revealedList.map((round) => {
     const hideYears = hideCorrectForViewer || !settings.showResultDetails;
     const isSkipped = round.status === "skipped";
     const isExcluded = round.status === "excluded";
@@ -603,24 +696,44 @@ export async function getQuizPlayState(
         isSkipped || !settings.showResultDetails
           ? []
           : (pastGuessesByRound.get(round.id) ?? []),
+      teamGroups:
+        isSkipped || !settings.teamsEnabled
+          ? []
+          : buildTeamRoundGroups({
+              teams,
+              guesses: allPastGuessesByRound.get(round.id) ?? [],
+              viewerUserId: user.id,
+              isHost: isHostMember,
+              showOthers: settings.showOthersInPastResults,
+              lowWins: scoringLowWins(settings),
+            }),
     };
   });
 
   let leaderboard: LeaderboardRow[] = [];
   if (officialScoringIds.size > 0) {
-    leaderboard = [...totals.entries()]
-      .map(([userId, total_points]) => ({
-        user_id: userId,
-        display_name: nameByUser.get(userId) ?? "Player",
-        total_points,
-        last_round_points: lastRoundPts.get(userId) ?? 0,
-      }))
-      .sort((a, b) => {
-        const byPoints = scoringLowWins(settings)
-          ? a.total_points - b.total_points
-          : b.total_points - a.total_points;
-        return byPoints || a.display_name.localeCompare(b.display_name);
+    if (settings.teamsEnabled) {
+      leaderboard = buildTeamLeaderboard({
+        teams,
+        totals,
+        lastRoundPts,
+        lowWins: scoringLowWins(settings),
       });
+    } else {
+      leaderboard = [...totals.entries()]
+        .map(([userId, total_points]) => ({
+          user_id: userId,
+          display_name: nameByUser.get(userId) ?? "Player",
+          total_points,
+          last_round_points: lastRoundPts.get(userId) ?? 0,
+        }))
+        .sort((a, b) => {
+          const byPoints = scoringLowWins(settings)
+            ? a.total_points - b.total_points
+            : b.total_points - a.total_points;
+          return byPoints || a.display_name.localeCompare(b.display_name);
+        });
+    }
   }
 
   return {
@@ -637,6 +750,10 @@ export async function getQuizPlayState(
     leaderboard,
     lastSubmittedByUserId: isHost ? lastSubmittedByUserId : {},
     memberCount: ((members ?? []) as Array<{ user_id: string }>).length,
+    roster,
+    teams,
+    teamsLocked,
+    resultTeamGroups,
     quizStatus,
     maxCuratedTracks,
     settings,

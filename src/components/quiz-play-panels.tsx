@@ -45,6 +45,7 @@ import type { PlanId } from "@/lib/quiz-plans";
 import { isQuizPlanLimitError } from "@/lib/quiz-plan-limits";
 import { chartCountriesShortLabel, chartWasOneLabel } from "@/lib/charts";
 import { QuizPlanLimitPrompt } from "@/components/quiz-plan-limit-prompt";
+import { QuizTeamsPanel } from "@/components/quiz-teams-panel";
 import { podiumRankClass, podiumRowClass } from "@/lib/result-podium-styles";
 import {
   applyQuizLeaderboardReveal,
@@ -62,6 +63,14 @@ import {
 } from "@/lib/quiz-settings";
 import { scrollToSection } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
+import {
+  formatTeamScore,
+  scoringRoster,
+  teamsOfficialStartBlockReason,
+  type QuizRosterMember,
+  type QuizTeamInfo,
+  type TeamRoundGroup,
+} from "@/lib/quiz-teams";
 import type {
   CuratedTrackRow,
   GuessRow,
@@ -177,6 +186,74 @@ function RoundGuessesList({
   );
 }
 
+function TeamRoundGuessesList({
+  groups,
+  emptyLabel = "No team results this round.",
+  showChartGuess = false,
+  wasNumberOne = null,
+  currentUserId = null,
+  scoreUnit = "yr",
+}: {
+  groups: TeamRoundGroup[];
+  emptyLabel?: string;
+  showChartGuess?: boolean;
+  wasNumberOne?: boolean | null;
+  currentUserId?: string | null;
+  scoreUnit?: "yr" | "pt";
+}) {
+  if (groups.length === 0) {
+    return <p className="text-sm text-muted-foreground">{emptyLabel}</p>;
+  }
+  return (
+    <ul className="space-y-3">
+      {groups.map((group) => (
+        <li
+          key={group.team_id}
+          className="rounded-xl border border-border/60 px-3 py-2"
+        >
+          <div className="flex items-baseline justify-between gap-3 text-sm">
+            <span className="font-medium">
+              {group.team_name}
+              {group.is_own_team ? (
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  (your team)
+                </span>
+              ) : null}
+            </span>
+            <span className="shrink-0 font-medium tabular-nums">
+              {formatTeamScore(group.average_points)} {scoreUnit}
+            </span>
+          </div>
+          {group.aggregateOnly ? (
+            <p className="mt-1 text-xs text-muted-foreground">Team average</p>
+          ) : (
+            <RoundGuessesList
+              guesses={group.guesses}
+              showChartGuess={showChartGuess}
+              wasNumberOne={wasNumberOne}
+              currentUserId={currentUserId}
+              scoreUnit={scoreUnit}
+            />
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function rowIncludesUser(row: LeaderboardRow, userId: string | null): boolean {
+  if (!userId) return false;
+  if (row.kind === "team") {
+    return Boolean(row.members?.some((member) => member.user_id === userId));
+  }
+  return row.user_id === userId;
+}
+
+function leaderboardMemberLine(row: LeaderboardRow): string | null {
+  if (row.kind !== "team" || !row.members?.length) return null;
+  return row.members.map((member) => member.display_name).join(" · ");
+}
+
 function RoundCorrectYear({
   round,
   show,
@@ -231,6 +308,10 @@ type QuizPlayPanelsProps = {
   myGuessYear: number | null;
   myGuessWasNumberOne?: boolean | null;
   leaderboard: LeaderboardRow[];
+  roster?: QuizRosterMember[];
+  teams?: QuizTeamInfo[];
+  teamsLocked?: boolean;
+  resultTeamGroups?: TeamRoundGroup[];
   quizStatus: string;
   maxCuratedTracks: number | null;
   /** Participant cap for this quiz; null = unlimited. */
@@ -270,6 +351,10 @@ export function QuizPlayPanels({
   myGuessYear: myGuessYearProp,
   myGuessWasNumberOne: myGuessWasNumberOneProp = null,
   leaderboard: leaderboardProp,
+  roster: rosterProp = [],
+  teams: teamsProp = [],
+  teamsLocked: teamsLockedProp = false,
+  resultTeamGroups: resultTeamGroupsProp = [],
   quizStatus: quizStatusProp,
   maxCuratedTracks: maxCuratedTracksProp,
   maxMembers: maxMembersProp = null,
@@ -347,6 +432,10 @@ export function QuizPlayPanels({
     myGuessWasNumberOne: myGuessWasNumberOneProp,
     leaderboard: leaderboardProp,
     memberCount: memberCountProp,
+    roster: rosterProp,
+    teams: teamsProp,
+    teamsLocked: teamsLockedProp,
+    resultTeamGroups: resultTeamGroupsProp,
     quizStatus: quizStatusProp,
     maxCuratedTracks: maxCuratedTracksProp,
     settings: settingsProp,
@@ -366,6 +455,10 @@ export function QuizPlayPanels({
   const myGuessYear = live.myGuessYear;
   const myGuessWasNumberOne = live.myGuessWasNumberOne ?? null;
   const leaderboard = live.leaderboard;
+  const roster = live.roster ?? rosterProp;
+  const teams = live.teams ?? teamsProp;
+  const teamsLocked = live.teamsLocked ?? teamsLockedProp;
+  const resultTeamGroups = live.resultTeamGroups ?? resultTeamGroupsProp;
   const memberCount = live.memberCount;
   const quizStatus = live.quizStatus;
   const isFinished = quizStatus === "finished" || quizStatus === "expired";
@@ -382,6 +475,14 @@ export function QuizPlayPanels({
     leaderboardRevealStep,
     leaderboard.length,
   );
+  const teamsBlockOfficialStart =
+    settings.teamsEnabled && !teamsLocked
+      ? teamsOfficialStartBlockReason({
+          teamsEnabled: true,
+          teams,
+          scoringMembers: scoringRoster(roster, settings.hostParticipates),
+        })
+      : null;
   const rankedLeaderboard = leaderboard.map((row, index) => ({
     ...row,
     rank: index + 1,
@@ -452,9 +553,14 @@ export function QuizPlayPanels({
   const [pinnedResult, setPinnedResult] = useState<{
     round: RoundRow;
     guesses: GuessRow[];
+    teamGroups: TeamRoundGroup[];
   } | null>(
     resultRoundProp && !activeRoundProp && !initiallyFinished
-      ? { round: resultRoundProp, guesses: roundGuessesProp }
+      ? {
+          round: resultRoundProp,
+          guesses: roundGuessesProp,
+          teamGroups: resultTeamGroupsProp,
+        }
       : null,
   );
   const pinStartedAtRef = useRef<number | null>(
@@ -471,7 +577,11 @@ export function QuizPlayPanels({
       if (prev?.round.id !== resultRound.id) {
         pinStartedAtRef.current = Date.now();
       }
-      return { round: resultRound, guesses: roundGuesses };
+      return {
+        round: resultRound,
+        guesses: roundGuesses,
+        teamGroups: resultTeamGroups,
+      };
     });
   }, [
     resultRound?.id,
@@ -479,6 +589,7 @@ export function QuizPlayPanels({
     resultRound,
     activeRound,
     roundGuesses,
+    resultTeamGroups,
     isFinished,
   ]);
 
@@ -495,6 +606,7 @@ export function QuizPlayPanels({
 
   const displayResultRound = pinnedResult?.round ?? null;
   const displayResultGuesses = pinnedResult?.guesses ?? [];
+  const displayResultTeamGroups = pinnedResult?.teamGroups ?? [];
   const showResultCard = Boolean(displayResultRound) && Boolean(pinnedResult);
 
   // Hide the pinned result from Previous rounds while its card is still up.
@@ -715,6 +827,22 @@ export function QuizPlayPanels({
 
   return (
     <div className="space-y-8">
+      {settings.teamsEnabled ? (
+        <QuizTeamsPanel
+          quizId={quizId}
+          joinCode={joinCode}
+          isHost={isHost}
+          currentUserId={currentUserId ?? ""}
+          hostParticipates={settings.hostParticipates}
+          locked={teamsLocked}
+          teams={teams}
+          roster={roster}
+          onTeamsChange={(next) =>
+            setLive((prev) => ({ ...prev, teams: next }))
+          }
+        />
+      ) : null}
+
       {isHost && isLastfmLive ? (
         <CollapsibleCard
           sectionId={`quiz-${quizId}-live-spotify`}
@@ -751,6 +879,7 @@ export function QuizPlayPanels({
             finishError={finishState?.error ?? null}
             liveOpenMode={liveOpenModeProp}
             liveDeferredTrackKey={liveDeferredTrackKeyProp}
+            officialStartBlockedReason={teamsBlockOfficialStart}
             embedded
           />
           {isHost && atMemberLimit && !unlocked && !isFinished ? (
@@ -801,6 +930,7 @@ export function QuizPlayPanels({
             finishPending={finishPending}
             finishError={finishState?.error ?? null}
             embedded
+            officialStartBlockedReason={teamsBlockOfficialStart}
           />
           {isHost && atMemberLimit && !unlocked && !isFinished ? (
             <QuizPlanLimitPrompt
@@ -914,7 +1044,8 @@ export function QuizPlayPanels({
                   isFinished ||
                   Boolean(activeRound) ||
                   trackCount === 0 ||
-                  allTracksPlayed
+                  allTracksPlayed ||
+                  Boolean(teamsBlockOfficialStart)
                 }
               >
                 {startPending
@@ -965,6 +1096,11 @@ export function QuizPlayPanels({
               </form>
             ) : null}
           </div>
+          {teamsBlockOfficialStart ? (
+            <p className="text-sm text-amber-800 dark:text-amber-400">
+              {teamsBlockOfficialStart}
+            </p>
+          ) : null}
           {startState?.error && !isQuizPlanLimitError(startState.error) ? (
             <p className="text-sm text-destructive">{startState.error}</p>
           ) : null}
@@ -1207,15 +1343,20 @@ export function QuizPlayPanels({
                           #{row.rank}
                         </span>{" "}
                         {row.display_name}
-                        {row.user_id === currentUserId ? (
+                        {rowIncludesUser(row, currentUserId) ? (
                           <span className="text-muted-foreground"> (You)</span>
                         ) : null}
-                        {hostUserId && row.user_id === hostUserId ? (
+                        {rowIncludesUser(row, hostUserId) ? (
                           <span className="text-muted-foreground"> (Host)</span>
+                        ) : null}
+                        {leaderboardMemberLine(row) ? (
+                          <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                            {leaderboardMemberLine(row)}
+                          </span>
                         ) : null}
                       </span>
                       <span className="font-medium tabular-nums">
-                        {row.total_points} {scoreUnit}
+                        {formatTeamScore(row.total_points)} {scoreUnit}
                       </span>
                     </li>
                   ))}
@@ -1561,15 +1702,32 @@ export function QuizPlayPanels({
             showChartOne={chartComboEnabled}
             chartCountries={settings.chartCountries}
           />
-          <RoundGuessesList
-            guesses={displayResultGuesses}
-            showChartGuess={chartComboEnabled}
-            wasNumberOne={
-              chartComboEnabled ? displayResultRound.chart_was_number_one : null
-            }
-            currentUserId={currentUserId}
-            scoreUnit={scoreUnit}
-          />
+          {settings.teamsEnabled ? (
+            <TeamRoundGuessesList
+              groups={displayResultTeamGroups}
+              showChartGuess={chartComboEnabled}
+              wasNumberOne={
+                chartComboEnabled ? displayResultRound.chart_was_number_one : null
+              }
+              currentUserId={currentUserId}
+              scoreUnit={scoreUnit}
+              emptyLabel={
+                !isHost && !settings.showOthersInPastResults
+                  ? "Only your team is shown for this round."
+                  : "No team results this round."
+              }
+            />
+          ) : (
+            <RoundGuessesList
+              guesses={displayResultGuesses}
+              showChartGuess={chartComboEnabled}
+              wasNumberOne={
+                chartComboEnabled ? displayResultRound.chart_was_number_one : null
+              }
+              currentUserId={currentUserId}
+              scoreUnit={scoreUnit}
+            />
+          )}
         </section>
         ) : null}
       </FadeMount>
@@ -1594,19 +1752,24 @@ export function QuizPlayPanels({
                   <span className="font-medium">
                     #{index + 1} {row.display_name}
                   </span>
-                  {row.user_id === currentUserId ? (
+                  {rowIncludesUser(row, currentUserId) ? (
                     <span className="ml-2 text-xs text-muted-foreground">(you)</span>
                   ) : null}
-                  {hostUserId && row.user_id === hostUserId ? (
+                  {rowIncludesUser(row, hostUserId) ? (
                     <span className="ml-2 text-xs text-muted-foreground">(host)</span>
+                  ) : null}
+                  {leaderboardMemberLine(row) ? (
+                    <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
+                      {leaderboardMemberLine(row)}
+                    </span>
                   ) : null}
                 </span>
                 <span className="shrink-0 font-medium tabular-nums">
-                  {row.total_points} {scoreUnit}
+                  {formatTeamScore(row.total_points)} {scoreUnit}
                   <span className="ml-2 font-normal text-muted-foreground">
                     {scoringLowWins(settings)
-                      ? `(${row.last_round_points ?? 0})`
-                      : `(+${row.last_round_points ?? 0})`}
+                      ? `(${formatTeamScore(row.last_round_points ?? 0)})`
+                      : `(+${formatTeamScore(row.last_round_points ?? 0)})`}
                   </span>
                 </span>
               </li>
@@ -1746,20 +1909,37 @@ export function QuizPlayPanels({
                           </Button>
                         ) : null}
                       </div>
-                      <RoundGuessesList
-                        guesses={round.guesses}
-                        showChartGuess={chartComboEnabled}
-                        wasNumberOne={
-                          chartComboEnabled ? round.chart_was_number_one : null
-                        }
-                        currentUserId={currentUserId}
-                        scoreUnit={scoreUnit}
-                        emptyLabel={
-                          !isHost && !settings.showOthersInPastResults
-                            ? "Only your guess is shown for this round."
-                            : "No guesses this round."
-                        }
-                      />
+                      {settings.teamsEnabled ? (
+                        <TeamRoundGuessesList
+                          groups={round.teamGroups ?? []}
+                          showChartGuess={chartComboEnabled}
+                          wasNumberOne={
+                            chartComboEnabled ? round.chart_was_number_one : null
+                          }
+                          currentUserId={currentUserId}
+                          scoreUnit={scoreUnit}
+                          emptyLabel={
+                            !isHost && !settings.showOthersInPastResults
+                              ? "Only your team is shown for this round."
+                              : "No team results this round."
+                          }
+                        />
+                      ) : (
+                        <RoundGuessesList
+                          guesses={round.guesses}
+                          showChartGuess={chartComboEnabled}
+                          wasNumberOne={
+                            chartComboEnabled ? round.chart_was_number_one : null
+                          }
+                          currentUserId={currentUserId}
+                          scoreUnit={scoreUnit}
+                          emptyLabel={
+                            !isHost && !settings.showOthersInPastResults
+                              ? "Only your guess is shown for this round."
+                              : "No guesses this round."
+                          }
+                        />
+                      )}
                       {round.preview_url ? (
                         <SongPreviewPlayer previewUrl={round.preview_url} />
                       ) : null}

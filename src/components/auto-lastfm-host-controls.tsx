@@ -71,6 +71,8 @@ type AutoLastfmHostControlsProps = {
   liveDeferredTrackKey?: string | null;
   /** Skip outer card chrome when wrapped in CollapsibleCard. */
   embedded?: boolean;
+  /** Team mode: block Start Quiz Now until teams are ready. */
+  officialStartBlockedReason?: string | null;
 };
 
 type NowPlayingTrack = {
@@ -125,6 +127,7 @@ export function AutoLastfmHostControls({
   liveOpenMode: initialOpenMode = "automatic",
   liveDeferredTrackKey: initialDeferredTrackKey = null,
   embedded = false,
+  officialStartBlockedReason = null,
 }: AutoLastfmHostControlsProps) {
   const router = useRouter();
   const [username, setUsername] = useState(initialUsername);
@@ -984,20 +987,28 @@ export function AutoLastfmHostControls({
       ) : null}
 
       {!localQuizStarted ? (
-        <Button
-          type="button"
-          className="w-full"
-          disabled={hostBusy || disabled}
-          onClick={() => {
-            if (canStartWithThisSong) {
-              setStartQuizConfirmOpen(true);
-              return;
-            }
-            void onStartQuizNow(false);
-          }}
-        >
-          Start Quiz Now
-        </Button>
+        <>
+          {officialStartBlockedReason ? (
+            <p className="text-sm text-amber-800 dark:text-amber-400">
+              {officialStartBlockedReason}
+            </p>
+          ) : null}
+          <Button
+            type="button"
+            className="w-full"
+            disabled={hostBusy || disabled || Boolean(officialStartBlockedReason)}
+            onClick={() => {
+              if (officialStartBlockedReason) return;
+              if (canStartWithThisSong) {
+                setStartQuizConfirmOpen(true);
+                return;
+              }
+              void onStartQuizNow(false);
+            }}
+          >
+            Start Quiz Now
+          </Button>
+        </>
       ) : null}
 
       <div className="border-t border-border/60" />

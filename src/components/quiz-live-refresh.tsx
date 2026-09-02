@@ -14,6 +14,11 @@ import type {
 } from "@/lib/quizzes/play-state";
 import type { BeatageQuizSettings } from "@/lib/quiz-settings";
 import { DEFAULT_QUIZ_SETTINGS } from "@/lib/quiz-settings";
+import type {
+  QuizRosterMember,
+  QuizTeamInfo,
+  TeamRoundGroup,
+} from "@/lib/quiz-teams";
 
 type QuizLiveRefreshProps = {
   quizId: string;
@@ -42,6 +47,10 @@ export type QuizPlaySnapshot = {
   myGuessWasNumberOne: boolean | null;
   leaderboard: LeaderboardRow[];
   memberCount: number;
+  roster: QuizRosterMember[];
+  teams: QuizTeamInfo[];
+  teamsLocked: boolean;
+  resultTeamGroups: TeamRoundGroup[];
   quizStatus: string;
   maxCuratedTracks: number | null;
   settings: BeatageQuizSettings;
@@ -138,6 +147,10 @@ async function fetchQuizPlaySnapshot(
     myGuessWasNumberOne: state.myGuessWasNumberOne ?? null,
     leaderboard: state.leaderboard,
     memberCount: state.memberCount ?? 0,
+    roster: state.roster ?? [],
+    teams: state.teams ?? [],
+    teamsLocked: Boolean(state.teamsLocked),
+    resultTeamGroups: state.resultTeamGroups ?? [],
     quizStatus: state.quizStatus ?? "open",
     maxCuratedTracks:
       state.maxCuratedTracks === undefined
@@ -178,6 +191,11 @@ function snapshotStructuralFingerprint(snapshot: QuizPlaySnapshot): string {
         ? "0"
         : "",
     snapshot.memberCount,
+    (snapshot.teams ?? []).map((t) => `${t.id}:${t.member_user_ids.join(".")}`).join(","),
+    snapshot.teamsLocked ? "1" : "0",
+    (snapshot.resultTeamGroups ?? [])
+      .map((g) => `${g.team_id}:${g.average_points}:${g.aggregateOnly ? "a" : "f"}`)
+      .join(","),
     snapshot.roundGuesses
       .map(
         (g) =>
@@ -196,6 +214,7 @@ function snapshotStructuralFingerprint(snapshot: QuizPlaySnapshot): string {
     snapshot.settings.showOverallResults ? "1" : "0",
     snapshot.settings.showResultDetails ? "1" : "0",
     snapshot.settings.showOthersInPastResults ? "1" : "0",
+    snapshot.settings.teamsEnabled ? "1" : "0",
     snapshot.settings.overallReveal,
   ].join("|");
 }
@@ -448,6 +467,26 @@ export function QuizLiveRefresh({
             event: "*",
             schema: "public",
             table: "beatage_quiz_members",
+            filter: `quiz_id=eq.${quizId}`,
+          },
+          onMemberChange,
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "beatage_teams",
+            filter: `quiz_id=eq.${quizId}`,
+          },
+          onMemberChange,
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "beatage_team_members",
             filter: `quiz_id=eq.${quizId}`,
           },
           onMemberChange,

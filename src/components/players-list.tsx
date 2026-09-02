@@ -11,7 +11,9 @@ import { CollapsibleCard } from "@/components/collapsible-card";
 import {
   broadcastQuizResync,
   subscribeQuizGuesses,
+  subscribeQuizPlay,
 } from "@/components/quiz-live-refresh";
+import type { QuizTeamInfo } from "@/lib/quiz-teams";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +42,8 @@ type PlayersListProps = {
   currentUserId: string;
   isHost: boolean;
   maxMembers?: number | null;
+  teamsEnabled?: boolean;
+  teams?: QuizTeamInfo[];
 };
 
 const initialRemoveState: QuizActionState = null;
@@ -70,6 +74,15 @@ function orderPlayersForDisplay(
   });
 }
 
+function teamNameForUser(
+  teams: QuizTeamInfo[],
+  userId: string,
+): string | null {
+  const team = teams.find((row) => row.member_user_ids.includes(userId));
+  const name = team?.name?.trim();
+  return name || null;
+}
+
 function CompactBadge({
   children,
   variant = "outline",
@@ -91,9 +104,13 @@ export function PlayersList({
   currentUserId,
   isHost,
   maxMembers = null,
+  teamsEnabled = false,
+  teams: initialTeams = [],
 }: PlayersListProps) {
   const router = useRouter();
   const [members, setMembers] = useState(initialMembers);
+  const [teams, setTeams] = useState(initialTeams);
+  const [teamsOn, setTeamsOn] = useState(teamsEnabled);
   const [detailTarget, setDetailTarget] = useState<PlayerRow | null>(null);
   const [removeTarget, setRemoveTarget] = useState<PlayerRow | null>(null);
   const [removeState, removeAction, removePending] = useActionState(
@@ -104,6 +121,19 @@ export function PlayersList({
   useEffect(() => {
     setMembers(initialMembers);
   }, [initialMembers]);
+
+  useEffect(() => {
+    setTeams(initialTeams);
+    setTeamsOn(teamsEnabled);
+  }, [initialTeams, teamsEnabled]);
+
+  useEffect(() => {
+    return subscribeQuizPlay(quizId, (patch) => {
+      if (patch.type !== "replace") return;
+      setTeams(patch.snapshot.teams ?? []);
+      setTeamsOn(Boolean(patch.snapshot.settings?.teamsEnabled));
+    });
+  }, [quizId]);
 
   // Keep "Last submitted" fresh while the host stays on the page (guesses
   // do not trigger a full RSC refresh).
@@ -171,6 +201,9 @@ export function PlayersList({
               const isMe = member.userId === currentUserId;
               const canManagePlayer = isHost && member.role === "participant";
               const roleLabel = member.role === "host" ? "host" : "player";
+              const teamName = teamsOn
+                ? teamNameForUser(teams, member.userId)
+                : null;
 
               return (
                 <li key={member.id}>
@@ -190,6 +223,11 @@ export function PlayersList({
                         {isMe ? (
                           <span className="ml-2 text-xs text-muted-foreground">
                             (you)
+                          </span>
+                        ) : null}
+                        {teamName ? (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            ({teamName})
                           </span>
                         ) : null}
                       </p>

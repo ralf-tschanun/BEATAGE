@@ -60,6 +60,7 @@ import {
 import {
   DEFAULT_MAX_CURATED_TRACKS,
   getQuizPlanLimits,
+  planAllowsQuizTeams,
   QUIZ_UNLOCK_LIMITS,
   type PlanId,
 } from "@/lib/quiz-plans";
@@ -292,6 +293,7 @@ export function CreateQuizWizardForm({
         scoringModes: current.scoringModes,
         yearRangeTolerance: current.yearRangeTolerance,
         hostParticipates: current.hostParticipates,
+        teamsEnabled: current.teamsEnabled,
         guessPeriod:
           current.playMode === "auto_lastfm" || current.playMode === "auto_spotify"
             ? "until_next_track"
@@ -1062,6 +1064,22 @@ export function CreateQuizWizardForm({
                         }
                       />
 
+                      <AdminSwitchField
+                        id="teamsEnabled"
+                        label="Team mode"
+                        description={
+                          planAllowsQuizTeams(planId)
+                            ? "Create Teams of participants to play against each other."
+                            : "Plus & Pro Plan only. Create Teams of participants to play against each other."
+                        }
+                        checked={planAllowsQuizTeams(planId) && wizard.teamsEnabled}
+                        disabled={!planAllowsQuizTeams(planId)}
+                        onCheckedChange={(checked) => {
+                          if (!planAllowsQuizTeams(planId)) return;
+                          patchWizard({ teamsEnabled: checked });
+                        }}
+                      />
+
                       <WizardCollapsibleOptions sectionId="quiz-create-options">
                         <div className="space-y-2">
                           <Label>Release Year</Label>
@@ -1136,8 +1154,16 @@ export function CreateQuizWizardForm({
                           {wizard.showResultDetails ? (
                             <AdminSwitchField
                               id="showOthersInPastResults"
-                              label="Show other players' results"
-                              description="Let participants see other player's guesses. Turn off for large groups."
+                              label={
+                                wizard.teamsEnabled
+                                  ? "Show other teams' results"
+                                  : "Show other players' results"
+                              }
+                              description={
+                                wizard.teamsEnabled
+                                  ? "Participants always see their own team. When on, they also see other teams' average scores — not individual years."
+                                  : "Let participants see other player's guesses. Turn off for large groups."
+                              }
                               checked={wizard.showOthersInPastResults}
                               onCheckedChange={(checked) =>
                                 patchWizard({ showOthersInPastResults: checked })

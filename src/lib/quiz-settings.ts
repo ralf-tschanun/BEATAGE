@@ -73,6 +73,11 @@ export type BeatageQuizSettings = {
    */
   overallReveal: OverallReveal;
   hostParticipates: boolean;
+  /**
+   * Plus/Pro: players guess individually; leaderboard ranks teams by the
+   * average of member scores. Host assigns teams in the lobby.
+   */
+  teamsEnabled: boolean;
   scoringModes: ScoringModeId[];
   combinedScoring: boolean;
   secondaryScoringMode: ScoringModeId | null;
@@ -258,6 +263,7 @@ export const DEFAULT_QUIZ_SETTINGS: BeatageQuizSettings = {
   roundReveal: "after_round",
   overallReveal: "after_quiz",
   hostParticipates: true,
+  teamsEnabled: false,
   scoringModes: ["year_distance"],
   combinedScoring: false,
   secondaryScoringMode: null,

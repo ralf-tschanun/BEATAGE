@@ -108,6 +108,34 @@ export async function startRoundForHost(
     const isLive = source === "spotify_live" || source === "lastfm_live";
     const isPreRound = isLive && runtime.quizStarted === false;
 
+    if (settings.teamsEnabled && !isPreRound) {
+      const { loadQuizTeams } = await import("@/lib/quizzes/teams");
+      const {
+        scoringRoster,
+        teamsOfficialStartBlockReason,
+      } = await import("@/lib/quiz-teams");
+      const loaded = await loadQuizTeams(quizId);
+      if (!loaded.locked) {
+        const { data: members } = await admin
+          .from("beatage_quiz_members")
+          .select("user_id, display_name, role")
+          .eq("quiz_id", quizId);
+        const blocked = teamsOfficialStartBlockReason({
+          teamsEnabled: true,
+          teams: loaded.teams,
+          scoringMembers: scoringRoster(
+            (members ?? []) as Array<{
+              user_id: string;
+              display_name: string;
+              role: string;
+            }>,
+            settings.hostParticipates,
+          ),
+        });
+        if (blocked) return { error: blocked };
+      }
+    }
+
     // Plan / unlock round cap — official rounds only (pre-rounds / skips do not
     // consume the cap). Count from the rounds table so a stale
     // current_round_number (older pre-round increments) cannot block play.
@@ -268,6 +296,32 @@ export async function startOfficialQuizForHost(
     const runtime = readQuizSettingsRuntime(quiz.settings);
     if (runtime.quizStarted !== false) {
       return {};
+    }
+
+    if (settings.teamsEnabled) {
+      const { loadQuizTeams } = await import("@/lib/quizzes/teams");
+      const {
+        scoringRoster,
+        teamsOfficialStartBlockReason,
+      } = await import("@/lib/quiz-teams");
+      const loaded = await loadQuizTeams(quizId);
+      const { data: members } = await admin
+        .from("beatage_quiz_members")
+        .select("user_id, display_name, role")
+        .eq("quiz_id", quizId);
+      const blocked = teamsOfficialStartBlockReason({
+        teamsEnabled: true,
+        teams: loaded.teams,
+        scoringMembers: scoringRoster(
+          (members ?? []) as Array<{
+            user_id: string;
+            display_name: string;
+            role: string;
+          }>,
+          settings.hostParticipates,
+        ),
+      });
+      if (blocked) return { error: blocked };
     }
 
     const includeCurrentSong = Boolean(opts?.includeCurrentSong);

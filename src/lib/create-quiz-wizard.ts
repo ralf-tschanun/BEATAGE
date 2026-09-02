@@ -53,6 +53,8 @@ export type CreateQuizWizardState = {
   /** Range mode only (±0–20 years). */
   yearRangeTolerance: number;
   hostParticipates: boolean;
+  /** Plus/Pro: average member scores onto team leaderboard rows. */
+  teamsEnabled: boolean;
   /** Which release year counts as the answer. */
   answerYearMode: AnswerYearMode;
   showTitleArtist: boolean;
@@ -91,6 +93,7 @@ export function defaultQuizWizardState(hostName = ""): CreateQuizWizardState {
     scoringModes: [...DEFAULT_QUIZ_SETTINGS.scoringModes],
     yearRangeTolerance: DEFAULT_QUIZ_SETTINGS.yearRangeTolerance,
     hostParticipates: DEFAULT_QUIZ_SETTINGS.hostParticipates,
+    teamsEnabled: DEFAULT_QUIZ_SETTINGS.teamsEnabled,
     answerYearMode: DEFAULT_QUIZ_SETTINGS.answerYearMode,
     showTitleArtist: DEFAULT_QUIZ_SETTINGS.showTitleArtist,
     showCorrectAnswer: DEFAULT_QUIZ_SETTINGS.showCorrectAnswer,
@@ -243,6 +246,7 @@ export function quizWizardSettingsSummary(state: CreateQuizWizardState): string 
         ? "others in past results on"
         : "others in past results off"
       : null,
+    state.teamsEnabled ? "teams on" : null,
   ]
     .filter(Boolean)
     .join(", ");
@@ -347,6 +351,10 @@ export function loadQuizWizardState(hostName: string): CreateQuizWizardState | n
       yearRangeTolerance: clampYearRangeTolerance(
         parsed.yearRangeTolerance ?? base.yearRangeTolerance,
       ),
+      hostParticipates: Boolean(
+        parsed.hostParticipates ?? base.hostParticipates,
+      ),
+      teamsEnabled: Boolean(parsed.teamsEnabled ?? base.teamsEnabled),
       answerYearMode:
         parsed.answerYearMode === "original_recording" ||
         parsed.answerYearMode === "this_release"

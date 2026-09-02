@@ -122,6 +122,12 @@ export function QuizRulesContent({
           : null}
       </p>
       <p>
+        <span className="text-muted-foreground">Teams:</span>{" "}
+        {settings.teamsEnabled
+          ? "on — players guess on their own; the leaderboard ranks teams by the average score"
+          : "off"}
+      </p>
+      <p>
         <span className="text-muted-foreground">Host role:</span>{" "}
         {settings.hostParticipates
           ? "Host also plays along"
@@ -157,8 +163,12 @@ export function QuizRulesContent({
         <span className="text-muted-foreground">Result details:</span>{" "}
         {settings.showResultDetails
           ? settings.showOthersInPastResults
-            ? "previous rounds expand to full results for everyone"
-            : "previous rounds expand; participants only see their own guess"
+            ? settings.teamsEnabled
+              ? "previous rounds expand; other teams show as averages only"
+              : "previous rounds expand to full results for everyone"
+            : settings.teamsEnabled
+              ? "previous rounds expand; participants only see their own team"
+              : "previous rounds expand; participants only see their own guess"
           : "previous rounds show your years only"}
       </p>
       {isLive ? (
