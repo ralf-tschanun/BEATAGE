@@ -136,6 +136,9 @@ export function AutoSpotifyHostControls({
   const deferredTrackIdRef = useRef<string | null>(null);
   const debounceTimerRef = useRef<number | null>(null);
   const wasPlayingRef = useRef(false);
+  /** First successful now-playing poll — leftover playback is not a new detection. */
+  const playbackPrimedRef = useRef(false);
+  const hasActiveRoundRef = useRef(hasActiveRound);
   const openModeRef = useRef<OpenMode>(openMode);
   const listenSecondsRef = useRef(listenSeconds);
 
@@ -148,6 +151,7 @@ export function AutoSpotifyHostControls({
   }, [listenSeconds]);
 
   useEffect(() => {
+    hasActiveRoundRef.current = hasActiveRound;
     if (!hasActiveRound) setCloseInFlight(false);
   }, [hasActiveRound]);
 
@@ -396,6 +400,7 @@ export function AutoSpotifyHostControls({
         setError(null);
 
         if (!data.playing || !data.track) {
+          playbackPrimedRef.current = true;
           setNowPlaying(null);
           if (wasPlayingRef.current) {
             wasPlayingRef.current = false;
@@ -422,8 +427,34 @@ export function AutoSpotifyHostControls({
         const label = trackLabel(track);
 
         if (!track.isPlaying) {
+          playbackPrimedRef.current = true;
           setStatus(`Paused — ${label}`);
           return;
+        }
+
+        // First observation: a track already playing when the host page loaded
+        // is leftover playback, not a newly recognized song. Wait for the next
+        // track (or Manual → Reveal) before opening Pre Round 1.
+        if (!playbackPrimedRef.current) {
+          playbackPrimedRef.current = true;
+          if (hasActiveRoundRef.current) {
+            lastSpotifyIdRef.current = track.spotifyTrackId;
+            wasPlayingRef.current = true;
+            setStatus(`Listening — ${label}`);
+            return;
+          }
+          if (lastSpotifyIdRef.current == null) {
+            lastSpotifyIdRef.current = track.spotifyTrackId;
+            wasPlayingRef.current = true;
+            if (openModeRef.current === "manual") {
+              scheduleOpen(track.spotifyTrackId, label);
+              return;
+            }
+            setStatus(
+              `Listening — ${label} (round opens when the next song starts)`,
+            );
+            return;
+          }
         }
 
         const changed = lastSpotifyIdRef.current !== track.spotifyTrackId;
@@ -507,8 +538,7 @@ export function AutoSpotifyHostControls({
     openModeRef.current = mode;
 
     const track = nowPlaying;
-    const pendingId = pendingSpotifyIdRef.current;
-    if (!track || pendingId !== track.spotifyTrackId) return;
+    if (!track || !track.isPlaying) return;
     if (deferredTrackIdRef.current === track.spotifyTrackId) return;
     if (autoInterrupted) return;
 
@@ -788,8 +818,9 @@ export function AutoSpotifyHostControls({
         <p className="text-sm text-muted-foreground">{status}</p>
         {!localQuizStarted ? (
           <p className="mt-1 text-sm text-muted-foreground">
-            Pre-rounds are running so everyone can practice. Scores are saved but
-            do not count on the leaderboard until you start the quiz.
+            Pre-rounds open after a song is recognized so everyone can practice.
+            Scores are saved but do not count on the leaderboard until you start
+            the quiz.
           </p>
         ) : null}
       </div>

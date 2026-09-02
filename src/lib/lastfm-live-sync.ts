@@ -130,7 +130,7 @@ export async function syncLastfmLiveQuiz(opts: {
 }): Promise<LastfmLiveSyncResult> {
   const id = opts.quizId.trim();
   const code = opts.joinCode.trim().toUpperCase();
-  const openNewRound = opts.openNewRound !== false;
+  let openNewRound = opts.openNewRound !== false;
   const admin = createAdminClient();
 
   const quizRow = await loadQuizRow(admin, id);
@@ -171,6 +171,11 @@ export async function syncLastfmLiveQuiz(opts: {
         hostUserId: opts.hostUserId,
         rawSettings,
       });
+    }
+    // Pre-round warm-up: only the host tab opens rounds (listen debounce / reveal).
+    // Cron still closes rounds when the track stops or changes.
+    if (runtime.quizStarted === false) {
+      openNewRound = false;
     }
   }
 

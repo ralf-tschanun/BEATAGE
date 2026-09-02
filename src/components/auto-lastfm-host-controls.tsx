@@ -164,6 +164,9 @@ export function AutoLastfmHostControls({
   const deferredKeyRef = useRef<string | null>(initialDeferredTrackKey);
   const debounceTimerRef = useRef<number | null>(null);
   const wasPlayingRef = useRef(false);
+  /** First successful now-playing poll — leftover playback is not a new detection. */
+  const playbackPrimedRef = useRef(false);
+  const hasActiveRoundRef = useRef(hasActiveRound);
   const syncInFlightRef = useRef(false);
   const pollInFlightRef = useRef(false);
   const notPlayingStreakRef = useRef(0);
@@ -200,6 +203,7 @@ export function AutoLastfmHostControls({
   }, [listenSeconds]);
 
   useEffect(() => {
+    hasActiveRoundRef.current = hasActiveRound;
     if (!hasActiveRound) setCloseInFlight(false);
   }, [hasActiveRound]);
 
@@ -489,6 +493,7 @@ export function AutoLastfmHostControls({
         reportError(null);
 
         if (!data.playing || !data.track) {
+          playbackPrimedRef.current = true;
           notPlayingStreakRef.current += 1;
           // Mid-song Last.fm blip: keep lastKey so when the same track returns we
           // do not treat it as a new song. A real next song arrives as playing+new
@@ -538,6 +543,31 @@ export function AutoLastfmHostControls({
           wasPlayingRef.current = true;
           setStatus(`Paused · Now: ${track.title} — ${track.artist}`);
           return;
+        }
+
+        // First observation: a track already playing when the host page loaded
+        // is leftover playback, not a newly recognized song. Wait for the next
+        // track (or Manual → Reveal) before opening Pre Round 1.
+        if (!playbackPrimedRef.current) {
+          playbackPrimedRef.current = true;
+          if (hasActiveRoundRef.current) {
+            lastKeyRef.current = track.trackKey;
+            wasPlayingRef.current = true;
+            setStatus(`Listening — ${trackLabel(track)}`);
+            return;
+          }
+          if (lastKeyRef.current == null) {
+            lastKeyRef.current = track.trackKey;
+            wasPlayingRef.current = true;
+            if (openModeRef.current === "manual") {
+              scheduleOpenRef.current(track);
+              return;
+            }
+            setStatus(
+              `Listening — ${trackLabel(track)} (round opens when the next song starts)`,
+            );
+            return;
+          }
         }
 
         // New song → close previous round immediately, then debounce-open / wait for reveal.
@@ -653,8 +683,7 @@ export function AutoLastfmHostControls({
     void patchLastfmLiveRuntimeAction(quizId, joinCode, { liveOpenMode: mode });
 
     const track = nowPlaying;
-    const pendingKey = pendingKeyRef.current;
-    if (!track || pendingKey !== track.trackKey) return;
+    if (!track) return;
     if (deferredKeyRef.current === track.trackKey) return;
     if (autoInterruptedRef.current) return;
 
@@ -872,6 +901,7 @@ export function AutoLastfmHostControls({
       lastKeyRef.current = null;
       deferredKeyRef.current = null;
       notPlayingStreakRef.current = 0;
+      playbackPrimedRef.current = false;
       router.refresh();
     } finally {
       setBusy(false);
@@ -967,8 +997,9 @@ export function AutoLastfmHostControls({
         <p className="text-sm text-muted-foreground">{status}</p>
         {!localQuizStarted ? (
           <p className="mt-1 text-sm text-muted-foreground">
-            Pre-rounds are running so everyone can practice. Scores are saved but
-            do not count on the leaderboard until you start the quiz.
+            Pre-rounds open after a song is recognized so everyone can practice.
+            Scores are saved but do not count on the leaderboard until you start
+            the quiz.
           </p>
         ) : null}
       </div>

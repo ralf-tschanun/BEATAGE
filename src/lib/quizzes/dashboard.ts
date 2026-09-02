@@ -21,6 +21,8 @@ export type DashboardQuiz = {
   member_count?: number | null;
   /** Final placement when the quiz is finished/expired; null if unknown or not placed. */
   my_rank?: number | null;
+  /** True when dashboard placement is the team standing, not the individual. */
+  teams_enabled?: boolean;
 };
 
 export type DashboardIdentity = {

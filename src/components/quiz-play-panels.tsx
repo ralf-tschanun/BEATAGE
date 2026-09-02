@@ -827,22 +827,6 @@ export function QuizPlayPanels({
 
   return (
     <div className="space-y-8">
-      {settings.teamsEnabled ? (
-        <QuizTeamsPanel
-          quizId={quizId}
-          joinCode={joinCode}
-          isHost={isHost}
-          currentUserId={currentUserId ?? ""}
-          hostParticipates={settings.hostParticipates}
-          locked={teamsLocked}
-          teams={teams}
-          roster={roster}
-          onTeamsChange={(next) =>
-            setLive((prev) => ({ ...prev, teams: next }))
-          }
-        />
-      ) : null}
-
       {isHost && isLastfmLive ? (
         <CollapsibleCard
           sectionId={`quiz-${quizId}-live-spotify`}
@@ -1215,7 +1199,7 @@ export function QuizPlayPanels({
                 ? `The quiz was paused because no one guessed for ${inactivityRoundCount} song${inactivityRoundCount === 1 ? "" : "s"} in a row. The host will resume when everyone is ready.`
                 : isLive
                   ? !quizStarted
-                    ? "Pre-rounds are open for practice. The host will start the quiz when everyone is ready."
+                    ? "Warm-up is on. Guessing starts when the host's next song is recognized."
                     : currentRoundNumber > 0
                       ? "Round results are on the board. The next song in Spotify will open a new round."
                       : isLastfmLive
@@ -2057,6 +2041,22 @@ export function QuizPlayPanels({
             </DialogContent>
           </Dialog>
         </CollapsibleCard>
+      ) : null}
+
+      {settings.teamsEnabled ? (
+        <QuizTeamsPanel
+          quizId={quizId}
+          joinCode={joinCode}
+          isHost={isHost}
+          currentUserId={currentUserId ?? ""}
+          hostParticipates={settings.hostParticipates}
+          locked={teamsLocked}
+          teams={teams}
+          roster={roster}
+          onTeamsChange={(next) =>
+            setLive((prev) => ({ ...prev, teams: next }))
+          }
+        />
       ) : null}
     </div>
   );

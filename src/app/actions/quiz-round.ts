@@ -715,6 +715,19 @@ export async function syncAutoSpotifyRoundAction(
     };
   }
 
+  if (track.isPlaying === false) {
+    revalidatePath(`/q/${code}`);
+    return {
+      ok: true,
+      trackTitle: track.title,
+      trackArtist: track.artist,
+      closedRound,
+      startedRound: false,
+      interrupted,
+      emptyStreak,
+    };
+  }
+
   const { createClient } = await import("@/lib/supabase/server");
   const supabase = await createClient();
   const addResult = await addCuratedTrackToQuiz(supabase, id, {

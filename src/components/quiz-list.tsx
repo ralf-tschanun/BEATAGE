@@ -31,13 +31,29 @@ import { quizSourceLabel } from "@/lib/quiz-settings";
 import type { SiteNavItemId } from "@/lib/site-nav-items";
 import { cn } from "@/lib/utils";
 
-function QuizPlacementBadge({ rank }: { rank: number }) {
+function QuizPlacementBadge({
+  rank,
+  team = false,
+}: {
+  rank: number;
+  team?: boolean;
+}) {
+  const place =
+    rank === 1
+      ? "1st place"
+      : rank === 2
+        ? "2nd place"
+        : rank === 3
+          ? "3rd place"
+          : `#${rank}`;
+  const label = team ? `${place} (team)` : place;
+
   if (rank === 1) {
     return (
       <span
         className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300"
-        title="1st place"
-        aria-label="1st place"
+        title={label}
+        aria-label={label}
       >
         <TrophyIcon className="size-5" weight="fill" aria-hidden />
       </span>
@@ -47,8 +63,8 @@ function QuizPlacementBadge({ rank }: { rank: number }) {
     return (
       <span
         className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-slate-400/20 text-slate-600 dark:text-slate-300"
-        title="2nd place"
-        aria-label="2nd place"
+        title={label}
+        aria-label={label}
       >
         <MedalIcon className="size-5" weight="fill" aria-hidden />
       </span>
@@ -58,8 +74,8 @@ function QuizPlacementBadge({ rank }: { rank: number }) {
     return (
       <span
         className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-orange-500/15 text-orange-800 dark:text-orange-300"
-        title="3rd place"
-        aria-label="3rd place"
+        title={label}
+        aria-label={label}
       >
         <MedalIcon className="size-5" weight="fill" aria-hidden />
       </span>
@@ -68,8 +84,8 @@ function QuizPlacementBadge({ rank }: { rank: number }) {
   return (
     <span
       className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-full bg-muted/80 px-2 text-sm font-semibold tabular-nums text-muted-foreground"
-      title={`#${rank}`}
-      aria-label={`Place #${rank}`}
+      title={label}
+      aria-label={team ? `Team place #${rank}` : `Place #${rank}`}
     >
       #{rank}
     </span>
@@ -120,9 +136,12 @@ function QuizRowLinkStatus() {
 function QuizRow({
   quiz,
   className,
+  showMaxMembers = true,
 }: {
   quiz: DashboardQuiz;
   className?: string;
+  /** Hosted list: show plan/unlock seat cap. Joined list: actual turnout only. */
+  showMaxMembers?: boolean;
 }) {
   const myRank =
     typeof quiz.my_rank === "number" &&
@@ -164,7 +183,10 @@ function QuizRow({
           {quiz.member_count != null ? (
             <span className="text-xs text-muted-foreground">
               {quiz.member_count}
-              {quiz.max_members != null ? ` / ${quiz.max_members}` : ""} players
+              {showMaxMembers && quiz.max_members != null
+                ? ` / ${quiz.max_members}`
+                : ""}{" "}
+              players
             </span>
           ) : null}
           {quiz.expires_at ? (
@@ -174,7 +196,9 @@ function QuizRow({
           ) : null}
         </div>
       </div>
-      {myRank != null ? <QuizPlacementBadge rank={myRank} /> : null}
+      {myRank != null ? (
+        <QuizPlacementBadge rank={myRank} team={Boolean(quiz.teams_enabled)} />
+      ) : null}
     </Link>
   );
 }
@@ -224,6 +248,7 @@ export function QuizList({
   const formAction = rowAction === "delete" ? deleteAction : leaveAction;
   const copy = actionTarget && rowAction ? rowActionCopy(rowAction, actionTarget.title) : null;
   const visibleQuizzes = quizzes.filter((quiz) => !hiddenIds.has(quiz.id));
+  const showMaxMembers = sectionIcon !== "joined";
 
   useEffect(() => {
     if (pending) {
@@ -266,7 +291,7 @@ export function QuizList({
             if (!rowAction) {
               return (
                 <li key={quiz.id}>
-                  <QuizRow quiz={quiz} />
+                  <QuizRow quiz={quiz} showMaxMembers={showMaxMembers} />
                 </li>
               );
             }
@@ -286,7 +311,11 @@ export function QuizList({
                     actionLabel={actionCopy.actionLabel}
                     onRequestRemove={() => setActionTarget(quiz)}
                   >
-                    <QuizRow quiz={quiz} className="-mx-4" />
+                    <QuizRow
+                      quiz={quiz}
+                      className="-mx-4"
+                      showMaxMembers={showMaxMembers}
+                    />
                   </SwipeToRemoveRow>
                 </div>
                 <button
