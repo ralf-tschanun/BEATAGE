@@ -21,6 +21,7 @@ import {
   countQuizPlanConsumedRounds,
   getQuizCuratedTrackLimit,
 } from "@/lib/quiz-tracks";
+import { resolveActiveRound, isRoundAlreadyClosedError } from "@/lib/quiz-active-round";
 
 async function assertQuizHost(quizId: string, userId: string) {
   const admin = createAdminClient();
@@ -65,13 +66,7 @@ export async function startRoundForHost(
     await assertQuizHost(quizId, userId);
     const admin = createAdminClient();
 
-    const { data: active } = await admin
-      .from("beatage_rounds")
-      .select("id")
-      .eq("quiz_id", quizId)
-      .eq("status", "active")
-      .maybeSingle();
-
+    const active = await resolveActiveRound(quizId);
     if (active) {
       return { error: "ROUND_ALREADY_ACTIVE" };
     }
@@ -232,6 +227,10 @@ export async function startRoundForHost(
     });
 
     if (insertError) {
+      // Unique (quiz_id, round_number) or one-active-round index — another sync won.
+      if (insertError.code === "23505") {
+        return { error: "ROUND_ALREADY_ACTIVE" };
+      }
       return { error: insertError.message };
     }
 
@@ -328,21 +327,16 @@ export async function startOfficialQuizForHost(
 
     let closedRound = false;
     let promotedRound = false;
-    const { data: active } = await admin
-      .from("beatage_rounds")
-      .select("id, round_number")
-      .eq("quiz_id", quizId)
-      .eq("status", "active")
-      .maybeSingle();
+    const active = await resolveActiveRound(quizId);
 
     if (includeCurrentSong && active?.id) {
       promotedRound = true;
     } else if (!includeCurrentSong && active?.id) {
       const closed = await closeRoundForHost(active.id, userId);
-      if (closed.error) {
+      if (closed.error && !isRoundAlreadyClosedError(closed.error)) {
         return { error: closed.error };
       }
-      closedRound = true;
+      closedRound = !closed.error;
     }
 
     const { data: maxRoundRow } = await admin
@@ -673,17 +667,12 @@ export async function finishQuizForHost(
       return { error: "QUIZ_NOT_JOINABLE" };
     }
 
-    const { data: active } = await admin
-      .from("beatage_rounds")
-      .select("id")
-      .eq("quiz_id", quizId)
-      .eq("status", "active")
-      .maybeSingle();
+    const active = await resolveActiveRound(quizId);
 
     // Finish must work at plan limits when a round is still open — close it first.
     if (active) {
       const closed = await closeRoundForHost(active.id, userId);
-      if (closed.error) {
+      if (closed.error && !isRoundAlreadyClosedError(closed.error)) {
         return { error: closed.error };
       }
     }

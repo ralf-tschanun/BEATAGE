@@ -14,6 +14,10 @@ import {
   submitGuessForMember,
 } from "@/lib/quiz-play";
 import {
+  isRoundAlreadyClosedError,
+  resolveActiveRound,
+} from "@/lib/quiz-active-round";
+import {
   mergeQuizSettingsForStorage,
   readQuizSettingsRuntime,
   resolveQuizSettings,
@@ -352,12 +356,7 @@ export async function skipActiveRoundAction(
     return { error: mapError("NOT_HOST") };
   }
 
-  const { data: active } = await admin
-    .from("beatage_rounds")
-    .select("id, track_name, artist_name")
-    .eq("quiz_id", id)
-    .eq("status", "active")
-    .maybeSingle();
+  const active = await resolveActiveRound(id);
 
   if (!active?.id) {
     return { error: "This round is not open for guesses." };
@@ -550,29 +549,28 @@ export async function syncAutoSpotifyRoundAction(
   const hinted = parseSpotifyNowPlayingHint(opts?.nowPlaying);
   // Close-only: no Spotify round-trip — host already decided from the poll.
   if (opts?.forceClose && !openNewRound && hinted?.playing !== true) {
-    const { data: active } = await admin
-      .from("beatage_rounds")
-      .select("id")
-      .eq("quiz_id", id)
-      .eq("status", "active")
-      .maybeSingle();
+    const active = await resolveActiveRound(id);
     if (active?.id) {
       const closed = await closeRoundForHost(active.id, user.id);
-      if (closed.error) return { error: mapError(closed.error) };
-      const streak = await applyEmptyRoundStreak(
-        admin,
-        id,
-        active.id,
-        rawSettings,
-      );
-      revalidatePath(`/q/${code}`);
-      return {
-        ok: true,
-        closedRound: true,
-        nothingPlaying: hinted?.playing === false,
-        interrupted: streak.interrupted,
-        emptyStreak: streak.emptyStreak,
-      };
+      if (closed.error && !isRoundAlreadyClosedError(closed.error)) {
+        return { error: mapError(closed.error) };
+      }
+      if (!closed.error) {
+        const streak = await applyEmptyRoundStreak(
+          admin,
+          id,
+          active.id,
+          rawSettings,
+        );
+        revalidatePath(`/q/${code}`);
+        return {
+          ok: true,
+          closedRound: true,
+          nothingPlaying: hinted?.playing === false,
+          interrupted: streak.interrupted,
+          emptyStreak: streak.emptyStreak,
+        };
+      }
     }
     return { ok: true, nothingPlaying: true };
   }
@@ -603,35 +601,34 @@ export async function syncAutoSpotifyRoundAction(
   }
   if (!nowPlaying.playing) {
     if (opts?.forceClose) {
-      const { data: active } = await admin
-        .from("beatage_rounds")
-        .select("id")
-        .eq("quiz_id", id)
-        .eq("status", "active")
-        .maybeSingle();
+      const active = await resolveActiveRound(id);
       if (active?.id) {
         const closed = await closeRoundForHost(active.id, user.id);
-        if (closed.error) return { error: mapError(closed.error) };
-        const streak = await applyEmptyRoundStreak(
-          admin,
-          id,
-          active.id,
-          rawSettings,
-        );
-        const { data: refreshed } = await admin
-          .from("beatage_quizzes")
-          .select("settings")
-          .eq("id", id)
-          .maybeSingle();
-        rawSettings = refreshed?.settings ?? rawSettings;
-        revalidatePath(`/q/${code}`);
-        return {
-          ok: true,
-          closedRound: true,
-          nothingPlaying: true,
-          interrupted: streak.interrupted,
-          emptyStreak: streak.emptyStreak,
-        };
+        if (closed.error && !isRoundAlreadyClosedError(closed.error)) {
+          return { error: mapError(closed.error) };
+        }
+        if (!closed.error) {
+          const streak = await applyEmptyRoundStreak(
+            admin,
+            id,
+            active.id,
+            rawSettings,
+          );
+          const { data: refreshed } = await admin
+            .from("beatage_quizzes")
+            .select("settings")
+            .eq("id", id)
+            .maybeSingle();
+          rawSettings = refreshed?.settings ?? rawSettings;
+          revalidatePath(`/q/${code}`);
+          return {
+            ok: true,
+            closedRound: true,
+            nothingPlaying: true,
+            interrupted: streak.interrupted,
+            emptyStreak: streak.emptyStreak,
+          };
+        }
       }
     }
     return { ok: true, nothingPlaying: true };
@@ -639,12 +636,7 @@ export async function syncAutoSpotifyRoundAction(
 
   const track = nowPlaying.track;
 
-  const { data: active } = await admin
-    .from("beatage_rounds")
-    .select("id, spotify_track_id")
-    .eq("quiz_id", id)
-    .eq("status", "active")
-    .maybeSingle();
+  const active = await resolveActiveRound(id);
 
   let closedRound = false;
   let interrupted = Boolean(runtime.autoInterrupted);
@@ -653,22 +645,26 @@ export async function syncAutoSpotifyRoundAction(
     const sameTrack = active.spotify_track_id === track.spotifyTrackId;
     if (!sameTrack || opts?.forceClose) {
       const closed = await closeRoundForHost(active.id, user.id);
-      if (closed.error) return { error: mapError(closed.error) };
-      closedRound = true;
-      const streak = await applyEmptyRoundStreak(
-        admin,
-        id,
-        active.id,
-        rawSettings,
-      );
-      interrupted = streak.interrupted;
-      emptyStreak = streak.emptyStreak;
-      const { data: refreshed } = await admin
-        .from("beatage_quizzes")
-        .select("settings")
-        .eq("id", id)
-        .maybeSingle();
-      rawSettings = refreshed?.settings ?? rawSettings;
+      if (closed.error && !isRoundAlreadyClosedError(closed.error)) {
+        return { error: mapError(closed.error) };
+      }
+      closedRound = !closed.error;
+      if (!closed.error) {
+        const streak = await applyEmptyRoundStreak(
+          admin,
+          id,
+          active.id,
+          rawSettings,
+        );
+        interrupted = streak.interrupted;
+        emptyStreak = streak.emptyStreak;
+        const { data: refreshed } = await admin
+          .from("beatage_quizzes")
+          .select("settings")
+          .eq("id", id)
+          .maybeSingle();
+        rawSettings = refreshed?.settings ?? rawSettings;
+      }
     } else if (!openNewRound) {
       return {
         ok: true,
@@ -791,12 +787,7 @@ export async function interruptAutoSpotifyQuizAction(
   let rawSettings = (quizRow as { settings?: unknown }).settings;
   let closedRound = false;
 
-  const { data: active } = await admin
-    .from("beatage_rounds")
-    .select("id, track_name, artist_name")
-    .eq("quiz_id", id)
-    .eq("status", "active")
-    .maybeSingle();
+  const active = await resolveActiveRound(id);
 
   if (active?.id) {
     if (quizRow.source === "lastfm_live") {
@@ -815,15 +806,19 @@ export async function interruptAutoSpotifyQuizAction(
       rawSettings = afterDefer?.settings ?? rawSettings;
     }
     const closed = await closeRoundForHost(active.id, user.id);
-    if (closed.error) return { error: mapError(closed.error) };
-    closedRound = true;
-    await applyEmptyRoundStreak(admin, id, active.id, rawSettings);
-    const { data: refreshed } = await admin
-      .from("beatage_quizzes")
-      .select("settings")
-      .eq("id", id)
-      .maybeSingle();
-    rawSettings = refreshed?.settings ?? rawSettings;
+    if (closed.error && !isRoundAlreadyClosedError(closed.error)) {
+      return { error: mapError(closed.error) };
+    }
+    closedRound = !closed.error;
+    if (!closed.error) {
+      await applyEmptyRoundStreak(admin, id, active.id, rawSettings);
+      const { data: refreshed } = await admin
+        .from("beatage_quizzes")
+        .select("settings")
+        .eq("id", id)
+        .maybeSingle();
+      rawSettings = refreshed?.settings ?? rawSettings;
+    }
   }
 
   await forceAutoInterrupted(admin, id, rawSettings);

@@ -4,6 +4,10 @@ import { getLastfmCurrentlyPlaying, lastfmTrackKey } from "@/lib/lastfm";
 import { addCuratedTrackToQuiz } from "@/lib/quiz-tracks";
 import { closeRoundForHost, startRoundForHost } from "@/lib/quiz-play";
 import {
+  isRoundAlreadyClosedError,
+  resolveActiveRound,
+} from "@/lib/quiz-active-round";
+import {
   applyEmptyRoundStreak,
   forceAutoInterrupted,
   patchQuizRuntimeSettings,
@@ -98,17 +102,14 @@ async function pauseLastfmLiveForCron(opts: {
   rawSettings: unknown;
 }): Promise<LastfmLiveSyncResult> {
   const { admin, quizId, joinCode, hostUserId, rawSettings } = opts;
-  const { data: active } = await admin
-    .from("beatage_rounds")
-    .select("id")
-    .eq("quiz_id", quizId)
-    .eq("status", "active")
-    .maybeSingle();
+  const active = await resolveActiveRound(quizId);
   let closedRound = false;
   if (active?.id) {
     const closed = await closeRoundForHost(active.id, hostUserId);
-    if (closed.error) return { error: mapPlayError(closed.error) };
-    closedRound = true;
+    if (closed.error && !isRoundAlreadyClosedError(closed.error)) {
+      return { error: mapPlayError(closed.error) };
+    }
+    closedRound = !closed.error;
   }
   await forceAutoInterrupted(admin, quizId, rawSettings);
   revalidatePath(`/q/${joinCode}`);
@@ -191,29 +192,28 @@ export async function syncLastfmLiveQuiz(opts: {
 
   const hinted = parseLastfmNowPlayingHint(opts.nowPlaying);
   if (opts.forceClose && !openNewRound && hinted?.playing !== true) {
-    const { data: active } = await admin
-      .from("beatage_rounds")
-      .select("id")
-      .eq("quiz_id", id)
-      .eq("status", "active")
-      .maybeSingle();
+    const active = await resolveActiveRound(id);
     if (active?.id) {
       const closed = await closeRoundForHost(active.id, opts.hostUserId);
-      if (closed.error) return { error: mapPlayError(closed.error) };
-      const streak = await applyEmptyRoundStreak(
-        admin,
-        id,
-        active.id,
-        rawSettings,
-      );
-      revalidatePath(`/q/${code}`);
-      return {
-        ok: true,
-        closedRound: true,
-        nothingPlaying: hinted?.playing === false,
-        interrupted: streak.interrupted,
-        emptyStreak: streak.emptyStreak,
-      };
+      if (closed.error && !isRoundAlreadyClosedError(closed.error)) {
+        return { error: mapPlayError(closed.error) };
+      }
+      if (!closed.error) {
+        const streak = await applyEmptyRoundStreak(
+          admin,
+          id,
+          active.id,
+          rawSettings,
+        );
+        revalidatePath(`/q/${code}`);
+        return {
+          ok: true,
+          closedRound: true,
+          nothingPlaying: hinted?.playing === false,
+          interrupted: streak.interrupted,
+          emptyStreak: streak.emptyStreak,
+        };
+      }
     }
     return { ok: true, nothingPlaying: true };
   }
@@ -261,29 +261,28 @@ export async function syncLastfmLiveQuiz(opts: {
     }
 
     if (opts.forceClose) {
-      const { data: active } = await admin
-        .from("beatage_rounds")
-        .select("id")
-        .eq("quiz_id", id)
-        .eq("status", "active")
-        .maybeSingle();
+      const active = await resolveActiveRound(id);
       if (active?.id) {
         const closed = await closeRoundForHost(active.id, opts.hostUserId);
-        if (closed.error) return { error: mapPlayError(closed.error) };
-        const streak = await applyEmptyRoundStreak(
-          admin,
-          id,
-          active.id,
-          rawSettings,
-        );
-        revalidatePath(`/q/${code}`);
-        return {
-          ok: true,
-          closedRound: true,
-          nothingPlaying: true,
-          interrupted: streak.interrupted,
-          emptyStreak: streak.emptyStreak,
-        };
+        if (closed.error && !isRoundAlreadyClosedError(closed.error)) {
+          return { error: mapPlayError(closed.error) };
+        }
+        if (!closed.error) {
+          const streak = await applyEmptyRoundStreak(
+            admin,
+            id,
+            active.id,
+            rawSettings,
+          );
+          revalidatePath(`/q/${code}`);
+          return {
+            ok: true,
+            closedRound: true,
+            nothingPlaying: true,
+            interrupted: streak.interrupted,
+            emptyStreak: streak.emptyStreak,
+          };
+        }
       }
     }
     return { ok: true, nothingPlaying: true };
@@ -314,12 +313,7 @@ export async function syncLastfmLiveQuiz(opts: {
     };
   }
 
-  const { data: active } = await admin
-    .from("beatage_rounds")
-    .select("id, track_name, artist_name")
-    .eq("quiz_id", id)
-    .eq("status", "active")
-    .maybeSingle();
+  const active = await resolveActiveRound(id);
 
   let closedRound = false;
   let interrupted = Boolean(runtime.autoInterrupted);
@@ -332,22 +326,26 @@ export async function syncLastfmLiveQuiz(opts: {
     const sameTrack = activeKey === track.trackKey;
     if (!sameTrack || opts.forceClose) {
       const closed = await closeRoundForHost(active.id, opts.hostUserId);
-      if (closed.error) return { error: mapPlayError(closed.error) };
-      closedRound = true;
-      const streak = await applyEmptyRoundStreak(
-        admin,
-        id,
-        active.id,
-        rawSettings,
-      );
-      interrupted = streak.interrupted;
-      emptyStreak = streak.emptyStreak;
-      const { data: refreshed } = await admin
-        .from("beatage_quizzes")
-        .select("settings")
-        .eq("id", id)
-        .maybeSingle();
-      rawSettings = refreshed?.settings ?? rawSettings;
+      if (closed.error && !isRoundAlreadyClosedError(closed.error)) {
+        return { error: mapPlayError(closed.error) };
+      }
+      closedRound = !closed.error;
+      if (!closed.error) {
+        const streak = await applyEmptyRoundStreak(
+          admin,
+          id,
+          active.id,
+          rawSettings,
+        );
+        interrupted = streak.interrupted;
+        emptyStreak = streak.emptyStreak;
+        const { data: refreshed } = await admin
+          .from("beatage_quizzes")
+          .select("settings")
+          .eq("id", id)
+          .maybeSingle();
+        rawSettings = refreshed?.settings ?? rawSettings;
+      }
     } else {
       return {
         ok: true,
