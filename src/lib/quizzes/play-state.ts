@@ -769,7 +769,6 @@ export async function getQuizPlayState(
   const pastRounds: PastRoundRow[] = revealedList.map((round) => {
     const hideYears = hideCorrectForViewer || !settings.showResultDetails;
     const isSkipped = round.status === "skipped";
-    const isExcluded = round.status === "excluded";
     const base = toRoundRow(round, {
       hideYears: hideYears || isSkipped,
     });

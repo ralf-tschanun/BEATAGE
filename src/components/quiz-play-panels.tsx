@@ -124,7 +124,7 @@ function LateJoinRoundNotice({
       <span className="font-medium text-foreground tabular-nums">
         {assignedPoints} {scoreUnit}
       </span>
-      . That's 10% worse than this round's average.
+      . That&apos;s 10% worse than this round&apos;s average.
     </p>
   );
 }
