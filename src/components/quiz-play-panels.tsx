@@ -24,6 +24,7 @@ import {
 import { AutoLastfmHostControls } from "@/components/auto-lastfm-host-controls";
 import { AutoSpotifyHostControls } from "@/components/auto-spotify-host-controls";
 import { CollapsibleCard, ACTIVE_PANEL_CARD_CLASS } from "@/components/collapsible-card";
+import { ScreenLockField } from "@/components/live-host-screen-lock-field";
 import { FadeMount } from "@/components/fade-mount";
 import { SongPickFields } from "@/components/song-pick-fields";
 import { SongPreviewPlayer } from "@/components/song-preview-player";
@@ -62,6 +63,7 @@ import {
   type BeatageQuizSettings,
 } from "@/lib/quiz-settings";
 import { scrollToSection } from "@/lib/scroll";
+import { useScreenWakeLock } from "@/lib/use-screen-wake-lock";
 import { cn } from "@/lib/utils";
 import {
   formatTeamScore,
@@ -107,6 +109,24 @@ function spotifyOpenForHostTrack(opts: {
     href: `https://open.spotify.com/search/${encodeURIComponent(query)}`,
     uri: `spotify:search:${encodeURIComponent(query)}`,
   };
+}
+
+function LateJoinRoundNotice({
+  assignedPoints,
+  scoreUnit,
+}: {
+  assignedPoints: number;
+  scoreUnit: "yr" | "pt";
+}) {
+  return (
+    <p className="text-sm text-muted-foreground">
+      Did not participate: you receive an average score of{" "}
+      <span className="font-medium text-foreground tabular-nums">
+        {assignedPoints} {scoreUnit}
+      </span>
+      . That's 10% worse than this round's average.
+    </p>
+  );
 }
 
 function ChartGuessVerdict({
@@ -414,6 +434,10 @@ export function QuizPlayPanels({
   const [includeConfirmRoundId, setIncludeConfirmRoundId] = useState<string | null>(
     null,
   );
+  const [clientScreenLockOn, setClientScreenLockOn] = useState(false);
+  const { supported: clientScreenLockSupported } = useScreenWakeLock(
+    !isHost && clientScreenLockOn,
+  );
 
   const isLive = isLiveQuizSource(quizSource);
   const isLastfmLive = quizSource === "lastfm_live";
@@ -608,6 +632,10 @@ export function QuizPlayPanels({
   const displayResultGuesses = pinnedResult?.guesses ?? [];
   const displayResultTeamGroups = pinnedResult?.teamGroups ?? [];
   const showResultCard = Boolean(displayResultRound) && Boolean(pinnedResult);
+  const displayResultLateJoin = displayResultRound
+    ? pastRounds.find((round) => round.id === displayResultRound.id)
+        ?.lateJoinAssigned ?? null
+    : null;
 
   // Hide the pinned result from Previous rounds while its card is still up.
   const historyRounds = pastRounds.filter(
@@ -1525,6 +1553,14 @@ export function QuizPlayPanels({
             ) : null}
           </form>
 
+          {!isHost && clientScreenLockSupported ? (
+            <ScreenLockField
+              id="client-screen-lock"
+              checked={clientScreenLockOn}
+              onCheckedChange={setClientScreenLockOn}
+            />
+          ) : null}
+
           {isHost && !isLive ? (
             <div className="space-y-3 border-t border-border/60 pt-4">
               <form action={closeAction}>
@@ -1686,6 +1722,12 @@ export function QuizPlayPanels({
             showChartOne={chartComboEnabled}
             chartCountries={settings.chartCountries}
           />
+          {displayResultLateJoin ? (
+            <LateJoinRoundNotice
+              assignedPoints={displayResultLateJoin.assignedPoints}
+              scoreUnit={scoreUnit}
+            />
+          ) : null}
           {settings.teamsEnabled ? (
             <TeamRoundGuessesList
               groups={displayResultTeamGroups}
@@ -1785,6 +1827,11 @@ export function QuizPlayPanels({
               const outcome = roundOutcomeLabel(round.status);
               const isExcluded = round.status === "excluded";
               const isSkipped = round.status === "skipped";
+              const viewerGuesses = !isHost || settings.hostParticipates;
+              const missedRound =
+                viewerGuesses &&
+                !isSkipped &&
+                (round.lateJoinAssigned != null || round.my_points == null);
               return (
                 <li key={round.id} className="space-y-2 py-2">
                   <div className="flex min-w-0 items-start gap-2">
@@ -1809,7 +1856,14 @@ export function QuizPlayPanels({
                           isExcluded && "text-muted-foreground line-through",
                         )}
                       >
-                        <span className="text-muted-foreground tabular-nums">
+                        <span
+                          className={cn(
+                            "tabular-nums",
+                            missedRound
+                              ? "text-primary"
+                              : "text-muted-foreground",
+                          )}
+                        >
                           {isSkipped
                             ? "Skipped"
                             : round.round_label ||
@@ -1893,22 +1947,31 @@ export function QuizPlayPanels({
                           </Button>
                         ) : null}
                       </div>
-                      {settings.teamsEnabled ? (
-                        <TeamRoundGuessesList
-                          groups={round.teamGroups ?? []}
-                          showChartGuess={chartComboEnabled}
-                          wasNumberOne={
-                            chartComboEnabled ? round.chart_was_number_one : null
-                          }
-                          currentUserId={currentUserId}
+                      {round.lateJoinAssigned ? (
+                        <LateJoinRoundNotice
+                          assignedPoints={round.lateJoinAssigned.assignedPoints}
                           scoreUnit={scoreUnit}
-                          emptyLabel={
-                            !isHost && !settings.showOthersInPastResults
-                              ? "Only your team is shown for this round."
-                              : "No team results this round."
-                          }
                         />
-                      ) : (
+                      ) : null}
+                      {settings.teamsEnabled ? (
+                        round.lateJoinAssigned &&
+                        (round.teamGroups ?? []).length === 0 ? null : (
+                          <TeamRoundGuessesList
+                            groups={round.teamGroups ?? []}
+                            showChartGuess={chartComboEnabled}
+                            wasNumberOne={
+                              chartComboEnabled ? round.chart_was_number_one : null
+                            }
+                            currentUserId={currentUserId}
+                            scoreUnit={scoreUnit}
+                            emptyLabel={
+                              !isHost && !settings.showOthersInPastResults
+                                ? "Only your team is shown for this round."
+                                : "No team results this round."
+                            }
+                          />
+                        )
+                      ) : round.lateJoinAssigned && round.guesses.length === 0 ? null : (
                         <RoundGuessesList
                           guesses={round.guesses}
                           showChartGuess={chartComboEnabled}

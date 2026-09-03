@@ -82,6 +82,74 @@ export function closerWinsDynamicNoGuessPenalty(
   return closerWinsNoGuessYearPenalty(submittedDistances) * 2;
 }
 
+/** Late joiners sit 10% behind the round average of players who took part. */
+export const LATE_JOIN_AVERAGE_MARKUP = 0.1;
+
+export type LateJoinAssignment = {
+  assignedPoints: number;
+  roundAverage: number;
+};
+
+export function isLateJoinBreakdown(breakdown: unknown): boolean {
+  return Boolean(
+    breakdown &&
+      typeof breakdown === "object" &&
+      (breakdown as { lateJoin?: unknown }).lateJoin === true,
+  );
+}
+
+export function lateJoinAssignmentFromBreakdown(
+  breakdown: unknown,
+  pointsTotal: number,
+): LateJoinAssignment | null {
+  if (!isLateJoinBreakdown(breakdown)) return null;
+  const row = breakdown as { assigned?: unknown; roundAverage?: unknown };
+  const assignedPoints =
+    typeof row.assigned === "number" && Number.isFinite(row.assigned)
+      ? Math.round(row.assigned)
+      : pointsTotal;
+  const roundAverage =
+    typeof row.roundAverage === "number" && Number.isFinite(row.roundAverage)
+      ? row.roundAverage
+      : assignedPoints;
+  return { assignedPoints, roundAverage };
+}
+
+export function lateJoinBreakdownPayload(
+  assignment: LateJoinAssignment,
+): Record<string, unknown> {
+  return {
+    lateJoin: true,
+    roundAverage: assignment.roundAverage,
+    assigned: assignment.assignedPoints,
+  };
+}
+
+/**
+ * Score for a player who joined after this round closed.
+ * Low wins: ceil(average × 1.1). High wins: floor(average × 0.9).
+ * Empty field falls back to the closer-wins no-guess cap (or 0 when high wins).
+ */
+export function lateJoinAssignedPoints(
+  participantScores: number[],
+  lowWins: boolean,
+): LateJoinAssignment {
+  const scores = participantScores.filter(
+    (value) => typeof value === "number" && Number.isFinite(value),
+  );
+  if (scores.length === 0) {
+    const assignedPoints = lowWins ? CLOSER_WINS_NO_GUESS_YEAR_MAX : 0;
+    return { assignedPoints, roundAverage: assignedPoints };
+  }
+  const roundAverage = scores.reduce((sum, value) => sum + value, 0) / scores.length;
+  const markedUp = roundAverage * (1 + LATE_JOIN_AVERAGE_MARKUP);
+  const markedDown = roundAverage * (1 - LATE_JOIN_AVERAGE_MARKUP);
+  const assignedPoints = lowWins
+    ? Math.ceil(markedUp - 1e-9)
+    : Math.max(0, Math.floor(markedDown + 1e-9));
+  return { assignedPoints, roundAverage };
+}
+
 /**
  * Range: at tolerance T>0, exact = T, each year off loses 1, floor 0.
  * At T=0, only an exact year scores 1.

@@ -183,7 +183,12 @@ function snapshotStructuralFingerprint(snapshot: QuizPlaySnapshot): string {
     snapshot.activeRound?.is_pre_round ? "pre" : "off",
     snapshot.resultRound?.id ?? "",
     snapshot.resultRound?.status ?? "",
-    snapshot.pastRounds.map((r) => r.id).join(","),
+    snapshot.pastRounds
+      .map(
+        (r) =>
+          `${r.id}:${r.my_points ?? ""}:${r.lateJoinAssigned?.assignedPoints ?? ""}`,
+      )
+      .join(","),
     snapshot.myGuessYear ?? "",
     snapshot.myGuessWasNumberOne === true
       ? "1"

@@ -2,8 +2,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getOptionalUser } from "@/lib/supabase/auth";
 import { DEFAULT_MAX_CURATED_TRACKS } from "@/lib/quiz-plans";
 import {
+  lateJoinAssignedPoints,
+  lateJoinAssignmentFromBreakdown,
+  lateJoinBreakdownPayload,
+  isLateJoinBreakdown,
   readQuizSettingsRuntime,
   resolveQuizSettings,
+  type LateJoinAssignment,
 } from "@/lib/quiz-scoring";
 import type { BeatageQuizSettings } from "@/lib/quiz-settings";
 import {
@@ -16,6 +21,7 @@ import {
 import {
   buildTeamLeaderboard,
   buildTeamRoundGroups,
+  isScoringQuizMember,
   quizTeamsAreLocked,
   type QuizRosterMember,
   type QuizTeamInfo,
@@ -26,6 +32,7 @@ import {
   backfillMissingReleaseYearsForQuiz,
   getQuizCuratedTrackLimit,
 } from "@/lib/quiz-tracks";
+import { resolveActiveRound } from "@/lib/quiz-active-round";
 
 export type CuratedTrackRow = {
   id: string;
@@ -103,6 +110,8 @@ export type PastRoundRow = RoundRow & {
   guesses: GuessRow[];
   /** Team mode: grouped results with visibility already applied. */
   teamGroups: TeamRoundGroup[];
+  /** Viewer joined after this round; score is the field average + 10%. */
+  lateJoinAssigned?: LateJoinAssignment | null;
 };
 
 /** Slim round columns — album art stays off the list payload. */
@@ -228,6 +237,15 @@ export async function getQuizPlayState(
   // Full playlist is only rendered for host + curated (non-live) quizzes.
   const needFullTracks = isHost && !isLive;
 
+  // Reconcile first: maybeSingle() on two active rows returns nothing, so the
+  // guess UI freezes on the last revealed round while new songs still ingest.
+  let activeSlim: Awaited<ReturnType<typeof resolveActiveRound>> = null;
+  try {
+    activeSlim = await resolveActiveRound(quizId);
+  } catch {
+    activeSlim = null;
+  }
+
   const [
     tracksResult,
     { data: activeRound },
@@ -247,19 +265,19 @@ export async function getQuizPlayState(
           .from("beatage_curated_tracks")
           .select("id", { count: "exact", head: true })
           .eq("quiz_id", quizId),
-    admin
-      .from("beatage_rounds")
-      .select(ROUND_CORE_COLUMNS)
-      .eq("quiz_id", quizId)
-      .eq("status", "active")
-      .maybeSingle(),
+    activeSlim
+      ? admin
+          .from("beatage_rounds")
+          .select(ROUND_CORE_COLUMNS)
+          .eq("id", activeSlim.id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
     admin
       .from("beatage_rounds")
       .select(ROUND_CORE_COLUMNS)
       .eq("quiz_id", quizId)
       .in("status", ["revealed", "excluded", "skipped"])
-      .order("round_number", { ascending: false })
-      .limit(30),
+      .order("round_number", { ascending: false }),
     admin
       .from("beatage_rounds")
       .select("round_number, status")
@@ -511,7 +529,9 @@ export async function getQuizPlayState(
   if (guessesRound) {
     const { data: guesses } = await admin
       .from("beatage_guesses")
-      .select("user_id, guessed_year, guessed_was_number_one, points, points_total, submitted_at")
+      .select(
+        "user_id, guessed_year, guessed_was_number_one, points, points_total, submitted_at, points_breakdown",
+      )
       .eq("round_id", guessesRound.id)
       .order("submitted_at", { ascending: false });
 
@@ -526,14 +546,17 @@ export async function getQuizPlayState(
       points: number | null;
       points_total: number | null;
       submitted_at: string | null;
-    }>).map((g) => ({
-      user_id: g.user_id,
-      display_name: nameByUser.get(g.user_id) ?? "Player",
-      guessed_year: hideGuessYears ? null : g.guessed_year,
-      guessed_was_number_one: hideGuessYears ? null : g.guessed_was_number_one,
-      points_total: g.points_total ?? g.points ?? 0,
-      submitted_at: g.submitted_at ?? "",
-    }));
+      points_breakdown: unknown;
+    }>)
+      .filter((g) => !isLateJoinBreakdown(g.points_breakdown))
+      .map((g) => ({
+        user_id: g.user_id,
+        display_name: nameByUser.get(g.user_id) ?? "Player",
+        guessed_year: hideGuessYears ? null : g.guessed_year,
+        guessed_was_number_one: hideGuessYears ? null : g.guessed_was_number_one,
+        points_total: g.points_total ?? g.points ?? 0,
+        submitted_at: g.submitted_at ?? "",
+      }));
 
     if (!hideGuessYears) {
       const lowWins = scoringLowWins(settings);
@@ -577,6 +600,8 @@ export async function getQuizPlayState(
   const pastGuessesByRound = new Map<string, GuessRow[]>();
   const allPastGuessesByRound = new Map<string, GuessRow[]>();
   const myPointsByRound = new Map<string, number>();
+  const lateJoinByRound = new Map<string, LateJoinAssignment>();
+  const participantScoresByRound = new Map<string, number[]>();
   const totals = new Map<string, number>();
   const lastRoundPts = new Map<string, number>();
   const lastSubmittedByUserId: Record<string, string> = {};
@@ -598,7 +623,7 @@ export async function getQuizPlayState(
     const { data: pastGuesses } = await admin
       .from("beatage_guesses")
       .select(
-        "round_id, user_id, guessed_year, guessed_was_number_one, points, points_total, submitted_at",
+        "round_id, user_id, guessed_year, guessed_was_number_one, points, points_total, submitted_at, points_breakdown",
       )
       .in("round_id", historyRoundIds)
       .order("submitted_at", { ascending: false });
@@ -611,10 +636,19 @@ export async function getQuizPlayState(
       points: number | null;
       points_total: number | null;
       submitted_at: string | null;
+      points_breakdown: unknown;
     }>) {
       const pts = g.points_total ?? g.points ?? 0;
+      const lateJoin = isLateJoinBreakdown(g.points_breakdown);
       if (g.user_id === user.id) {
         myPointsByRound.set(g.round_id, pts);
+        const assignment = lateJoinAssignmentFromBreakdown(g.points_breakdown, pts);
+        if (assignment) lateJoinByRound.set(g.round_id, assignment);
+      }
+      if (!lateJoin) {
+        const scores = participantScoresByRound.get(g.round_id) ?? [];
+        scores.push(pts);
+        participantScoresByRound.set(g.round_id, scores);
       }
       // Pre-round scores are saved and shown in results, but do not count on the leaderboard.
       if (officialScoringIds.has(g.round_id)) {
@@ -629,6 +663,8 @@ export async function getQuizPlayState(
           lastSubmittedByUserId[g.user_id] = g.submitted_at;
         }
       }
+      // Late-join placeholders are not real guesses — hide them from round lists.
+      if (lateJoin) continue;
       if (!settings.showResultDetails && !settings.teamsEnabled) continue;
       const fullRow: GuessRow = {
         user_id: g.user_id,
@@ -677,6 +713,59 @@ export async function getQuizPlayState(
     }
   }
 
+  const viewerGuesses = isScoringQuizMember(
+    { role: (membership as { role?: string }).role ?? "participant" },
+    settings.hostParticipates,
+  );
+  if (viewerGuesses) {
+    const lowWins = scoringLowWins(settings);
+    const now = new Date().toISOString();
+    const pendingLateJoinRows: Array<{
+      quiz_id: string;
+      round_id: string;
+      user_id: string;
+      guessed_year: null;
+      guessed_was_number_one: null;
+      points: number;
+      points_total: number;
+      points_breakdown: Record<string, unknown>;
+      submitted_at: string;
+    }> = [];
+    for (const round of revealedList) {
+      if (round.status !== "revealed") continue;
+      if (myPointsByRound.has(round.id)) continue;
+      const assignment = lateJoinAssignedPoints(
+        participantScoresByRound.get(round.id) ?? [],
+        lowWins,
+      );
+      myPointsByRound.set(round.id, assignment.assignedPoints);
+      lateJoinByRound.set(round.id, assignment);
+      if (officialScoringIds.has(round.id)) {
+        totals.set(user.id, (totals.get(user.id) ?? 0) + assignment.assignedPoints);
+        if (latestOfficialScoringId && round.id === latestOfficialScoringId) {
+          lastRoundPts.set(user.id, assignment.assignedPoints);
+        }
+      }
+      pendingLateJoinRows.push({
+        quiz_id: quizId,
+        round_id: round.id,
+        user_id: user.id,
+        guessed_year: null,
+        guessed_was_number_one: null,
+        points: assignment.assignedPoints,
+        points_total: assignment.assignedPoints,
+        points_breakdown: lateJoinBreakdownPayload(assignment),
+        submitted_at: now,
+      });
+    }
+    if (pendingLateJoinRows.length > 0) {
+      await admin.from("beatage_guesses").upsert(pendingLateJoinRows, {
+        onConflict: "round_id,user_id",
+        ignoreDuplicates: true,
+      });
+    }
+  }
+
   const pastRounds: PastRoundRow[] = revealedList.map((round) => {
     const hideYears = hideCorrectForViewer || !settings.showResultDetails;
     const isSkipped = round.status === "skipped";
@@ -692,6 +781,7 @@ export async function getQuizPlayState(
           : myPointsByRound.has(round.id)
             ? (myPointsByRound.get(round.id) as number)
             : null,
+      lateJoinAssigned: isSkipped ? null : (lateJoinByRound.get(round.id) ?? null),
       guesses:
         isSkipped || !settings.showResultDetails
           ? []
