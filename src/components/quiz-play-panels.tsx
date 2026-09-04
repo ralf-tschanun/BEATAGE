@@ -1766,23 +1766,34 @@ export function QuizPlayPanels({
           description={
             scoringLowWins(settings) ? "Lowest score wins." : undefined
           }
-          contentClassName="pt-0"
+          contentClassName="space-y-2"
         >
-          <ul className="divide-y divide-border/60 text-sm">
-            {leaderboard.map((row, index) => (
+          <ol ref={leaderboardListRef} className="space-y-2">
+            {rankedLeaderboard.map((row) => (
               <li
                 key={row.user_id}
-                className="flex min-w-0 items-center gap-2 py-2"
+                data-flip-id={row.user_id}
+                className={cn(
+                  "flex items-center justify-between rounded-lg border px-4 py-3 text-sm",
+                  "transition-[background-color,border-color,box-shadow] duration-700 ease-out",
+                  podiumRowClass(row.rank),
+                )}
               >
-                <span className="min-w-0 flex-1 truncate">
-                  <span className="font-medium">
-                    #{index + 1} {row.display_name}
-                  </span>
+                <span className="min-w-0">
+                  <span
+                    className={cn(
+                      podiumRankClass(row.rank),
+                      "transition-[color,font-size] duration-700 ease-out",
+                    )}
+                  >
+                    #{row.rank}
+                  </span>{" "}
+                  {row.display_name}
                   {rowIncludesUser(row, currentUserId) ? (
-                    <span className="ml-2 text-xs text-muted-foreground">(you)</span>
+                    <span className="text-muted-foreground"> (you)</span>
                   ) : null}
                   {rowIncludesUser(row, hostUserId) ? (
-                    <span className="ml-2 text-xs text-muted-foreground">(host)</span>
+                    <span className="text-muted-foreground"> (host)</span>
                   ) : null}
                   {leaderboardMemberLine(row) ? (
                     <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
@@ -1792,15 +1803,17 @@ export function QuizPlayPanels({
                 </span>
                 <span className="shrink-0 font-medium tabular-nums">
                   {formatTeamScore(row.total_points)} {scoreUnit}
-                  <span className="ml-2 font-normal text-muted-foreground">
-                    {scoringLowWins(settings)
-                      ? `(${formatTeamScore(row.last_round_points ?? 0)})`
-                      : `(+${formatTeamScore(row.last_round_points ?? 0)})`}
-                  </span>
+                  {showRunningLeaderboard ? (
+                    <span className="ml-2 font-normal text-muted-foreground">
+                      {scoringLowWins(settings)
+                        ? `(${formatTeamScore(row.last_round_points ?? 0)})`
+                        : `(+${formatTeamScore(row.last_round_points ?? 0)})`}
+                    </span>
+                  ) : null}
                 </span>
               </li>
             ))}
-          </ul>
+          </ol>
         </CollapsibleCard>
       ) : null}
 

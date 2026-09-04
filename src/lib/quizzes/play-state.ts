@@ -285,7 +285,7 @@ export async function getQuizPlayState(
       .order("round_number", { ascending: true }),
     admin
       .from("beatage_quiz_members")
-      .select("user_id, display_name, role")
+      .select("id, user_id, display_name, role, joined_at")
       .eq("quiz_id", quizId),
   ]);
 
@@ -495,14 +495,18 @@ export async function getQuizPlayState(
   );
   const roster: QuizRosterMember[] = (
     (members ?? []) as Array<{
+      id: string;
       user_id: string;
       display_name: string;
       role: string;
+      joined_at: string | null;
     }>
   ).map((m) => ({
+    id: m.id,
     user_id: m.user_id,
     display_name: m.display_name,
     role: m.role,
+    joined_at: m.joined_at,
   }));
 
   let teams: QuizTeamInfo[] = [];

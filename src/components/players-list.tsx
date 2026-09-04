@@ -130,6 +130,22 @@ export function PlayersList({
   useEffect(() => {
     return subscribeQuizPlay(quizId, (patch) => {
       if (patch.type !== "replace") return;
+      setMembers((prev) => {
+        const previousByUserId = new Map(
+          prev.map((member) => [member.userId, member] as const),
+        );
+        return (patch.snapshot.roster ?? []).map((member) => {
+          const previous = previousByUserId.get(member.user_id);
+          return {
+            id: member.id ?? previous?.id ?? member.user_id,
+            userId: member.user_id,
+            displayName: member.display_name,
+            role: member.role,
+            joinedAt: member.joined_at ?? previous?.joinedAt ?? null,
+            lastSubmittedAt: previous?.lastSubmittedAt ?? null,
+          };
+        });
+      });
       setTeams(patch.snapshot.teams ?? []);
       setTeamsOn(Boolean(patch.snapshot.settings?.teamsEnabled));
     });

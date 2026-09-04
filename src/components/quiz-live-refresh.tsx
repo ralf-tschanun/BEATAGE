@@ -196,6 +196,9 @@ function snapshotStructuralFingerprint(snapshot: QuizPlaySnapshot): string {
         ? "0"
         : "",
     snapshot.memberCount,
+    snapshot.roster
+      .map((member) => `${member.user_id}:${member.display_name}:${member.role}`)
+      .join(","),
     (snapshot.teams ?? []).map((t) => `${t.id}:${t.member_user_ids.join(".")}`).join(","),
     snapshot.teamsLocked ? "1" : "0",
     (snapshot.resultTeamGroups ?? [])

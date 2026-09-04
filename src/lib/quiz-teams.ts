@@ -22,9 +22,11 @@ export type TeamLeaderboardRow = {
 export const QUIZ_TEAM_NAME_MAX = 40;
 
 export type QuizRosterMember = {
+  id?: string;
   user_id: string;
   display_name: string;
   role: string;
+  joined_at?: string | null;
 };
 
 export type QuizTeamInfo = {
