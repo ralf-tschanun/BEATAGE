@@ -127,13 +127,27 @@ export function CreateQuizWizardForm({
   /** Gate: slot-limit tip before the wizard when there is no free active slot. */
   const [slotGateOpen, setSlotGateOpen] = useState(!canCreate);
   const [slotAcked, setSlotAcked] = useState(canCreate);
-  /** Host opted in to unlock so the playlist can exceed the plan song cap. */
+  /** Host opted in to unlock this quiz at create (songs, teams, slot). */
   const [unlockForTracks, setUnlockForTracks] = useState(false);
-  const songCap = unlockForTracks ? unlockSongCap : planSongCap;
+  const canSelfServeUnlock = planId !== "pro";
+  const songCap = unlockForTracks && canSelfServeUnlock ? unlockSongCap : planSongCap;
+  const planAllowsTeams = planAllowsQuizTeams(planId);
   const [stepError, setStepError] = useState<string | null>(null);
   const [wizard, setWizard] = useState<CreateQuizWizardState>(() =>
     defaultQuizWizardState(hostNameDefault),
   );
+  const teamUnlockRequired = wizard.teamsEnabled && !planAllowsTeams;
+  const overPlanSongCap = filledQuizSongs(wizard).length > planSongCap;
+  const unlockReason =
+    !canCreate && (overPlanSongCap || teamUnlockRequired)
+      ? "both"
+      : !canCreate
+        ? "slot"
+        : overPlanSongCap || (unlockForTracks && !teamUnlockRequired)
+          ? "songs"
+          : teamUnlockRequired
+            ? "teams"
+            : "songs";
   const wizardRef = useRef(wizard);
   wizardRef.current = wizard;
   /** Snapshot for create/unlock dialogs — Quick Live must not pick up draft tweaks. */
@@ -335,8 +349,12 @@ export function CreateQuizWizardForm({
       return;
     }
     const overTracks = filledQuizSongs(current).length > planSongCap;
+    const needsTeamUnlock = current.teamsEnabled && !planAllowsTeams;
     const needsUnlock =
-      !canCreate || overTracks || (pendingCreateRef.current ? false : unlockForTracks);
+      !canCreate ||
+      overTracks ||
+      needsTeamUnlock ||
+      (pendingCreateRef.current ? false : unlockForTracks);
 
     if (needsUnlock && !requiresUnlock) {
       setParticipantLimitOpen(false);
@@ -551,14 +569,9 @@ export function CreateQuizWizardForm({
         pending={pending}
         error={state?.error ?? stepError}
         reason={
-          !canCreate &&
-          (unlockForTracks ||
-            filledQuizSongs(wizard).length > planSongCap)
-            ? "both"
-            : !canCreate
-              ? "slot"
-              : "songs"
+          unlockReason
         }
+        teamsRequired={teamUnlockRequired}
         onUnlockAndCreate={() => submitCreate(true)}
       />
 
@@ -831,7 +844,7 @@ export function CreateQuizWizardForm({
                         <>
                       <p className="text-sm text-muted-foreground">
                         Build your playlist in play order
-                        {unlockForTracks
+                        {unlockForTracks && canSelfServeUnlock
                           ? ` (max ${unlockSongCap} songs with unlock at create)`
                           : ` (max ${planSongCap} songs on your plan)`}
                         . Release years are resolved when the quiz is created.
@@ -876,13 +889,30 @@ export function CreateQuizWizardForm({
                         </div>
                       ))}
                       {wizard.draftSongs.length >= planSongCap &&
-                      !unlockForTracks ? (
+                      (!unlockForTracks || !canSelfServeUnlock) ? (
                         <div className="space-y-3 rounded-xl border border-primary/25 bg-primary/5 px-4 py-3">
                           <p className="text-sm text-foreground">
-                            Plan limit reached ({planSongCap} songs). Unlock
-                            this quiz once for up to {unlockSongCap} songs — you pay at create.
+                            {canSelfServeUnlock ? (
+                              <>
+                                Plan limit reached ({planSongCap} songs). Unlock
+                                this quiz once for up to {unlockSongCap} songs — you pay at create.
+                              </>
+                            ) : (
+                              <>
+                                Pro allows up to {planSongCap} songs. Need more?
+                                Please{" "}
+                                <Link
+                                  href="/contact"
+                                  className="font-medium underline underline-offset-2 hover:text-primary"
+                                >
+                                  contact us
+                                </Link>
+                                .
+                              </>
+                            )}
                           </p>
-                          <div className="flex flex-col gap-2 sm:flex-row">
+                          {canSelfServeUnlock ? (
+                            <div className="flex flex-col gap-2 sm:flex-row">
                             <Button
                               type="button"
                               onClick={() => {
@@ -910,6 +940,7 @@ export function CreateQuizWizardForm({
                               Unlock details ({BILLING_SKU_LABELS.quiz_unlock})
                             </Button>
                           </div>
+                          ) : null}
                         </div>
                       ) : (
                         <WizardAddAnotherButton
@@ -1068,14 +1099,25 @@ export function CreateQuizWizardForm({
                         id="teamsEnabled"
                         label="Team mode"
                         description={
-                          planAllowsQuizTeams(planId)
+                          planAllowsTeams
                             ? "Create Teams of participants to play against each other."
-                            : "Plus & Pro Plan only. Create Teams of participants to play against each other."
+                            : unlockForTracks
+                              ? "Quiz unlock selected. Create Teams of participants to play against each other."
+                              : "Requires Plus, Pro, or a one-time Quiz Unlock at create."
                         }
-                        checked={planAllowsQuizTeams(planId) && wizard.teamsEnabled}
-                        disabled={!planAllowsQuizTeams(planId)}
+                        checked={(planAllowsTeams || unlockForTracks) && wizard.teamsEnabled}
                         onCheckedChange={(checked) => {
-                          if (!planAllowsQuizTeams(planId)) return;
+                          if (checked && !planAllowsTeams) {
+                            setUnlockForTracks(true);
+                          }
+                          if (
+                            !checked &&
+                            !planAllowsTeams &&
+                            filledQuizSongs(wizardRef.current).length <= planSongCap &&
+                            canCreate
+                          ) {
+                            setUnlockForTracks(false);
+                          }
                           patchWizard({ teamsEnabled: checked });
                         }}
                       />

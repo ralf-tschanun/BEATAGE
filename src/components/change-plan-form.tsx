@@ -88,7 +88,13 @@ export function ChangePlanForm({
 
   function closeAll() {
     setStep("closed");
+    setPendingSku(null);
     onOpenChange?.(false);
+  }
+
+  function backToSelect() {
+    setPendingSku(null);
+    setStep("select");
   }
 
   function startCheckout(sku: BillingSku) {
@@ -126,7 +132,7 @@ export function ChangePlanForm({
               <Button
                 type="button"
                 size="sm"
-                variant={selected ? "outline" : "default"}
+                variant="outline"
                 disabled={pendingSku !== null}
                 onClick={() => startCheckout("plus_monthly")}
               >
@@ -148,7 +154,7 @@ export function ChangePlanForm({
               <Button
                 type="button"
                 size="sm"
-                variant={selected ? "outline" : "default"}
+                variant="outline"
                 disabled={pendingSku !== null}
                 onClick={() => startCheckout("pro_monthly")}
               >
@@ -181,8 +187,8 @@ export function ChangePlanForm({
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           One quiz: up to {QUIZ_UNLOCK_LIMITS.maxCuratedTracks} songs and{" "}
-          {QUIZ_UNLOCK_LIMITS.maxMembers} participants, no inactivity expiry. Does
-          not count toward your active quiz limit.
+          {QUIZ_UNLOCK_LIMITS.maxMembers} participants, Team Quiz, no inactivity
+          expiry.
         </p>
         {unlockContest?.unlocked ? null : unlockContest?.id ? (
           <div className="mt-3 flex flex-col gap-2">
@@ -198,8 +204,7 @@ export function ChangePlanForm({
           </div>
         ) : (
           <p className="mt-2 text-xs text-muted-foreground">
-            Start unlock from Create when your setup exceeds plan limits, or open
-            an existing quiz first.
+            Open an existing quiz to unlock it.
           </p>
         )}
       </div>
@@ -235,9 +240,13 @@ export function ChangePlanForm({
               </DialogDescription>
             </DialogHeader>
             {noSessionMessage}
-            <DialogFooter>
-              <Button type="button" onClick={() => onOpenChange?.(false)}>
-                Close
+            <DialogFooter className="flex-col items-stretch gap-2 sm:flex-col sm:items-stretch">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => onOpenChange?.(false)}
+              >
+                Cancel
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -265,17 +274,11 @@ export function ChangePlanForm({
         <DialogContent className="max-h-[85dvh] overflow-y-auto overscroll-contain sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Your plan</DialogTitle>
-            <DialogDescription>
-              Current plan: {QUIZ_PLANS[currentPlan].label}. Hosts pay — participants stay
-              free. Unlock is a one-time purchase for one quiz. Cancel a
-              subscription anytime in the billing portal; the plan stays until the
-              period ends, then Free.
-            </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-3 sm:grid-cols-2">{planCards}</div>
 
-          <DialogFooter className="flex-col gap-2 sm:flex-row">
+          <DialogFooter className="flex-col items-stretch gap-2 sm:flex-col sm:items-stretch">
             {paid ? (
               <Button
                 type="button"
@@ -285,8 +288,8 @@ export function ChangePlanForm({
                 Manage billing
               </Button>
             ) : null}
-            <Button type="button" variant="outline" onClick={closeAll}>
-              Close
+            <Button type="button" variant="ghost" onClick={closeAll}>
+              Cancel
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -295,16 +298,18 @@ export function ChangePlanForm({
       <Dialog
         open={step === "account"}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen) setStep("select");
+          if (!nextOpen) backToSelect();
         }}
       >
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Save your account first</DialogTitle>
+            <DialogTitle>
+              {pendingSku === "quiz_unlock" ? "Unlock Quiz" : "Save your account first"}
+            </DialogTitle>
             <DialogDescription>
-              Checkout needs an email login so Polar can bill the host. Create a
-              new account on this device, or sign in — pending unlocks on this
-              device move to your email account before payment.
+              Checkout needs an email login. Create a new account on this
+              device, or sign in — pending unlocks on this device move to your
+              email account before payment.
             </DialogDescription>
           </DialogHeader>
           <AccountAuthForm
@@ -317,9 +322,9 @@ export function ChangePlanForm({
                 : undefined
             }
           />
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setStep("select")}>
-              Back
+          <DialogFooter className="flex-col items-stretch gap-2 sm:flex-col sm:items-stretch">
+            <Button type="button" variant="ghost" onClick={backToSelect}>
+              Cancel
             </Button>
           </DialogFooter>
         </DialogContent>

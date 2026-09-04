@@ -331,7 +331,7 @@ export async function createQuizAction(
       .eq("id", user.id)
       .maybeSingle();
     const plan = getQuizPlanLimits((profile?.plan as PlanId | undefined) ?? "free");
-    if (settings.teamsEnabled && !planAllowsQuizTeams(plan.id)) {
+    if (settings.teamsEnabled && !planAllowsQuizTeams(plan.id) && !requiresUnlock) {
       settings.teamsEnabled = false;
     }
     // Live quizzes start in pre-round mode until the host clicks Start Quiz Now.

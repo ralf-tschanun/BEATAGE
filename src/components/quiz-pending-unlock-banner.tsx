@@ -120,7 +120,7 @@ export function QuizPendingUnlockBanner({
               size="sm"
               onClick={() => setConfirmOpen(true)}
             >
-              Continue with {plan.label} plan
+              Use {plan.label} limits
             </Button>
           ) : null}
           {hideUnlockLink ? (
@@ -149,7 +149,7 @@ export function QuizPendingUnlockBanner({
       >
         <DialogContent className="sm:max-w-md" showCloseButton={!pending}>
           <DialogHeader>
-            <DialogTitle>Continue with {plan.label}?</DialogTitle>
+            <DialogTitle>Use {plan.label} limits?</DialogTitle>
             <DialogDescription>
               Your {plan.label} plan allows {formatPlanLimits(planId)}. This quiz
               will use those limits (not unlock caps). Need more songs or
@@ -206,13 +206,13 @@ export function QuizPendingUnlockBanner({
                 <Button type="submit" className="w-full" disabled={pending}>
                   {pending
                     ? "Opening…"
-                    : `Continue with ${plan.label}`}
+                    : `Use ${plan.label} limits`}
                 </Button>
               </form>
             )}
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               disabled={pending}
               onClick={() => setConfirmOpen(false)}
             >

@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useRef, useState } from "react";
 import { ChangePlanForm } from "@/components/change-plan-form";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -14,7 +15,11 @@ import {
 import { BILLING_SKU_LABELS } from "@/lib/billing-copy";
 import { goToBilling } from "@/lib/billing-nav";
 import type { PlanId } from "@/lib/quiz-plans";
-import { getQuizPlanLimits, QUIZ_UNLOCK_LIMITS } from "@/lib/quiz-plans";
+import {
+  getQuizPlanLimits,
+  planAllowsQuizTeams,
+  QUIZ_UNLOCK_LIMITS,
+} from "@/lib/quiz-plans";
 
 type CreateQuizSlotLimitTipDialogProps = {
   open: boolean;
@@ -44,6 +49,7 @@ export function CreateQuizSlotLimitTipDialog({
   onCancel,
 }: CreateQuizSlotLimitTipDialogProps) {
   const [planOpen, setPlanOpen] = useState(false);
+  const isMaxPlan = planId === "pro";
 
   return (
     <Dialog
@@ -61,33 +67,54 @@ export function CreateQuizSlotLimitTipDialog({
         <DialogHeader>
           <DialogTitle>Active quiz limit on {planLabel}</DialogTitle>
           <DialogDescription>
-            Your plan has no free active quiz slot left. You can still set up a new
-            quiz — at the end you will need a one-time unlock (
-            {BILLING_SKU_LABELS.quiz_unlock}) to create it, or{" "}
-            <button
-              type="button"
-              className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
-              onClick={() => setPlanOpen(true)}
-            >
-              change your plan
-            </button>{" "}
-            for more active quizzes. Cancel now if you prefer not to enter the
-            details yet.
+            {isMaxPlan ? (
+              <>
+                Your Pro plan has no free active quiz slot left. Please{" "}
+                <Link
+                  href="/contact"
+                  className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                >
+                  contact us
+                </Link>{" "}
+                if you need more.
+              </>
+            ) : (
+              <>
+                Your plan has no free active quiz slot left. You can still set up a new
+                quiz — at the end you will need a one-time unlock (
+                {BILLING_SKU_LABELS.quiz_unlock}) to create it, or{" "}
+                <button
+                  type="button"
+                  className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                  onClick={() => setPlanOpen(true)}
+                >
+                  change your plan
+                </button>{" "}
+                for more active quizzes. Cancel now if you prefer not to enter the
+                details yet.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="flex-col gap-2 sm:flex-col sm:items-stretch">
+          {isMaxPlan ? (
+            <Link href="/contact" className={buttonVariants()}>
+              Contact us
+            </Link>
+          ) : (
+            <Button
+              type="button"
+              onClick={() => {
+                onOpenChange(false);
+                onContinue();
+              }}
+            >
+              Continue setup
+            </Button>
+          )}
           <Button
             type="button"
-            onClick={() => {
-              onOpenChange(false);
-              onContinue();
-            }}
-          >
-            Continue setup
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
+            variant="ghost"
             onClick={() => {
               onOpenChange(false);
               onCancel();
@@ -118,7 +145,9 @@ type CreateQuizUnlockDialogProps = {
   pending?: boolean;
   error?: string | null;
   /** Why unlock is required — drives title/copy. */
-  reason?: "slot" | "songs" | "both";
+  reason?: "slot" | "songs" | "teams" | "both";
+  /** Team mode on Free also requires the one-time quiz unlock. */
+  teamsRequired?: boolean;
 };
 
 /**
@@ -134,12 +163,16 @@ export function CreateQuizUnlockDialog({
   pending = false,
   error = null,
   reason = "slot",
+  teamsRequired = false,
 }: CreateQuizUnlockDialogProps) {
   const plan = getQuizPlanLimits(planId);
   const showPlus = planId === "free";
   const showPro = planId === "free" || planId === "plus";
   const forSongs = reason === "songs" || reason === "both";
   const forSlot = reason === "slot" || reason === "both";
+  const forTeams =
+    (reason === "teams" || teamsRequired) && !planAllowsQuizTeams(planId);
+  const canSelfServeUnlock = planId !== "pro";
 
   return (
     <Dialog
@@ -152,11 +185,29 @@ export function CreateQuizUnlockDialog({
       <DialogContent className="sm:max-w-md" showCloseButton={!pending}>
         <DialogHeader>
           <DialogTitle>
-            {forSongs && !forSlot
+            {!canSelfServeUnlock
+              ? "Please contact us"
+              : forTeams && !forSongs && !forSlot
+              ? "Unlock Team mode"
+              : forSongs && !forSlot
               ? `Unlock for up to ${QUIZ_UNLOCK_LIMITS.maxCuratedTracks} songs`
               : "Unlock this quiz to create"}
           </DialogTitle>
           <DialogDescription>
+            {!canSelfServeUnlock ? (
+              <>
+                Your Pro plan is already at the highest self-service limit.
+                Please{" "}
+                <Link
+                  href="/contact"
+                  className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                >
+                  contact us
+                </Link>{" "}
+                if you need more.
+              </>
+            ) : (
+              <>
             {forSlot ? (
               <>
                 Your {plan.label} plan allows{" "}
@@ -178,12 +229,21 @@ export function CreateQuizUnlockDialog({
                 {QUIZ_UNLOCK_LIMITS.maxCuratedTracks} songs and{" "}
                 {QUIZ_UNLOCK_LIMITS.maxMembers} participants.
               </>
+            ) : null}
+            {forTeams ? (
+              <>
+                {forSlot || forSongs ? " " : null}
+                Team mode is included with Plus, Pro, or a one-time Quiz Unlock.
+              </>
             ) : null}{" "}
             Unlock also removes inactivity expiry, and this quiz does not count
             toward your active quiz limit.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
+        {canSelfServeUnlock ? (
         <ul className="space-y-2 text-sm text-muted-foreground">
           <li className="rounded-lg border border-border px-3 py-2">
             Up to {QUIZ_UNLOCK_LIMITS.maxCuratedTracks} songs on this quiz
@@ -192,12 +252,16 @@ export function CreateQuizUnlockDialog({
             Up to {QUIZ_UNLOCK_LIMITS.maxMembers} participants on this quiz
           </li>
           <li className="rounded-lg border border-border px-3 py-2">
+            Team mode on this quiz
+          </li>
+          <li className="rounded-lg border border-border px-3 py-2">
             No inactivity expiry on this quiz
           </li>
           <li className="rounded-lg border border-border px-3 py-2">
             Does not count toward your active quiz limit
           </li>
         </ul>
+        ) : null}
 
         {error ? (
           <p className="text-sm text-destructive" role="alert">
@@ -206,12 +270,18 @@ export function CreateQuizUnlockDialog({
         ) : null}
 
         <DialogFooter className="flex-col gap-2 sm:flex-col sm:items-stretch">
-          <Button type="button" disabled={pending} onClick={onUnlockAndCreate}>
-            {pending
-              ? "Creating…"
-              : `Unlock & create (${BILLING_SKU_LABELS.quiz_unlock})`}
-          </Button>
-          {showPlus ? (
+          {canSelfServeUnlock ? (
+            <Button type="button" disabled={pending} onClick={onUnlockAndCreate}>
+              {pending
+                ? "Creating…"
+                : `Unlock & create (${BILLING_SKU_LABELS.quiz_unlock})`}
+            </Button>
+          ) : (
+            <Link href="/contact" className={buttonVariants()}>
+              Contact us
+            </Link>
+          )}
+          {canSelfServeUnlock && showPlus ? (
             <Button
               type="button"
               variant="outline"
@@ -223,7 +293,7 @@ export function CreateQuizUnlockDialog({
               Upgrade to Plus ({BILLING_SKU_LABELS.plus_monthly})
             </Button>
           ) : null}
-          {showPro ? (
+          {canSelfServeUnlock && showPro ? (
             <Button
               type="button"
               variant="outline"
@@ -281,6 +351,8 @@ export function CreateQuizParticipantLimitDialog({
   const [planOpen, setPlanOpen] = useState(false);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const summary = settingsSummary?.trim() || null;
+  const canIncreaseParticipantLimit =
+    planId !== "pro" && maxMembers < QUIZ_UNLOCK_LIMITS.maxMembers;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -291,26 +363,42 @@ export function CreateQuizParticipantLimitDialog({
         <DialogHeader className="text-center sm:text-center">
           <DialogTitle>Participant limit on {planLabel}</DialogTitle>
           <DialogDescription className="text-center">
-            You can invite up to {maxMembers} participants on {planLabel}. Need
-            more?{" "}
-            <button
-              type="button"
-              className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
-              disabled={pending}
-              onClick={onUnlockAndCreate}
-            >
-              Unlock
-            </button>{" "}
-            this quiz for unlimited participants, or{" "}
-            <button
-              type="button"
-              className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
-              disabled={pending}
-              onClick={() => setPlanOpen(true)}
-            >
-              upgrade your plan
-            </button>
-            .
+            {canIncreaseParticipantLimit ? (
+              <>
+                You can invite up to {maxMembers} participants on {planLabel}. Need
+                more?{" "}
+                <button
+                  type="button"
+                  className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                  disabled={pending}
+                  onClick={onUnlockAndCreate}
+                >
+                  Unlock
+                </button>{" "}
+                this quiz for up to {QUIZ_UNLOCK_LIMITS.maxMembers} participants, or{" "}
+                <button
+                  type="button"
+                  className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                  disabled={pending}
+                  onClick={() => setPlanOpen(true)}
+                >
+                  upgrade your plan
+                </button>
+                .
+              </>
+            ) : (
+              <>
+                You can invite up to {maxMembers} participants on {planLabel}. Need
+                more? Please{" "}
+                <Link
+                  href="/contact"
+                  className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                >
+                  contact us
+                </Link>
+                .
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 

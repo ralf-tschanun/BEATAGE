@@ -1,13 +1,14 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   finishQuizAction,
   type QuizRoundActionState,
 } from "@/app/actions/quiz-round";
 import { ChangePlanForm } from "@/components/change-plan-form";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { BILLING_SKU_LABELS } from "@/lib/billing-copy";
 import { goToBilling } from "@/lib/billing-nav";
 import {
@@ -62,6 +63,12 @@ function bodyFor(kind: QuizPlanLimitKind, cap: number | null): string {
     : "Your plan round limit is reached. Unlock this event, change your plan, or finish the quiz.";
 }
 
+function maxSelfServeCapFor(kind: QuizPlanLimitKind): number {
+  return kind === "participants"
+    ? QUIZ_UNLOCK_LIMITS.maxMembers
+    : QUIZ_UNLOCK_LIMITS.maxCuratedTracks;
+}
+
 /**
  * Host prompt when rounds / songs / participants hit the plan cap:
  * unlock, change plan, or finish the quiz.
@@ -88,6 +95,8 @@ export function QuizPlanLimitPrompt({
   const parsed = parseQuizPlanLimitError(message);
   const kind = kindProp ?? parsed?.kind ?? "rounds";
   const cap = capProp ?? parsed?.cap ?? null;
+  const atSelfServeMax =
+    planId === "pro" || unlocked || (cap != null && cap >= maxSelfServeCapFor(kind));
 
   const unlockCheckoutPath = `/api/billing/checkout?sku=quiz_unlock&quizId=${encodeURIComponent(quizId)}`;
   const unlockHref = isAnonymous
@@ -115,8 +124,17 @@ export function QuizPlanLimitPrompt({
         <p className="text-sm font-medium text-foreground">
           {titleFor(kind, cap)}
         </p>
-        <p className="text-sm text-muted-foreground">{bodyFor(kind, cap)}</p>
-        {kind !== "participants" ? (
+        <p className="text-sm text-muted-foreground">
+          {atSelfServeMax
+            ? "This quiz is already at the highest self-service limit. Please contact us if you need more."
+            : bodyFor(kind, cap)}
+        </p>
+        {atSelfServeMax ? (
+          <p className="text-xs text-muted-foreground">
+            Pro and Quiz Unlock both allow up to {maxSelfServeCapFor(kind)}{" "}
+            {kind === "participants" ? "participants" : "songs / rounds"}.
+          </p>
+        ) : kind !== "participants" ? (
           <p className="text-xs text-muted-foreground">
             Unlock raises this quiz to {QUIZ_UNLOCK_LIMITS.maxCuratedTracks}{" "}
             songs / rounds and {QUIZ_UNLOCK_LIMITS.maxMembers} participants, with
@@ -131,7 +149,11 @@ export function QuizPlanLimitPrompt({
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-        {!unlocked ? (
+        {atSelfServeMax ? (
+          <Link href="/contact" className={buttonVariants({ size: "sm" })}>
+            Contact us
+          </Link>
+        ) : !unlocked ? (
           <Button
             type="button"
             size="sm"
@@ -140,6 +162,7 @@ export function QuizPlanLimitPrompt({
             Unlock this quiz ({BILLING_SKU_LABELS.quiz_unlock})
           </Button>
         ) : null}
+        {!atSelfServeMax ? (
         <Button
           type="button"
           size="sm"
@@ -148,6 +171,7 @@ export function QuizPlanLimitPrompt({
         >
           Change plan
         </Button>
+        ) : null}
         {!hideFinish ? (
           <form action={finishAction}>
             <input type="hidden" name="quizId" value={quizId} />
