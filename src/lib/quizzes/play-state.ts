@@ -508,6 +508,11 @@ export async function getQuizPlayState(
     role: m.role,
     joined_at: m.joined_at,
   }));
+  const scoringUserIds = new Set(
+    roster
+      .filter((member) => isScoringQuizMember(member, settings.hostParticipates))
+      .map((member) => member.user_id),
+  );
 
   let teams: QuizTeamInfo[] = [];
   let teamsLocked = false;
@@ -552,6 +557,7 @@ export async function getQuizPlayState(
       submitted_at: string | null;
       points_breakdown: unknown;
     }>)
+      .filter((g) => scoringUserIds.has(g.user_id))
       .filter((g) => !isLateJoinBreakdown(g.points_breakdown))
       .map((g) => ({
         user_id: g.user_id,
@@ -655,7 +661,7 @@ export async function getQuizPlayState(
         participantScoresByRound.set(g.round_id, scores);
       }
       // Pre-round scores are saved and shown in results, but do not count on the leaderboard.
-      if (officialScoringIds.has(g.round_id)) {
+      if (officialScoringIds.has(g.round_id) && scoringUserIds.has(g.user_id)) {
         totals.set(g.user_id, (totals.get(g.user_id) ?? 0) + pts);
         if (latestOfficialScoringId && g.round_id === latestOfficialScoringId) {
           lastRoundPts.set(g.user_id, pts);
