@@ -16,7 +16,7 @@ import {
 } from "@/lib/quiz-settings";
 import { mergeQuizSettingsForStorage } from "@/lib/quiz-scoring";
 import { effectiveQuizTitle } from "@/lib/create-quiz-wizard";
-import { normalizeLastfmUsername } from "@/lib/lastfm";
+import { lookupLastfmUser, normalizeLastfmUsername } from "@/lib/lastfm";
 import {
   seedCuratedTracksForQuiz,
   type QuizTrackInput,
@@ -321,6 +321,12 @@ export async function createQuizAction(
   }
   if (settings.source === "lastfm_live" && !settings.lastfmUsername) {
     return { error: "Enter your Last.fm username for live Spotify quizzes." };
+  }
+  if (settings.source === "lastfm_live") {
+    const lookup = await lookupLastfmUser(settings.lastfmUsername);
+    if (!lookup.ok && lookup.code === "invalid_user") {
+      return { error: lookup.message };
+    }
   }
 
   try {

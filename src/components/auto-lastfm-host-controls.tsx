@@ -12,9 +12,18 @@ import {
   updateLastfmUsernameAction,
 } from "@/app/actions/quiz-round";
 import { QuizPlanLimitPrompt } from "@/components/quiz-plan-limit-prompt";
+import {
+  ensureLastfmUserExists,
+  LastfmErrorAlert,
+  LastfmHelpButton,
+  LastfmHelpDialog,
+  LastfmUserNotFoundAlert,
+  useLastfmUserLookup,
+} from "@/components/lastfm-help";
 import { LiveHostScreenLockField } from "@/components/live-host-screen-lock-field";
 import { LiveQuizInactivityNotice } from "@/components/live-quiz-inactivity-notice";
 import { StartQuizNowDialog } from "@/components/start-quiz-now-dialog";
+import { isLastfmUserNotFoundMessage } from "@/lib/lastfm-messages";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -136,6 +145,8 @@ export function AutoLastfmHostControls({
   const [nowPlaying, setNowPlaying] = useState<NowPlayingTrack | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [usernameInvalid, setUsernameInvalid] = useState(false);
+  const [lastfmHelpOpen, setLastfmHelpOpen] = useState(false);
   const [planLimitError, setPlanLimitError] = useState<string | null>(null);
   const [openMode, setOpenMode] = useState<OpenMode>(initialOpenMode);
   const [listenSeconds, setListenSeconds] = useState(DEFAULT_LISTEN_SECONDS);
@@ -149,6 +160,11 @@ export function AutoLastfmHostControls({
   const [inactivityNotifySignal, setInactivityNotifySignal] = useState(0);
   const [localQuizStarted, setLocalQuizStarted] = useState(quizStarted);
   const localQuizStartedRef = useRef(quizStarted);
+  const showUsernameSetup = !username.trim() || usernameInvalid;
+  const lastfmLookup = useLastfmUserLookup(
+    usernameDraft,
+    showUsernameSetup && !disabled,
+  );
   useEffect(() => {
     setLocalQuizStarted(quizStarted);
     localQuizStartedRef.current = quizStarted;
@@ -186,9 +202,9 @@ export function AutoLastfmHostControls({
   }, [autoInterrupted]);
 
   useEffect(() => {
-    if (disabled || autoInterrupted || !username.trim()) return;
+    if (disabled || autoInterrupted || !username.trim() || usernameInvalid) return;
     void patchLastfmLiveRuntimeAction(quizId, joinCode, { liveSyncEnabled: true });
-  }, [autoInterrupted, disabled, joinCode, quizId, username]);
+  }, [autoInterrupted, disabled, joinCode, quizId, username, usernameInvalid]);
 
   useEffect(() => {
     emptyStreakRef.current = emptyStreakThreshold;
@@ -233,6 +249,12 @@ export function AutoLastfmHostControls({
       return;
     }
     if (isSoftSyncError(message)) {
+      return;
+    }
+    if (isLastfmUserNotFoundMessage(message)) {
+      errorStreakRef.current = ERROR_STREAK_TO_SHOW;
+      setError(message);
+      setUsernameInvalid(true);
       return;
     }
     errorStreakRef.current += 1;
@@ -459,7 +481,7 @@ export function AutoLastfmHostControls({
   }, [autoInterrupted, clearDebounce]);
 
   useEffect(() => {
-    if (disabled || atRoundLimit || !username.trim()) {
+    if (disabled || atRoundLimit || !username.trim() || usernameInvalid) {
       clearDebounce();
       return;
     }
@@ -491,6 +513,7 @@ export function AutoLastfmHostControls({
         }
 
         reportError(null);
+        setUsernameInvalid(false);
 
         if (!data.playing || !data.track) {
           playbackPrimedRef.current = true;
@@ -641,7 +664,15 @@ export function AutoLastfmHostControls({
       clearDebounce();
     };
     // Stable poll loop — callbacks via refs. Do not depend on runSync/scheduleOpen.
-  }, [atRoundLimit, clearDebounce, disabled, reportError, trackLabel, username]);
+  }, [
+    atRoundLimit,
+    clearDebounce,
+    disabled,
+    reportError,
+    trackLabel,
+    username,
+    usernameInvalid,
+  ]);
 
   /** Lock the current track so polls do not reopen it after End / Pause / Resume. */
   function deferCurrentTrack() {
@@ -888,6 +919,12 @@ export function AutoLastfmHostControls({
     setBusy(true);
     reportError(null);
     try {
+      const lookupError = await ensureLastfmUserExists(usernameDraft);
+      if (lookupError) {
+        setUsernameInvalid(true);
+        setError(lookupError);
+        return;
+      }
       const result = await updateLastfmUsernameAction(
         quizId,
         joinCode,
@@ -898,6 +935,7 @@ export function AutoLastfmHostControls({
         return;
       }
       setUsername(usernameDraft.trim().replace(/^@/, ""));
+      setUsernameInvalid(false);
       lastKeyRef.current = null;
       deferredKeyRef.current = null;
       notPlayingStreakRef.current = 0;
@@ -934,7 +972,9 @@ export function AutoLastfmHostControls({
     nowPlaying != null &&
     pendingKeyRef.current === nowPlaying.trackKey;
 
-  if (!username.trim()) {
+  if (showUsernameSetup) {
+    const showNotFound =
+      lastfmLookup === "invalid" || isLastfmUserNotFoundMessage(error);
     return (
       <section
         className={
@@ -943,27 +983,38 @@ export function AutoLastfmHostControls({
             : "space-y-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4"
         }
       >
+        <LastfmHelpDialog
+          open={lastfmHelpOpen}
+          onOpenChange={setLastfmHelpOpen}
+        />
         {embedded ? null : (
           <h2 className="text-lg font-semibold">Live Spotify (Last.fm)</h2>
         )}
-        <p className="text-sm text-muted-foreground">
-          Enter the Last.fm username linked to the Spotify account that is playing
-          music.
-        </p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm text-muted-foreground">
+            Enter the Last.fm username linked to the Spotify account that is playing
+            music.
+          </p>
+          <LastfmHelpButton onClick={() => setLastfmHelpOpen(true)} />
+        </div>
         <div className="space-y-2">
           <Label htmlFor="lastfm-username-host">Last.fm username</Label>
           <div className="flex flex-wrap gap-2">
             <Input
               id="lastfm-username-host"
               value={usernameDraft}
-              onChange={(event) => setUsernameDraft(event.target.value)}
+              onChange={(event) => {
+                setUsernameDraft(event.target.value);
+                setError(null);
+              }}
               placeholder="your_lastfm_name"
               className="max-w-xs"
               maxLength={64}
+              autoComplete="username"
             />
             <Button
               type="button"
-              disabled={busy || !usernameDraft.trim()}
+              disabled={busy || !usernameDraft.trim() || lastfmLookup === "invalid"}
               onClick={() => {
                 void onSaveUsername();
               }}
@@ -972,11 +1023,14 @@ export function AutoLastfmHostControls({
             </Button>
           </div>
         </div>
-        {error ? (
-          <p className="text-sm text-destructive" role="alert">
-            {error}
-          </p>
-        ) : null}
+        {showNotFound ? (
+          <LastfmUserNotFoundAlert onHelp={() => setLastfmHelpOpen(true)} />
+        ) : (
+          <LastfmErrorAlert
+            error={error}
+            onHelp={() => setLastfmHelpOpen(true)}
+          />
+        )}
         <LiveHostScreenLockField id="lastfm-screen-lock-setup" disabled={disabled} />
       </section>
     );
@@ -990,6 +1044,10 @@ export function AutoLastfmHostControls({
           : "space-y-3 rounded-2xl border border-border/60 bg-card p-4"
       }
     >
+      <LastfmHelpDialog
+        open={lastfmHelpOpen}
+        onOpenChange={setLastfmHelpOpen}
+      />
       <div>
         {embedded ? null : (
           <h2 className="text-lg font-semibold">Live Spotify (Last.fm)</h2>
@@ -1198,9 +1256,10 @@ export function AutoLastfmHostControls({
       />
 
       {error ? (
-        <p className="text-sm text-destructive" role="alert">
-          {error}
-        </p>
+        <LastfmErrorAlert
+          error={error}
+          onHelp={() => setLastfmHelpOpen(true)}
+        />
       ) : null}
       {finishError ? (
         <p className="text-sm text-destructive" role="alert">

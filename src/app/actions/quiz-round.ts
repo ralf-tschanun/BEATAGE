@@ -980,10 +980,17 @@ export async function updateLastfmUsernameAction(
   const code = joinCode.trim().toUpperCase();
   if (!id) return { error: "Missing quiz id." };
 
-  const { normalizeLastfmUsername } = await import("@/lib/lastfm");
+  const { lookupLastfmUser, normalizeLastfmUsername } = await import(
+    "@/lib/lastfm"
+  );
   const lastfmUsername = normalizeLastfmUsername(username);
   if (!lastfmUsername) {
     return { error: "Enter your Last.fm username." };
+  }
+
+  const lookup = await lookupLastfmUser(lastfmUsername);
+  if (!lookup.ok && lookup.code === "invalid_user") {
+    return { error: lookup.message };
   }
 
   const { user } = await ensureAnonymousSession();

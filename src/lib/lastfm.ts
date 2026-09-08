@@ -3,6 +3,8 @@
  * Docs: https://www.last.fm/api/show/user.getRecentTracks
  */
 
+import { LASTFM_USER_NOT_FOUND_MESSAGE } from "@/lib/lastfm-messages";
+
 export type LastfmNowPlayingTrack = {
   /** Stable id for debounce / same-track checks (not a Spotify id). */
   trackKey: string;
@@ -123,7 +125,7 @@ export async function getLastfmCurrentlyPlaying(
     if (!response.ok || data?.error) {
       const message = data?.message?.trim() || "Could not read Last.fm now playing.";
       if (data?.error === 6 || /user not found/i.test(message)) {
-        return { ok: false, code: "invalid_user", message: "Last.fm user not found." };
+        return { ok: false, code: "invalid_user", message: LASTFM_USER_NOT_FOUND_MESSAGE };
       }
       return { ok: false, code: "failed", message: message.slice(0, 160) };
     }
@@ -164,6 +166,98 @@ export async function getLastfmCurrentlyPlaying(
       },
     };
     lastfmNowPlayingCache.set(cacheKey, { at: Date.now(), result });
+    return result;
+  } catch {
+    return {
+      ok: false,
+      code: "failed",
+      message: "Could not reach Last.fm.",
+    };
+  }
+}
+
+export type LastfmUserLookupResult =
+  | { ok: true; username: string }
+  | { ok: false; code: "not_configured" | "invalid_user" | "failed"; message: string };
+
+const LASTFM_USER_LOOKUP_CACHE_MS = 30_000;
+const lastfmUserLookupCache = new Map<
+  string,
+  { at: number; result: LastfmUserLookupResult }
+>();
+
+/**
+ * Check whether a Last.fm account exists (user.getInfo).
+ * Does not require the user to be scrobbling right now.
+ */
+export async function lookupLastfmUser(
+  username: string,
+): Promise<LastfmUserLookupResult> {
+  const apiKey = getLastfmApiKey();
+  if (!apiKey) {
+    return {
+      ok: false,
+      code: "not_configured",
+      message: "Last.fm is not configured on this server.",
+    };
+  }
+
+  const user = normalizeLastfmUsername(username);
+  if (!user) {
+    return {
+      ok: false,
+      code: "invalid_user",
+      message: "Enter your Last.fm username.",
+    };
+  }
+
+  const cacheKey = user.toLowerCase();
+  const cached = lastfmUserLookupCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < LASTFM_USER_LOOKUP_CACHE_MS) {
+    return cached.result;
+  }
+
+  const url = new URL("https://ws.audioscrobbler.com/2.0/");
+  url.searchParams.set("method", "user.getinfo");
+  url.searchParams.set("user", user);
+  url.searchParams.set("api_key", apiKey);
+  url.searchParams.set("format", "json");
+
+  try {
+    const response = await fetch(url.toString(), { cache: "no-store" });
+    const data = (await response.json().catch(() => null)) as {
+      error?: number;
+      message?: string;
+      user?: { name?: string };
+    } | null;
+
+    if (!response.ok || data?.error) {
+      const message = data?.message?.trim() || "Could not look up Last.fm user.";
+      if (data?.error === 6 || /user not found/i.test(message)) {
+        const result: LastfmUserLookupResult = {
+          ok: false,
+          code: "invalid_user",
+          message: LASTFM_USER_NOT_FOUND_MESSAGE,
+        };
+        lastfmUserLookupCache.set(cacheKey, { at: Date.now(), result });
+        return result;
+      }
+      return { ok: false, code: "failed", message: message.slice(0, 160) };
+    }
+
+    const name = data?.user?.name?.trim() ?? "";
+    if (!name) {
+      const result: LastfmUserLookupResult = {
+        ok: false,
+        code: "invalid_user",
+        message: LASTFM_USER_NOT_FOUND_MESSAGE,
+      };
+      lastfmUserLookupCache.set(cacheKey, { at: Date.now(), result });
+      return result;
+    }
+
+    const result: LastfmUserLookupResult = { ok: true, username: name };
+    lastfmUserLookupCache.set(cacheKey, { at: Date.now(), result });
     return result;
   } catch {
     return {

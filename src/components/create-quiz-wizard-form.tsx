@@ -10,13 +10,22 @@ import {
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { QuestionIcon, XIcon } from "@phosphor-icons/react";
+import { XIcon } from "@phosphor-icons/react";
 import { createQuizAction, type QuizActionState } from "@/app/actions/quiz";
 import {
   CreateQuizParticipantLimitDialog,
   CreateQuizSlotLimitTipDialog,
   CreateQuizUnlockDialog,
 } from "@/components/create-quiz-unlock-dialog";
+import {
+  ensureLastfmUserExists,
+  LastfmErrorAlert,
+  LastfmHelpButton,
+  LastfmHelpDialog,
+  LastfmUserFoundNotice,
+  LastfmUserNotFoundAlert,
+  useLastfmUserLookup,
+} from "@/components/lastfm-help";
 import { SongPickFields } from "@/components/song-pick-fields";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
@@ -84,6 +93,7 @@ import {
   YEAR_RANGE_TOLERANCE_MIN,
 } from "@/lib/quiz-settings";
 import { ADMIN_SELECT_CLASS } from "@/lib/admin-ui";
+import { isLastfmUserNotFoundMessage } from "@/lib/lastfm-messages";
 import { useWizardInputFocus } from "@/lib/wizard-input-focus";
 import { cn } from "@/lib/utils";
 
@@ -124,6 +134,7 @@ export function CreateQuizWizardForm({
   const [quickLastfmOpen, setQuickLastfmOpen] = useState(false);
   const [quickLastfmDraft, setQuickLastfmDraft] = useState("");
   const [lastfmHelpOpen, setLastfmHelpOpen] = useState(false);
+  const [lastfmChecking, setLastfmChecking] = useState(false);
   /** Gate: slot-limit tip before the wizard when there is no free active slot. */
   const [slotGateOpen, setSlotGateOpen] = useState(!canCreate);
   const [slotAcked, setSlotAcked] = useState(canCreate);
@@ -153,6 +164,14 @@ export function CreateQuizWizardForm({
   /** Snapshot for create/unlock dialogs — Quick Live must not pick up draft tweaks. */
   const pendingCreateRef = useRef<CreateQuizWizardState | null>(null);
   const pendingDraftRef = useRef(false);
+  const lastfmLookup = useLastfmUserLookup(
+    wizard.lastfmUsername,
+    wizard.playMode === "auto_lastfm" && wizard.step === 1,
+  );
+  const quickLastfmLookup = useLastfmUserLookup(
+    quickLastfmDraft,
+    quickLastfmOpen,
+  );
   const { focusById } = useWizardInputFocus([wizard.step, wizard.draftSongs.length]);
 
   useEffect(() => {
@@ -250,14 +269,32 @@ export function CreateQuizWizardForm({
     router.push("/");
   }
 
-  function handleNext() {
+  async function rejectIfLastfmUserMissing(username: string): Promise<boolean> {
+    setLastfmChecking(true);
+    try {
+      const lookupError = await ensureLastfmUserExists(username);
+      if (lookupError) {
+        setStepError(lookupError);
+        return true;
+      }
+      return false;
+    } finally {
+      setLastfmChecking(false);
+    }
+  }
+
+  async function handleNext() {
     const error = validateQuizWizardStep(wizardRef.current, wizardRef.current.step);
     if (error) {
       setStepError(error);
       return;
     }
+    const current = wizardRef.current;
+    if (current.step === 1 && current.playMode === "auto_lastfm") {
+      if (await rejectIfLastfmUserMissing(current.lastfmUsername)) return;
+    }
     setStepError(null);
-    patchWizard({ step: Math.min(wizardRef.current.step + 1, 2) });
+    patchWizard({ step: Math.min(current.step + 1, 2) });
   }
 
   function handleBack() {
@@ -375,7 +412,7 @@ export function CreateQuizWizardForm({
   }
 
   /** MyContest pattern: confirm create via participant-limit dialog when within plan. */
-  function requestCreate(stateOverride?: CreateQuizWizardState) {
+  async function requestCreate(stateOverride?: CreateQuizWizardState) {
     const current = stateOverride ?? wizardRef.current;
     if (stateOverride) {
       pendingCreateRef.current = stateOverride;
@@ -396,6 +433,9 @@ export function CreateQuizWizardForm({
     if (optionsError) {
       setStepError(optionsError);
       return;
+    }
+    if (current.playMode === "auto_lastfm") {
+      if (await rejectIfLastfmUserMissing(current.lastfmUsername)) return;
     }
 
     const overTracks = filledQuizSongs(current).length > planSongCap;
@@ -432,7 +472,7 @@ export function CreateQuizWizardForm({
     return next;
   }
 
-  function handleQuickLiveQuiz() {
+  async function handleQuickLiveQuiz() {
     const current = wizardRef.current;
     const host = current.hostName.trim() || hostNameDefault;
     if (!host) {
@@ -449,29 +489,35 @@ export function CreateQuizWizardForm({
       setQuickLastfmOpen(true);
       return;
     }
+    if (await rejectIfLastfmUserMissing(lastfm)) {
+      setQuickLastfmDraft(lastfm);
+      setQuickLastfmOpen(true);
+      return;
+    }
     const next = applyQuickLiveDefaults(lastfm);
-    requestCreate(next);
+    void requestCreate(next);
   }
 
-  function confirmQuickLiveWithLastfm() {
+  async function confirmQuickLiveWithLastfm() {
     const lastfm = quickLastfmDraft.trim().replace(/^@/, "");
     if (!lastfm) {
       setStepError("Enter your Last.fm username (connect Spotify Scrobbling in Last.fm settings first).");
       return;
     }
+    if (await rejectIfLastfmUserMissing(lastfm)) return;
     setQuickLastfmOpen(false);
     setStepError(null);
     const next = applyQuickLiveDefaults(lastfm);
-    requestCreate(next);
+    void requestCreate(next);
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (wizardRef.current.step < 2) {
-      handleNext();
+      void handleNext();
       return;
     }
-    requestCreate();
+    void requestCreate();
   }
 
 
@@ -499,6 +545,12 @@ export function CreateQuizWizardForm({
   }
 
   const wizardReady = hydrated && slotAcked;
+  const formError = stepError ?? state?.error ?? null;
+  const hideDuplicateLastfmNotFound =
+    wizard.step === 1 &&
+    wizard.playMode === "auto_lastfm" &&
+    isLastfmUserNotFoundMessage(formError);
+  const lastfmBusy = pending || lastfmChecking;
 
   // Scroll to page top whenever the step changes (Next / Back).
   useEffect(() => {
@@ -602,21 +654,32 @@ export function CreateQuizWizardForm({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="quick-lastfm-username">Last.fm username</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="quick-lastfm-username">Last.fm username</Label>
+              <LastfmHelpButton onClick={() => setLastfmHelpOpen(true)} />
+            </div>
             <Input
               id="quick-lastfm-username"
               value={quickLastfmDraft}
-              onChange={(event) => setQuickLastfmDraft(event.target.value)}
+              onChange={(event) => {
+                setQuickLastfmDraft(event.target.value);
+                setStepError(null);
+              }}
               placeholder="your_lastfm_name"
               autoComplete="username"
               maxLength={64}
               autoFocus
             />
           </div>
-          {stepError ? (
+          {quickLastfmLookup === "invalid" ||
+          isLastfmUserNotFoundMessage(stepError) ? (
+            <LastfmUserNotFoundAlert onHelp={() => setLastfmHelpOpen(true)} />
+          ) : stepError ? (
             <p className="text-sm text-destructive" role="alert">
               {stepError}
             </p>
+          ) : quickLastfmLookup === "found" ? (
+            <LastfmUserFoundNotice />
           ) : null}
           <DialogFooter>
             <Button
@@ -628,55 +691,23 @@ export function CreateQuizWizardForm({
             </Button>
             <Button
               type="button"
-              disabled={pending}
-              onClick={confirmQuickLiveWithLastfm}
+              disabled={
+                pending ||
+                lastfmChecking ||
+                !quickLastfmDraft.trim() ||
+                quickLastfmLookup === "invalid"
+              }
+              onClick={() => {
+                void confirmQuickLiveWithLastfm();
+              }}
             >
-              {pending ? "Creating…" : "Create quiz"}
+              {pending ? "Creating…" : lastfmChecking ? "Checking…" : "Create quiz"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={lastfmHelpOpen} onOpenChange={setLastfmHelpOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Why Last.fm?</DialogTitle>
-            <DialogDescription>
-              {BRAND_NAME} needs Last.fm to detect which track is currently playing
-              on Spotify, so quiz rounds can open automatically.
-            </DialogDescription>
-          </DialogHeader>
-          <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
-            <li>
-              Create a free{" "}
-              <a
-                href="https://www.last.fm/join"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-foreground underline-offset-2 hover:underline"
-              >
-                Last.fm account
-              </a>{" "}
-              if you do not have one yet.
-            </li>
-            <li>
-              On the Last.fm website, scroll to the bottom and open{" "}
-              <strong className="font-medium text-foreground">ACCOUNT → Settings → Applications</strong>.
-              Under <strong className="font-medium text-foreground">Spotify Scrobbling</strong>, click{" "}
-              <strong className="font-medium text-foreground">Connect</strong> and authorize Spotify.
-            </li>
-            <li>Enter your Last.fm username here.</li>
-          </ol>
-          <p className="text-sm text-muted-foreground">
-            The ACCOUNT link is at the very bottom of the Last.fm page — easy to miss.
-          </p>
-          <DialogFooter>
-            <Button type="button" onClick={() => setLastfmHelpOpen(false)}>
-              Got it
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <LastfmHelpDialog open={lastfmHelpOpen} onOpenChange={setLastfmHelpOpen} />
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-6 py-8">
         {!wizardReady ? (
@@ -813,30 +844,30 @@ export function CreateQuizWizardForm({
                             <p className="text-sm text-muted-foreground">
                               Enter your Last.fm username below.
                             </p>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="size-6 shrink-0 text-muted-foreground"
-                              aria-label="Why Last.fm?"
-                              onClick={() => setLastfmHelpOpen(true)}
-                            >
-                              <QuestionIcon className="size-4" weight="bold" />
-                            </Button>
+                            <LastfmHelpButton onClick={() => setLastfmHelpOpen(true)} />
                           </div>
                           <div className="space-y-2">
                             <Label htmlFor="lastfmUsername">Last.fm username</Label>
                             <Input
                               id="lastfmUsername"
                               value={wizard.lastfmUsername}
-                              onChange={(event) =>
-                                patchWizard({ lastfmUsername: event.target.value })
-                              }
+                              onChange={(event) => {
+                                patchWizard({ lastfmUsername: event.target.value });
+                                setStepError(null);
+                              }}
                               placeholder="your_lastfm_name"
                               autoComplete="username"
                               maxLength={64}
                             />
                           </div>
+                          {lastfmLookup === "invalid" ||
+                          isLastfmUserNotFoundMessage(stepError) ? (
+                            <LastfmUserNotFoundAlert
+                              onHelp={() => setLastfmHelpOpen(true)}
+                            />
+                          ) : lastfmLookup === "found" ? (
+                            <LastfmUserFoundNotice />
+                          ) : null}
                         </div>
                       ) : null}
 
@@ -1357,10 +1388,11 @@ export function CreateQuizWizardForm({
                     </div>
                   ) : null}
 
-                  {stepError || state?.error ? (
-                    <p className="text-sm text-destructive" role="alert">
-                      {stepError ?? state?.error}
-                    </p>
+                  {formError && !hideDuplicateLastfmNotFound ? (
+                    <LastfmErrorAlert
+                      error={formError}
+                      onHelp={() => setLastfmHelpOpen(true)}
+                    />
                   ) : null}
 
                   <div className="flex flex-wrap items-center gap-2">
@@ -1368,7 +1400,7 @@ export function CreateQuizWizardForm({
                       <Button
                         type="button"
                         variant="outline"
-                        disabled={pending}
+                        disabled={lastfmBusy}
                         onClick={handleBack}
                       >
                         Back
@@ -1379,16 +1411,29 @@ export function CreateQuizWizardForm({
                       </Link>
                     )}
                     {wizard.step < 2 ? (
-                      <Button type="button" onClick={handleNext} disabled={pending}>
-                        Next
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          void handleNext();
+                        }}
+                        disabled={
+                          lastfmBusy ||
+                          (wizard.step === 1 &&
+                            wizard.playMode === "auto_lastfm" &&
+                            lastfmLookup === "invalid")
+                        }
+                      >
+                        {lastfmChecking ? "Checking…" : "Next"}
                       </Button>
                     ) : (
                       <Button
                         type="button"
-                        disabled={pending}
-                        onClick={() => requestCreate()}
+                        disabled={lastfmBusy}
+                        onClick={() => {
+                          void requestCreate();
+                        }}
                       >
-                        {pending ? "Creating…" : "Create quiz"}
+                        {pending ? "Creating…" : lastfmChecking ? "Checking…" : "Create quiz"}
                       </Button>
                     )}
                     {wizard.step === 0 ? (
@@ -1396,10 +1441,12 @@ export function CreateQuizWizardForm({
                         type="button"
                         variant="secondary"
                         className="ml-auto"
-                        disabled={pending}
-                        onClick={handleQuickLiveQuiz}
+                        disabled={lastfmBusy}
+                        onClick={() => {
+                          void handleQuickLiveQuiz();
+                        }}
                       >
-                        {pending ? "Creating…" : "Quick Live Quiz"}
+                        {pending ? "Creating…" : lastfmChecking ? "Checking…" : "Quick Live Quiz"}
                       </Button>
                     ) : null}
                   </div>
