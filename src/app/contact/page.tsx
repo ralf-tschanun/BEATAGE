@@ -8,7 +8,7 @@ import type { PlanId } from "@/lib/quiz-plans";
 import { getQuizDashboardData } from "@/lib/quizzes/dashboard";
 
 export const metadata: Metadata = {
-  title: "Contact",
+  title: "Support",
   description: `Questions or feedback about ${BRAND_NAME}? Send us a message.`,
   alternates: {
     canonical: "/contact",
@@ -24,7 +24,7 @@ export default async function ContactPage() {
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-background via-background to-muted/30">
       <SiteHeader identity={identity} currentPlan={plan.id as PlanId} />
       <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-16">
-        <h1 className="text-3xl font-semibold tracking-tight">Contact</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Support</h1>
         <p className="mt-4 text-muted-foreground">
           Questions, feedback, or support — send us a short message and we’ll
           reply by email.

@@ -53,7 +53,7 @@ export function HomeHero({
             Guess the release year.
           </h1>
           <p className="text-xl font-medium tracking-tight text-foreground/90 sm:text-2xl">
-            {BRAND_NAME} — music quiz nights with friends.
+            {BRAND_NAME} · music quiz with friends.
           </p>
           <p className="text-lg leading-relaxed text-muted-foreground">
             The host plays a hit on Spotify. Everyone guesses the release year — plus

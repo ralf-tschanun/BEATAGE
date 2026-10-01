@@ -12,7 +12,7 @@ export function SiteFooter() {
             href="/music-quiz-release-year"
             className="text-muted-foreground transition-colors hover:text-foreground"
           >
-            Music quiz
+            Quiz
           </Link>
           <Link
             href="/help"
@@ -24,23 +24,23 @@ export function SiteFooter() {
             href="/about"
             className="text-muted-foreground transition-colors hover:text-foreground"
           >
-            About us
+            About
           </Link>
           <Link
             href="/impressum"
             className="text-muted-foreground transition-colors hover:text-foreground"
           >
-            Impressum
+            Imprint
           </Link>
           <Link
             href="/contact"
             className="text-muted-foreground transition-colors hover:text-foreground"
           >
-            Contact
+            Support
           </Link>
         </nav>
         <p className="text-sm text-muted-foreground">
-          © {year} {BRAND_NAME} · gosmooth.eu. All rights reserved.
+          © {year} {BRAND_NAME} · All rights reserved.
         </p>
       </div>
     </footer>
