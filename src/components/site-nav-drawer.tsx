@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { CaretRightIcon, ListIcon, TrophyIcon, UserCircleIcon, XIcon } from "@phosphor-icons/react";
 import { ChangePlanForm } from "@/components/change-plan-form";
 import { AccountAuthForm } from "@/components/account-auth-form";
@@ -153,6 +153,11 @@ export function SiteNavDrawer({
 
   const signedIn = Boolean(identity && !identity.isAnonymous);
 
+  // After sign-in the account panel would keep covering the menu.
+  useEffect(() => {
+    if (signedIn) setAccountOpen(false);
+  }, [signedIn]);
+
   return (
     <>
       <div className="flex items-center gap-1">
@@ -264,9 +269,6 @@ export function SiteNavDrawer({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium">Sign in</span>
-                  <span className="block text-xs text-muted-foreground">
-                    Sign in or create an account
-                  </span>
                 </span>
                 <CaretRightIcon
                   className="size-4 shrink-0 text-muted-foreground/50"
@@ -276,14 +278,17 @@ export function SiteNavDrawer({
             )}
           </div>
           {accountOpen ? (
-            <div className="absolute inset-0 z-10 flex items-end bg-black/10">
-              <div className="max-h-[calc(100dvh-4rem)] w-full overflow-y-auto rounded-t-3xl border-t bg-popover p-0 text-popover-foreground shadow-xl">
+            <div
+              className="absolute inset-0 z-10 flex items-end bg-black/10"
+              onClick={() => setAccountOpen(false)}
+            >
+              <div
+                className="max-h-[calc(100dvh-4rem)] w-full overflow-y-auto rounded-t-3xl border-t bg-popover p-0 text-popover-foreground shadow-xl"
+                onClick={(event) => event.stopPropagation()}
+              >
                 <div className="flex items-start justify-between gap-4 border-b px-6 py-5">
                   <div className="min-w-0">
                     <SheetTitle>Account</SheetTitle>
-                    <SheetDescription>
-                      Sign in or create an account to keep your quizzes.
-                    </SheetDescription>
                   </div>
                   <Button
                     type="button"
