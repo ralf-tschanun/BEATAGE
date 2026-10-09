@@ -16,6 +16,7 @@ import {
 } from "@/lib/quiz-settings";
 import { mergeQuizSettingsForStorage } from "@/lib/quiz-scoring";
 import { effectiveQuizTitle } from "@/lib/create-quiz-wizard";
+import { rememberAccountLastfmUsername } from "@/lib/account-lastfm";
 import { lookupLastfmUser, normalizeLastfmUsername } from "@/lib/lastfm";
 import {
   seedCuratedTracksForQuiz,
@@ -326,6 +327,10 @@ export async function createQuizAction(
     const lookup = await lookupLastfmUser(settings.lastfmUsername);
     if (!lookup.ok && lookup.code === "invalid_user") {
       return { error: lookup.message };
+    }
+    if (lookup.ok) {
+      settings.lastfmUsername = lookup.username;
+      await rememberAccountLastfmUsername(lookup.username);
     }
   }
 

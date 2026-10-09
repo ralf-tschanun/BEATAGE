@@ -1,6 +1,10 @@
 import { Polar } from "@polar-sh/sdk";
 import type { PlanId } from "@/lib/plans";
-import type { BillingSku } from "@/lib/billing-copy";
+import {
+  billingIntervalFromSku,
+  type BillingInterval,
+  type BillingSku,
+} from "@/lib/billing-copy";
 
 export type { BillingSku };
 
@@ -70,4 +74,30 @@ export function planFromProductIds(productIds: string[]): PlanId {
     if (next === "plus") plan = "plus";
   }
   return plan;
+}
+
+/** Subscription sku for the highest active plan. First Pro match wins, same as planFromProductIds. */
+export function subscriptionSkuFromProductIds(
+  productIds: string[],
+): Exclude<BillingSku, "quiz_unlock"> | null {
+  let plus: Exclude<BillingSku, "quiz_unlock"> | null = null;
+  for (const productId of productIds) {
+    const sku = skuFromProductId(productId);
+    if (sku === "pro_monthly" || sku === "pro_yearly") return sku;
+    if (sku === "plus_monthly" || sku === "plus_yearly") plus = sku;
+  }
+  return plus;
+}
+
+export function billingIntervalForPlan(
+  productIds: string[],
+  plan: PlanId,
+): BillingInterval | null {
+  if (plan !== "plus" && plan !== "pro") return null;
+  for (const productId of productIds) {
+    const sku = skuFromProductId(productId);
+    if (!sku || planFromSku(sku) !== plan) continue;
+    return billingIntervalFromSku(sku);
+  }
+  return null;
 }

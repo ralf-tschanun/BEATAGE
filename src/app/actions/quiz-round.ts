@@ -992,6 +992,7 @@ export async function updateLastfmUsernameAction(
   if (!lookup.ok && lookup.code === "invalid_user") {
     return { error: lookup.message };
   }
+  const canonicalUsername = lookup.ok ? lookup.username : lastfmUsername;
 
   const { user } = await ensureAnonymousSession();
   const { createAdminClient } = await import("@/lib/supabase/admin");
@@ -1014,11 +1015,16 @@ export async function updateLastfmUsernameAction(
     .from("beatage_quizzes")
     .update({
       settings: mergeQuizSettingsForStorage(
-        { ...settings, lastfmUsername },
+        { ...settings, lastfmUsername: canonicalUsername },
         runtime,
       ),
     })
     .eq("id", id);
+
+  if (lookup.ok) {
+    const { rememberAccountLastfmUsername } = await import("@/lib/account-lastfm");
+    await rememberAccountLastfmUsername(lookup.username);
+  }
 
   revalidatePath(`/q/${code}`);
   return { ok: true };

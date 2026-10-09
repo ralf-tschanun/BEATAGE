@@ -27,12 +27,28 @@ export type LastfmUserLookupStatus =
   | "invalid"
   | "unavailable";
 
+export type LastfmFoundProfile = {
+  username: string;
+  realname: string | null;
+  url: string | null;
+};
+
+export type LastfmUserLookupState = {
+  status: LastfmUserLookupStatus;
+  profile: LastfmFoundProfile | null;
+};
+
+const IDLE_LASTFM_LOOKUP: LastfmUserLookupState = {
+  status: "idle",
+  profile: null,
+};
+
 export async function lookupLastfmUserClient(
   username: string,
   signal?: AbortSignal,
-): Promise<LastfmUserLookupStatus> {
+): Promise<LastfmUserLookupState> {
   const user = username.trim().replace(/^@/, "");
-  if (!user) return "idle";
+  if (!user) return IDLE_LASTFM_LOOKUP;
 
   try {
     const response = await fetch(
@@ -42,18 +58,33 @@ export async function lookupLastfmUserClient(
     const data = (await response.json().catch(() => null)) as {
       ok?: boolean;
       code?: string;
+      username?: string;
+      realname?: string | null;
+      url?: string | null;
     } | null;
-    if (data?.ok) return "found";
+    if (data?.ok && data.username?.trim()) {
+      const username = data.username.trim();
+      return {
+        status: "found",
+        profile: {
+          username,
+          realname: data.realname?.trim() || null,
+          url:
+            data.url?.trim() ||
+            `https://www.last.fm/user/${encodeURIComponent(username)}`,
+        },
+      };
+    }
     if (data?.code === "invalid_user" || response.status === 404) {
-      return "invalid";
+      return { status: "invalid", profile: null };
     }
-    return "unavailable";
+    return { status: "unavailable", profile: null };
   } catch (error) {
-    if (signal?.aborted) return "checking";
+    if (signal?.aborted) return { status: "checking", profile: null };
     if (error instanceof DOMException && error.name === "AbortError") {
-      return "checking";
+      return { status: "checking", profile: null };
     }
-    return "unavailable";
+    return { status: "unavailable", profile: null };
   }
 }
 
@@ -62,31 +93,31 @@ export async function ensureLastfmUserExists(
   username: string,
 ): Promise<string | null> {
   const status = await lookupLastfmUserClient(username);
-  return status === "invalid" ? LASTFM_USER_NOT_FOUND_MESSAGE : null;
+  return status.status === "invalid" ? LASTFM_USER_NOT_FOUND_MESSAGE : null;
 }
 
 export function useLastfmUserLookup(
   username: string,
   enabled = true,
-): LastfmUserLookupStatus {
-  const [status, setStatus] = useState<LastfmUserLookupStatus>("idle");
+): LastfmUserLookupState {
+  const [state, setState] = useState<LastfmUserLookupState>(IDLE_LASTFM_LOOKUP);
 
   useEffect(() => {
     if (!enabled) {
-      setStatus("idle");
+      setState(IDLE_LASTFM_LOOKUP);
       return;
     }
     const user = username.trim().replace(/^@/, "");
     if (!user) {
-      setStatus("idle");
+      setState(IDLE_LASTFM_LOOKUP);
       return;
     }
 
     const controller = new AbortController();
-    setStatus("checking");
+    setState({ status: "checking", profile: null });
     const timer = window.setTimeout(() => {
       void lookupLastfmUserClient(user, controller.signal).then((next) => {
-        if (!controller.signal.aborted) setStatus(next);
+        if (!controller.signal.aborted) setState(next);
       });
     }, LOOKUP_DEBOUNCE_MS);
 
@@ -96,7 +127,7 @@ export function useLastfmUserLookup(
     };
   }, [enabled, username]);
 
-  return status;
+  return state;
 }
 
 export function LastfmHelpButton({
@@ -118,10 +149,40 @@ export function LastfmHelpButton({
   );
 }
 
-export function LastfmUserFoundNotice() {
+export function LastfmUserFoundNotice({
+  profile,
+  savedOnAccount = false,
+}: {
+  profile?: LastfmFoundProfile | null;
+  savedOnAccount?: boolean;
+}) {
+  const username = profile?.username?.trim() ?? "";
+  const href =
+    profile?.url?.trim() ||
+    (username
+      ? `https://www.last.fm/user/${encodeURIComponent(username)}`
+      : "");
+  const realname = profile?.realname?.trim() ?? "";
+
   return (
     <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">
-      {LASTFM_USER_FOUND_MESSAGE}
+      {username && href ? (
+        <>
+          Last.fm profile{" "}
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2"
+          >
+            @{username}
+          </a>
+          {realname ? ` (${realname})` : null} exists.
+        </>
+      ) : (
+        LASTFM_USER_FOUND_MESSAGE
+      )}
+      {savedOnAccount ? " Saved on your account." : null}
     </p>
   );
 }

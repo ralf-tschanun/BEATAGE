@@ -1,4 +1,10 @@
-import { planFromProductIds, planFromSku, skuFromProductId } from "@/lib/polar";
+import { billingIntervalFromSku, type BillingInterval } from "@/lib/billing-copy";
+import {
+  planFromProductIds,
+  planFromSku,
+  skuFromProductId,
+  subscriptionSkuFromProductIds,
+} from "@/lib/polar";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { PlanId } from "@/lib/plans";
 
@@ -48,13 +54,28 @@ async function applyPlan(opts: {
   plan: PlanId;
   polarCustomerId: string;
   source: string;
+  billingInterval?: BillingInterval | null;
 }) {
   const admin = createAdminClient();
-  const { error } = await admin.rpc("beatage_apply_billing_plan", {
+  const payload = {
     p_user_id: opts.userId,
     p_plan: opts.plan,
     p_polar_customer_id: opts.polarCustomerId,
-  });
+    p_billing_interval: opts.billingInterval ?? null,
+  };
+  let { error } = await admin.rpc("beatage_apply_billing_plan", payload);
+  // Migration 022 adds p_billing_interval. Older databases still accept the 3-arg call.
+  if (
+    error &&
+    /billing_interval|PGRST202|Could not find the function/i.test(error.message)
+  ) {
+    const retry = await admin.rpc("beatage_apply_billing_plan", {
+      p_user_id: opts.userId,
+      p_plan: opts.plan,
+      p_polar_customer_id: opts.polarCustomerId,
+    });
+    error = retry.error;
+  }
   if (error) {
     throw new Error(error.message);
   }
@@ -62,6 +83,7 @@ async function applyPlan(opts: {
     source: opts.source,
     userId: opts.userId,
     plan: opts.plan,
+    billingInterval: opts.billingInterval ?? null,
     polarCustomerId: opts.polarCustomerId,
   });
 }
@@ -78,6 +100,9 @@ export async function syncPlanFromCustomerState(state: PolarCustomerState) {
 
   const productIds = productIdsFromCustomerState(state);
   const plan: PlanId = planFromProductIds(productIds);
+  const billingInterval = billingIntervalFromSku(
+    subscriptionSkuFromProductIds(productIds),
+  );
   if (plan === "free" && productIds.length > 0) {
     console.warn(
       "[billing-sync] subscriptions present but no matching POLAR_PRODUCT_* env ids",
@@ -89,6 +114,7 @@ export async function syncPlanFromCustomerState(state: PolarCustomerState) {
     userId,
     plan,
     polarCustomerId: state.id,
+    billingInterval,
     source: "customer.state_changed",
   });
 }
@@ -115,6 +141,7 @@ export async function unlockQuizFromOrder(order: PolarOrder) {
       userId,
       plan,
       polarCustomerId: polarCustomerId || "",
+      billingInterval: billingIntervalFromSku(sku),
       source: "order.paid",
     });
     return;

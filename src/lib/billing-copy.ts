@@ -5,6 +5,16 @@ export type BillingSku =
   | "pro_yearly"
   | "quiz_unlock";
 
+export type BillingInterval = "monthly" | "yearly";
+
+export function billingIntervalFromSku(
+  sku: BillingSku | null | undefined,
+): BillingInterval | null {
+  if (sku === "plus_monthly" || sku === "pro_monthly") return "monthly";
+  if (sku === "plus_yearly" || sku === "pro_yearly") return "yearly";
+  return null;
+}
+
 export const BILLING_SKU_LABELS: Record<BillingSku, string> = {
   plus_monthly: "€2.99 / month",
   plus_yearly: "€20 / year",

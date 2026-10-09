@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { loadCurrentBillingInterval } from "@/app/actions/billing-interval";
 import { AccountAuthForm } from "@/components/account-auth-form";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +13,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { QUIZ_PLANS, QUIZ_UNLOCK_LIMITS, type PlanId } from "@/lib/quiz-plans";
-import { BILLING_SKU_LABELS, type BillingSku } from "@/lib/billing-copy";
+import {
+  BILLING_SKU_LABELS,
+  type BillingInterval,
+  type BillingSku,
+} from "@/lib/billing-copy";
 import { goToBilling } from "@/lib/billing-nav";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +57,21 @@ function planLimitHint(planId: PlanId): string {
   ].join(" · ");
 }
 
+function currentPlanMark(interval: BillingInterval | null): string {
+  if (interval === "monthly") return "Current · Monthly";
+  if (interval === "yearly") return "Current · Yearly";
+  return "Current";
+}
+
+function isCurrentBillingSku(
+  sku: BillingSku,
+  plan: PlanId,
+  interval: BillingInterval | null,
+): boolean {
+  if (!interval || plan === "free") return false;
+  return sku === `${plan}_${interval}`;
+}
+
 function checkoutHref(sku: BillingSku, quizId?: string): string {
   if (sku === "quiz_unlock" && quizId) {
     return `/api/billing/checkout?sku=${sku}&quizId=${encodeURIComponent(quizId)}`;
@@ -70,8 +90,24 @@ export function ChangePlanForm({
 }: ChangePlanFormProps) {
   const [step, setStep] = useState<Step>("closed");
   const [pendingSku, setPendingSku] = useState<BillingSku | null>(null);
+  const [billingInterval, setBillingInterval] = useState<BillingInterval | null>(null);
 
   const paid = currentPlan === "plus" || currentPlan === "pro";
+
+  useEffect(() => {
+    if (currentPlan !== "plus" && currentPlan !== "pro") {
+      setBillingInterval(null);
+      return;
+    }
+    if (step !== "select") return;
+    let cancelled = false;
+    void loadCurrentBillingInterval().then((interval) => {
+      if (!cancelled) setBillingInterval(interval);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [step, currentPlan]);
 
   useEffect(() => {
     if (open === undefined) return;
@@ -108,6 +144,36 @@ export function ChangePlanForm({
   }
 
   const planCards = useMemo(() => {
+    function priceButton(sku: "plus_monthly" | "plus_yearly" | "pro_monthly" | "pro_yearly") {
+      const current = isCurrentBillingSku(sku, currentPlan, billingInterval);
+      return (
+        <Button
+          key={sku}
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={pendingSku !== null}
+          aria-current={current ? "true" : undefined}
+          className={cn(
+            "w-full justify-between",
+            current &&
+              "cursor-default border-primary bg-primary/5 text-primary hover:bg-primary/5 hover:text-primary",
+          )}
+          onClick={() => {
+            if (current) return;
+            startCheckout(sku);
+          }}
+        >
+          <span>{BILLING_SKU_LABELS[sku]}</span>
+          {current ? (
+            <span className="text-[11px] font-semibold tracking-wide uppercase">
+              Current
+            </span>
+          ) : null}
+        </Button>
+      );
+    }
+
     const subscriptionCards = (["free", "plus", "pro"] as PlanId[]).map((id) => {
       const selected = currentPlan === id;
       return (
@@ -121,54 +187,18 @@ export function ChangePlanForm({
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm font-semibold">{QUIZ_PLANS[id].label}</p>
             {selected ? (
-              <span className="text-[11px] font-semibold tracking-wide text-primary uppercase">
-                Current
+              <span className="shrink-0 text-[11px] font-semibold tracking-wide whitespace-nowrap text-primary uppercase">
+                {currentPlanMark(
+                  id === "plus" || id === "pro" ? billingInterval : null,
+                )}
               </span>
             ) : null}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">{planLimitHint(id)}</p>
-          {id === "plus" ? (
+          {id === "plus" || id === "pro" ? (
             <div className="mt-3 flex flex-col gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={pendingSku !== null}
-                onClick={() => startCheckout("plus_monthly")}
-              >
-                {BILLING_SKU_LABELS.plus_monthly}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={pendingSku !== null}
-                onClick={() => startCheckout("plus_yearly")}
-              >
-                {BILLING_SKU_LABELS.plus_yearly}
-              </Button>
-            </div>
-          ) : null}
-          {id === "pro" ? (
-            <div className="mt-3 flex flex-col gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={pendingSku !== null}
-                onClick={() => startCheckout("pro_monthly")}
-              >
-                {BILLING_SKU_LABELS.pro_monthly}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={pendingSku !== null}
-                onClick={() => startCheckout("pro_yearly")}
-              >
-                {BILLING_SKU_LABELS.pro_yearly}
-              </Button>
+              {priceButton(id === "plus" ? "plus_monthly" : "pro_monthly")}
+              {priceButton(id === "plus" ? "plus_yearly" : "pro_yearly")}
             </div>
           ) : null}
         </div>
@@ -211,7 +241,7 @@ export function ChangePlanForm({
     );
 
     return [subscriptionCards[0], unlockCard, subscriptionCards[1], subscriptionCards[2]];
-  }, [currentPlan, pendingSku, isAnonymous, unlockContest]);
+  }, [currentPlan, pendingSku, isAnonymous, unlockContest, billingInterval]);
 
   if (!hasSession && open === undefined && !showTrigger) {
     return null;

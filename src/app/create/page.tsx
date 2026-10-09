@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { CreateQuizWizardForm } from "@/components/create-quiz-wizard-form";
+import { loadAccountLastfmUsername } from "@/lib/account-lastfm";
 import { getQuizDashboardData } from "@/lib/quizzes/dashboard";
 import { ensureAnonymousSession } from "@/lib/supabase/auth";
 import type { PlanId } from "@/lib/quiz-plans";
@@ -15,16 +16,19 @@ export const metadata: Metadata = {
 
 export default async function CreatePage() {
   await ensureAnonymousSession();
-  const { identity, plan, activeHostedCount, canCreate } = await getQuizDashboardData();
+  const [{ identity, plan, activeHostedCount, canCreate }, accountLastfmUsername] =
+    await Promise.all([getQuizDashboardData(), loadAccountLastfmUsername()]);
 
   return (
     <CreateQuizWizardForm
+      identity={identity}
       defaultHostName={identity?.displayName}
       planId={plan.id as PlanId}
       activeHostedCount={activeHostedCount}
       canCreate={canCreate}
       hasSession={Boolean(identity)}
       isAnonymous={identity?.isAnonymous ?? true}
+      accountLastfmUsername={accountLastfmUsername}
     />
   );
 }

@@ -17,6 +17,7 @@ import {
   LastfmErrorAlert,
   LastfmHelpButton,
   LastfmHelpDialog,
+  LastfmUserFoundNotice,
   LastfmUserNotFoundAlert,
   useLastfmUserLookup,
 } from "@/components/lastfm-help";
@@ -974,7 +975,7 @@ export function AutoLastfmHostControls({
 
   if (showUsernameSetup) {
     const showNotFound =
-      lastfmLookup === "invalid" || isLastfmUserNotFoundMessage(error);
+      lastfmLookup.status === "invalid" || isLastfmUserNotFoundMessage(error);
     return (
       <section
         className={
@@ -1014,7 +1015,9 @@ export function AutoLastfmHostControls({
             />
             <Button
               type="button"
-              disabled={busy || !usernameDraft.trim() || lastfmLookup === "invalid"}
+              disabled={
+                busy || !usernameDraft.trim() || lastfmLookup.status === "invalid"
+              }
               onClick={() => {
                 void onSaveUsername();
               }}
@@ -1025,6 +1028,8 @@ export function AutoLastfmHostControls({
         </div>
         {showNotFound ? (
           <LastfmUserNotFoundAlert onHelp={() => setLastfmHelpOpen(true)} />
+        ) : lastfmLookup.status === "found" ? (
+          <LastfmUserFoundNotice profile={lastfmLookup.profile} />
         ) : (
           <LastfmErrorAlert
             error={error}

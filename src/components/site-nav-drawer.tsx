@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { CaretRightIcon, ListIcon, TrophyIcon, UserCircleIcon } from "@phosphor-icons/react";
+import { CaretRightIcon, ListIcon, TrophyIcon, UserCircleIcon, XIcon } from "@phosphor-icons/react";
 import { ChangePlanForm } from "@/components/change-plan-form";
 import { AccountAuthForm } from "@/components/account-auth-form";
 import { SiteSectionIcon } from "@/components/site-section-icon";
@@ -126,6 +126,7 @@ export function SiteNavDrawer({
 }: SiteNavDrawerProps) {
   const [open, setOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const planLabel = QUIZ_PLANS[currentPlan]?.label ?? "Free";
 
   const settingsItem: NavActionItem = {
@@ -144,6 +145,10 @@ export function SiteNavDrawer({
 
   function closeDrawer() {
     setOpen(false);
+  }
+
+  function openAccountSheet() {
+    setAccountOpen(true);
   }
 
   const signedIn = Boolean(identity && !identity.isAnonymous);
@@ -183,7 +188,13 @@ export function SiteNavDrawer({
         </Button>
       </div>
 
-      <Sheet open={open} onOpenChange={setOpen}>
+      <Sheet
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (!nextOpen) setAccountOpen(false);
+        }}
+      >
         <SheetContent side="right" className="flex h-full w-full flex-col gap-0 p-0 sm:max-w-md">
           <SheetHeader className="border-b px-6 pb-5">
             <div className="flex items-center gap-3 pr-8">
@@ -219,53 +230,83 @@ export function SiteNavDrawer({
             </NavSection>
           </nav>
 
-          <div className="mt-auto border-t bg-muted/20 px-6 py-5">
+          <div className="mt-auto border-t bg-muted/20 px-6 py-4">
             <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
               Account
             </p>
-            <div className="mt-3 flex items-start gap-3">
-              <span
-                className={cn(
-                  "inline-flex size-10 shrink-0 items-center justify-center rounded-full ring-1",
-                  signedIn
-                    ? "bg-primary/15 text-primary ring-primary/25"
-                    : "bg-background text-muted-foreground ring-border",
-                )}
-              >
-                {signedIn && identity ? (
+            {signedIn && identity ? (
+              <div className="mt-3 flex items-start gap-3">
+                <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary ring-1 ring-primary/25">
                   <span className="text-sm font-semibold" aria-hidden>
                     {accountInitials(identity)}
                   </span>
-                ) : (
-                  <UserCircleIcon className="size-6" weight="duotone" />
-                )}
-              </span>
-              <div className="min-w-0 flex-1 space-y-3">
-                {identity ? (
+                </span>
+                <div className="min-w-0 flex-1 space-y-3">
                   <p className="text-sm font-medium leading-snug">
-                    {identity.displayName?.trim() ||
-                      (identity.isAnonymous ? "Guest" : identity.email) ||
-                      "Signed in"}
-                    {identity.isAnonymous ? (
-                      <span className="ml-1 font-normal text-muted-foreground">
-                        (guest)
-                      </span>
-                    ) : null}
+                    {identity.displayName?.trim() || identity.email || "Signed in"}
                   </p>
-                ) : (
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    No session yet. Create a quiz or sign in with email.
-                  </p>
-                )}
-                <AccountAuthForm
-                  hasSession={Boolean(identity)}
-                  isAnonymous={Boolean(identity?.isAnonymous)}
-                  email={identity?.email}
-                  displayName={identity?.displayName}
+                  <AccountAuthForm
+                    hasSession
+                    isAnonymous={false}
+                    email={identity.email}
+                    displayName={identity.displayName}
+                  />
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="mt-3 flex w-full items-center gap-3 rounded-2xl border bg-background px-3 py-2.5 text-left transition-colors hover:bg-muted/70"
+                onClick={openAccountSheet}
+              >
+                <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground ring-1 ring-border">
+                  <UserCircleIcon className="size-5" weight="duotone" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">Sign in</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Sign in or create an account
+                  </span>
+                </span>
+                <CaretRightIcon
+                  className="size-4 shrink-0 text-muted-foreground/50"
+                  aria-hidden
                 />
+              </button>
+            )}
+          </div>
+          {accountOpen ? (
+            <div className="absolute inset-0 z-10 flex items-end bg-black/10">
+              <div className="max-h-[calc(100dvh-4rem)] w-full overflow-y-auto rounded-t-3xl border-t bg-popover p-0 text-popover-foreground shadow-xl">
+                <div className="flex items-start justify-between gap-4 border-b px-6 py-5">
+                  <div className="min-w-0">
+                    <SheetTitle>Account</SheetTitle>
+                    <SheetDescription>
+                      Sign in or create an account to keep your quizzes.
+                    </SheetDescription>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="-mr-1 shrink-0 bg-secondary"
+                    onClick={() => setAccountOpen(false)}
+                    aria-label="Close account"
+                  >
+                    <XIcon />
+                  </Button>
+                </div>
+                <div className="px-6 py-5">
+                  <AccountAuthForm
+                    hasSession={Boolean(identity)}
+                    isAnonymous={Boolean(identity?.isAnonymous)}
+                    email={identity?.email}
+                    displayName={identity?.displayName}
+                  />
+                </div>
               </div>
             </div>
-          </div>
+          ) : null}
         </SheetContent>
       </Sheet>
 

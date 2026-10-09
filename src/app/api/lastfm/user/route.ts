@@ -33,5 +33,10 @@ export async function GET(request: Request) {
     return NextResponse.json(result, { status });
   }
 
-  return NextResponse.json({ ok: true, username: result.username });
+  return NextResponse.json({
+    ok: true,
+    username: result.username,
+    realname: result.realname,
+    url: result.url,
+  });
 }

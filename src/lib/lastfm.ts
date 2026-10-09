@@ -177,7 +177,12 @@ export async function getLastfmCurrentlyPlaying(
 }
 
 export type LastfmUserLookupResult =
-  | { ok: true; username: string }
+  | {
+      ok: true;
+      username: string;
+      realname: string | null;
+      url: string;
+    }
   | { ok: false; code: "not_configured" | "invalid_user" | "failed"; message: string };
 
 const LASTFM_USER_LOOKUP_CACHE_MS = 30_000;
@@ -228,7 +233,7 @@ export async function lookupLastfmUser(
     const data = (await response.json().catch(() => null)) as {
       error?: number;
       message?: string;
-      user?: { name?: string };
+      user?: { name?: string; realname?: string; url?: string };
     } | null;
 
     if (!response.ok || data?.error) {
@@ -256,7 +261,16 @@ export async function lookupLastfmUser(
       return result;
     }
 
-    const result: LastfmUserLookupResult = { ok: true, username: name };
+    const realname = data?.user?.realname?.trim() || null;
+    const profileUrl =
+      data?.user?.url?.trim() ||
+      `https://www.last.fm/user/${encodeURIComponent(name)}`;
+    const result: LastfmUserLookupResult = {
+      ok: true,
+      username: name,
+      realname,
+      url: profileUrl,
+    };
     lastfmUserLookupCache.set(cacheKey, { at: Date.now(), result });
     return result;
   } catch {

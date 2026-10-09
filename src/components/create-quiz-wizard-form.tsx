@@ -11,6 +11,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { XIcon } from "@phosphor-icons/react";
+import { rememberLastfmUsernameAction } from "@/app/actions/lastfm-account";
 import { createQuizAction, type QuizActionState } from "@/app/actions/quiz";
 import {
   CreateQuizParticipantLimitDialog,
@@ -93,7 +94,11 @@ import {
   YEAR_RANGE_TOLERANCE_MIN,
 } from "@/lib/quiz-settings";
 import { ADMIN_SELECT_CLASS } from "@/lib/admin-ui";
-import { isLastfmUserNotFoundMessage } from "@/lib/lastfm-messages";
+import type { DashboardIdentity } from "@/lib/quizzes/dashboard";
+import {
+  isLastfmUserNotFoundMessage,
+  lastfmUsernamesMatch,
+} from "@/lib/lastfm-messages";
 import { useWizardInputFocus } from "@/lib/wizard-input-focus";
 import { cn } from "@/lib/utils";
 
@@ -104,21 +109,26 @@ const QUIZ_CHART_COUNTRIES: ChartCountryCode[] = ["DE", "AT", "GB"];
 const RANGE_TOLERANCE_PRESETS = [0, 5, 10, 15, 20] as const;
 
 type CreateQuizWizardFormProps = {
+  identity?: DashboardIdentity | null;
   defaultHostName?: string | null;
   planId?: PlanId;
   activeHostedCount?: number;
   canCreate?: boolean;
   hasSession?: boolean;
   isAnonymous?: boolean;
+  /** Last.fm username stored on the signed-in account. Empty for guests. */
+  accountLastfmUsername?: string;
 };
 
 export function CreateQuizWizardForm({
+  identity = null,
   defaultHostName,
   planId = "free",
   activeHostedCount = 0,
   canCreate = true,
   hasSession = true,
   isAnonymous = false,
+  accountLastfmUsername = "",
 }: CreateQuizWizardFormProps) {
   const router = useRouter();
   const plan = getQuizPlanLimits(planId);
@@ -135,6 +145,9 @@ export function CreateQuizWizardForm({
   const [quickLastfmDraft, setQuickLastfmDraft] = useState("");
   const [lastfmHelpOpen, setLastfmHelpOpen] = useState(false);
   const [lastfmChecking, setLastfmChecking] = useState(false);
+  const [savedLastfmUsername, setSavedLastfmUsername] = useState(
+    accountLastfmUsername.trim().replace(/^@/, ""),
+  );
   /** Gate: slot-limit tip before the wizard when there is no free active slot. */
   const [slotGateOpen, setSlotGateOpen] = useState(!canCreate);
   const [slotAcked, setSlotAcked] = useState(canCreate);
@@ -174,12 +187,21 @@ export function CreateQuizWizardForm({
   );
   const { focusById } = useWizardInputFocus([wizard.step, wizard.draftSongs.length]);
 
+  function preferredLastfmUsername(): string {
+    // Signed-in accounts win over this browser's copy.
+    const account = isAnonymous ? "" : savedLastfmUsername.trim().replace(/^@/, "");
+    return account || loadRememberedLastfmUsername();
+  }
+
   useEffect(() => {
+    const account = isAnonymous
+      ? ""
+      : accountLastfmUsername.trim().replace(/^@/, "");
+    const remembered = account || loadRememberedLastfmUsername();
     const saved = loadQuizWizardState(hostNameDefault);
     if (saved && hasMeaningfulQuizWizardDraft(saved)) {
-      // Prefer draft username; fall back to last remembered Last.fm name.
-      const lastfmUsername =
-        saved.lastfmUsername.trim() || loadRememberedLastfmUsername();
+      // Prefer draft username; fall back to the account, then this browser.
+      const lastfmUsername = saved.lastfmUsername.trim() || remembered;
       setWizard(
         lastfmUsername === saved.lastfmUsername
           ? saved
@@ -192,13 +214,12 @@ export function CreateQuizWizardForm({
         pendingDraftRef.current = true;
       }
     } else {
-      const remembered = loadRememberedLastfmUsername();
       if (remembered) {
         setWizard((prev) => ({ ...prev, lastfmUsername: remembered }));
       }
     }
     setHydrated(true);
-  }, [hostNameDefault, canCreate]);
+  }, [hostNameDefault, canCreate, isAnonymous, accountLastfmUsername]);
 
   useEffect(() => {
     if (!hydrated || draftChoiceOpen || !slotAcked) return;
@@ -230,7 +251,7 @@ export function CreateQuizWizardForm({
   function freshWizardState(): CreateQuizWizardState {
     return {
       ...defaultQuizWizardState(hostNameDefault),
-      lastfmUsername: loadRememberedLastfmUsername(),
+      lastfmUsername: preferredLastfmUsername(),
     };
   }
 
@@ -276,6 +297,10 @@ export function CreateQuizWizardForm({
       if (lookupError) {
         setStepError(lookupError);
         return true;
+      }
+      if (!isAnonymous) {
+        const saved = await rememberLastfmUsernameAction(username);
+        if (saved) setSavedLastfmUsername(saved);
       }
       return false;
     } finally {
@@ -482,7 +507,7 @@ export function CreateQuizWizardForm({
     setStepError(null);
     const lastfm =
       current.lastfmUsername.trim().replace(/^@/, "") ||
-      loadRememberedLastfmUsername();
+      preferredLastfmUsername();
     if (!lastfm) {
       setStepError(null);
       setQuickLastfmDraft("");
@@ -573,7 +598,7 @@ export function CreateQuizWizardForm({
 
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-background via-background to-muted/30">
-      <SiteHeader identity={null} currentPlan={planId} />
+      <SiteHeader identity={identity} currentPlan={planId} />
 
       <Dialog
         open={draftChoiceOpen}
@@ -671,15 +696,21 @@ export function CreateQuizWizardForm({
               autoFocus
             />
           </div>
-          {quickLastfmLookup === "invalid" ||
+          {quickLastfmLookup.status === "invalid" ||
           isLastfmUserNotFoundMessage(stepError) ? (
             <LastfmUserNotFoundAlert onHelp={() => setLastfmHelpOpen(true)} />
           ) : stepError ? (
             <p className="text-sm text-destructive" role="alert">
               {stepError}
             </p>
-          ) : quickLastfmLookup === "found" ? (
-            <LastfmUserFoundNotice />
+          ) : quickLastfmLookup.status === "found" ? (
+            <LastfmUserFoundNotice
+              profile={quickLastfmLookup.profile}
+              savedOnAccount={
+                !isAnonymous &&
+                lastfmUsernamesMatch(quickLastfmDraft, savedLastfmUsername)
+              }
+            />
           ) : null}
           <DialogFooter>
             <Button
@@ -695,7 +726,7 @@ export function CreateQuizWizardForm({
                 pending ||
                 lastfmChecking ||
                 !quickLastfmDraft.trim() ||
-                quickLastfmLookup === "invalid"
+                quickLastfmLookup.status === "invalid"
               }
               onClick={() => {
                 void confirmQuickLiveWithLastfm();
@@ -860,13 +891,22 @@ export function CreateQuizWizardForm({
                               maxLength={64}
                             />
                           </div>
-                          {lastfmLookup === "invalid" ||
+                          {lastfmLookup.status === "invalid" ||
                           isLastfmUserNotFoundMessage(stepError) ? (
                             <LastfmUserNotFoundAlert
                               onHelp={() => setLastfmHelpOpen(true)}
                             />
-                          ) : lastfmLookup === "found" ? (
-                            <LastfmUserFoundNotice />
+                          ) : lastfmLookup.status === "found" ? (
+                            <LastfmUserFoundNotice
+                              profile={lastfmLookup.profile}
+                              savedOnAccount={
+                                !isAnonymous &&
+                                lastfmUsernamesMatch(
+                                  wizard.lastfmUsername,
+                                  savedLastfmUsername,
+                                )
+                              }
+                            />
                           ) : null}
                         </div>
                       ) : null}
@@ -1420,7 +1460,7 @@ export function CreateQuizWizardForm({
                           lastfmBusy ||
                           (wizard.step === 1 &&
                             wizard.playMode === "auto_lastfm" &&
-                            lastfmLookup === "invalid")
+                            lastfmLookup.status === "invalid")
                         }
                       >
                         {lastfmChecking ? "Checking…" : "Next"}
