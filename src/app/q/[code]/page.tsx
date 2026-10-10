@@ -213,39 +213,39 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
         />
       ) : null}
 
-      <main className="mx-auto w-full max-w-3xl flex-1 space-y-8 px-6 py-10">
-        <div className="space-y-1">
-          <QuizPageHeader
-            title={quiz.title}
-            joinCode={quiz.join_code}
-            joinUrl={`/j/${quiz.join_code}`}
-            openInviteOnMount={created === "1"}
-            rulesContent={
-              <QuizRulesContent
-                joinCode={quiz.join_code}
-                createdAt={createdAt}
-                source={quiz.source}
-                settings={settings}
-                trackCount={trackCount}
-              />
-            }
-          />
-          <QuizStatusBadges
-            quizId={quiz.id}
-            quizSource={quiz.source}
-            initialQuizStatus={playState?.quizStatus ?? quizStatus}
-            initialHasActiveRound={Boolean(playState?.activeRound)}
-            initialCurrentRoundNumber={playState?.currentRoundNumber ?? 0}
-            initialAutoInterrupted={playState?.autoInterrupted ?? false}
-            initialQuizStarted={playState?.quizStarted !== false}
-            initialOverallReveal={settings.overallReveal}
-            initialLeaderboardRevealStep={playState?.leaderboardRevealStep ?? 0}
-            initialLeaderboardCount={playState?.leaderboard?.length ?? 0}
-          />
-          {quiz.description ? (
-            <p className="pt-2 text-muted-foreground">{quiz.description}</p>
-          ) : null}
-        </div>
+      <main className="mx-auto w-full max-w-3xl flex-1 space-y-8 px-6 pb-10 pt-0">
+        <QuizPageHeader
+          title={quiz.title}
+          joinCode={quiz.join_code}
+          joinUrl={`/j/${quiz.join_code}`}
+          openInviteOnMount={created === "1"}
+          rulesContent={
+            <QuizRulesContent
+              joinCode={quiz.join_code}
+              createdAt={createdAt}
+              source={quiz.source}
+              settings={settings}
+              trackCount={trackCount}
+            />
+          }
+          statusBadges={
+            <QuizStatusBadges
+              quizId={quiz.id}
+              quizSource={quiz.source}
+              initialQuizStatus={playState?.quizStatus ?? quizStatus}
+              initialHasActiveRound={Boolean(playState?.activeRound)}
+              initialCurrentRoundNumber={playState?.currentRoundNumber ?? 0}
+              initialAutoInterrupted={playState?.autoInterrupted ?? false}
+              initialQuizStarted={playState?.quizStarted !== false}
+              initialOverallReveal={settings.overallReveal}
+              initialLeaderboardRevealStep={playState?.leaderboardRevealStep ?? 0}
+              initialLeaderboardCount={playState?.leaderboard?.length ?? 0}
+            />
+          }
+        />
+        {quiz.description ? (
+          <p className="text-muted-foreground">{quiz.description}</p>
+        ) : null}
         <QuizLiveRefresh quizId={quiz.id} joinCode={joinCode} />
         <QuizPlayPanels
           quizId={quiz.id}

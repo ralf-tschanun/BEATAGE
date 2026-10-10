@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 type QuizPageHeaderProps = {
   title: string;
@@ -19,6 +20,8 @@ type QuizPageHeaderProps = {
   /** Open invite dialog on mount (e.g. after create). */
   openInviteOnMount?: boolean;
   rulesContent: ReactNode;
+  /** Status badges under the title — stay sticky with the chrome. */
+  statusBadges?: ReactNode;
 };
 
 export function QuizPageHeader({
@@ -27,6 +30,7 @@ export function QuizPageHeader({
   joinUrl,
   openInviteOnMount = false,
   rulesContent,
+  statusBadges,
 }: QuizPageHeaderProps) {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -46,33 +50,43 @@ export function QuizPageHeader({
 
   return (
     <>
-      <div className="flex items-center gap-2">
-        <h1 className="min-w-0 flex-1 truncate text-lg font-semibold leading-tight tracking-tight">
-          {title}
-        </h1>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Button
-            type="button"
-            size="icon"
-            variant="outline"
-            onClick={() => setRulesOpen(true)}
-            aria-label="Quiz rules"
-            title="Quiz rules"
-          >
-            <ClipboardTextIcon className="size-5" weight="bold" aria-hidden />
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="outline"
-            onClick={() => setInviteOpen(true)}
-            aria-label="Invite players"
-            title="Invite"
-          >
-            <UsersIcon className="size-5" weight="bold" aria-hidden />
-          </Button>
+      <header
+        className={cn(
+          "sticky top-14 z-40 -mx-6 border-b border-border/60 px-6 py-2",
+          "bg-background/85 backdrop-blur-sm supports-[backdrop-filter]:bg-background/70",
+        )}
+      >
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <h1 className="min-w-0 flex-1 truncate text-lg font-semibold leading-tight tracking-tight">
+              {title}
+            </h1>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => setRulesOpen(true)}
+                aria-label="Quiz rules"
+                title="Quiz rules"
+              >
+                <ClipboardTextIcon className="size-5" weight="bold" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => setInviteOpen(true)}
+                aria-label="Invite players"
+                title="Invite"
+              >
+                <UsersIcon className="size-5" weight="bold" aria-hidden />
+              </Button>
+            </div>
+          </div>
+          {statusBadges}
         </div>
-      </div>
+      </header>
 
       <Dialog open={rulesOpen} onOpenChange={setRulesOpen}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
