@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { ScrollIcon, UserPlusIcon } from "@phosphor-icons/react";
+import { ClipboardTextIcon, UsersIcon } from "@phosphor-icons/react";
 import { ContestStatusBadges } from "@/components/contest-status-badges";
 import { InviteShare } from "@/components/invite-share";
 import { Button } from "@/components/ui/button";
@@ -87,26 +87,26 @@ export function ContestPageHeader({
         <h1 className="min-w-0 flex-1 truncate text-lg font-semibold leading-tight tracking-tight">
           {title}
         </h1>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1.5">
           <Button
             type="button"
-            size="icon-sm"
+            size="icon"
             variant="outline"
             onClick={() => setRulesOpen(true)}
             aria-label="Contest rules"
             title="Contest rules"
           >
-            <ScrollIcon />
+            <ClipboardTextIcon className="size-5" weight="bold" aria-hidden />
           </Button>
           <Button
             type="button"
-            size="icon-sm"
+            size="icon"
             variant="outline"
             onClick={() => setInviteOpen(true)}
             aria-label="Invite participants"
             title="Invite"
           >
-            <UserPlusIcon />
+            <UsersIcon className="size-5" weight="bold" aria-hidden />
           </Button>
         </div>
       </div>
@@ -151,7 +151,10 @@ export function ContestPageHeader({
       <Dialog open={rulesOpen} onOpenChange={setRulesOpen}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Contest rules</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <ClipboardTextIcon className="size-5 shrink-0" weight="bold" aria-hidden />
+              Contest rules
+            </DialogTitle>
             <DialogDescription>
               What this contest is and how it works.
             </DialogDescription>

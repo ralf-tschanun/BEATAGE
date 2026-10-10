@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { CaretRightIcon, ListIcon, TrophyIcon, UserCircleIcon, XIcon } from "@phosphor-icons/react";
 import { ChangePlanForm } from "@/components/change-plan-form";
@@ -33,22 +34,23 @@ type NavLinkItem = {
 
 type NavActionItem = {
   kind: "action";
-  id: "plan";
+  id: "plan" | "invite";
   onSelect: () => void;
   trailing?: ReactNode;
 };
 
 type NavItem = NavLinkItem | NavActionItem;
 
-const primaryItems: NavLinkItem[] = [
-  { kind: "link", id: "create" },
-  { kind: "link", id: "join" },
-];
-
 const dashboardItems: NavLinkItem[] = [
   { kind: "link", id: "hosted" },
   { kind: "link", id: "joined" },
 ];
+
+/** Quiz or contest room — Invite opens the in-page share dialog. */
+function isRoomPath(pathname: string | null): boolean {
+  if (!pathname) return false;
+  return pathname.startsWith("/q/") || pathname.startsWith("/c/");
+}
 
 function NavSection({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -124,10 +126,12 @@ export function SiteNavDrawer({
   currentPlan,
   unlockContest = null,
 }: SiteNavDrawerProps) {
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const planLabel = QUIZ_PLANS[currentPlan]?.label ?? "Free";
+  const showInvite = isRoomPath(pathname);
 
   const settingsItem: NavActionItem = {
     kind: "action",
@@ -147,9 +151,27 @@ export function SiteNavDrawer({
     setOpen(false);
   }
 
+  function openInviteFromMenu() {
+    setOpen(false);
+    // Quiz and contest headers listen for their own event.
+    if (pathname?.startsWith("/c/")) {
+      window.dispatchEvent(new Event("contest:open-invite"));
+      return;
+    }
+    window.dispatchEvent(new Event("quiz:open-invite"));
+  }
+
   function openAccountSheet() {
     setAccountOpen(true);
   }
+
+  const primaryItems: NavItem[] = [
+    { kind: "link", id: "create" },
+    ...(showInvite
+      ? ([{ kind: "action", id: "invite", onSelect: openInviteFromMenu }] as NavActionItem[])
+      : []),
+    { kind: "link", id: "join" },
+  ];
 
   const signedIn = Boolean(identity && !identity.isAnonymous);
 

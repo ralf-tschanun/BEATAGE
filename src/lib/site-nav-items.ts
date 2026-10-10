@@ -4,11 +4,19 @@ import {
   QuestionIcon,
   StackIcon,
   TicketIcon,
+  UsersIcon,
   UsersThreeIcon,
 } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react/dist/lib/types";
 
-export type SiteNavItemId = "create" | "join" | "hosted" | "joined" | "plan" | "help";
+export type SiteNavItemId =
+  | "create"
+  | "invite"
+  | "join"
+  | "hosted"
+  | "joined"
+  | "plan"
+  | "help";
 
 export type SiteNavItemConfig = {
   label: string;
@@ -23,6 +31,11 @@ export const SITE_NAV_ITEMS: Record<SiteNavItemId, SiteNavItemConfig> = {
     href: "/create",
     icon: PlusCircleIcon,
     iconClassName: "bg-primary/12 text-primary",
+  },
+  invite: {
+    label: "Invite",
+    icon: UsersIcon,
+    iconClassName: "bg-rose-500/12 text-rose-700 dark:text-rose-300",
   },
   join: {
     label: "I have an invite code",

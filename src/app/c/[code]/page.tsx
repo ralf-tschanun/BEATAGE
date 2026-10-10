@@ -2131,6 +2131,7 @@ export default async function ContestPage({ params, searchParams }: ContestPageP
           title="Danger zone"
           description="Deleting frees your plan slot so you can create another contest."
           defaultOpen={false}
+          persist={false}
         >
           <DeleteContestButton
             contestId={contest.id}

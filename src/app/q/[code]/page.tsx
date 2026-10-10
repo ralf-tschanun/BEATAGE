@@ -314,6 +314,7 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
             title="Danger zone"
             description="Deleting frees your plan slot so you can create another quiz."
             defaultOpen={false}
+            persist={false}
           >
             <DeleteQuizButton quizId={quiz.id} quizTitle={quiz.title} />
           </CollapsibleCard>
@@ -323,6 +324,7 @@ export default async function QuizPage({ params, searchParams }: QuizPageProps) 
             title="Danger zone"
             description="Leave this quiz. You can join again later with the invite link if seats are still available."
             defaultOpen={false}
+            persist={false}
           >
             <LeaveQuizButton quizId={quiz.id} quizTitle={quiz.title} />
           </CollapsibleCard>
